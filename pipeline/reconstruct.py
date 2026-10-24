@@ -83,7 +83,7 @@ def main():
     args = ap.parse_args()
 
     images_src = Path(args.images).resolve()
-    frames = sorted(p for p in images_src.iterdir() if p.suffix.lower() in IMAGE_EXTS)
+    frames = sorted(p for p in images_src.iterdir() if p.suffix.lower() in IMAGE_EXTS and not p.name.startswith('.'))
     if len(frames) < 5:
         sys.exit(f'need at least 5 images, found {len(frames)} in {images_src}')
 
