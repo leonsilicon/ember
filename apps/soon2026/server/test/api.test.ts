@@ -45,7 +45,7 @@ test('lists captures, and reports the Mac agent through its heartbeat', async ()
 
     expect(await (await health.GET(request('/health'))).json()).toMatchObject({ ok: true, agent: false });
     const sessions = [{ id: 'capture-test', fused: 3 }];
-    await redis.set(k.agent, JSON.stringify({ brush: true, depthWorker: true, steps: 5000, maxResolution: 960, sessions }), 'EX', AGENT_TTL_SECONDS);
+    await redis.set(k.agent, JSON.stringify({ id: 'agent', host: 'mac', brush: true, depthWorker: true, steps: 5000, maxResolution: 960, sessions }), 'EX', AGENT_TTL_SECONDS);
     expect(await (await health.GET(request('/health'))).json()).toMatchObject({ agent: true, brush: true, steps: 5000 });
     expect(await (await live.GET(request('/api/live'))).json()).toEqual({ sessions });
   } finally {

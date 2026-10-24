@@ -46,6 +46,9 @@ export const AGENT_TTL_SECONDS = 15;
 
 /** The agent's heartbeat: what /health reports, and the live sessions for /api/live. */
 export type AgentInfo = {
+  /** Which agent process (there must be only one) and which Mac it runs on. */
+  id: string;
+  host: string;
   brush: boolean;
   depthWorker: boolean;
   steps: number;

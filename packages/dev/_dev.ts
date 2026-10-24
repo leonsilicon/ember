@@ -6,9 +6,11 @@
  *   0  metro         Expo dev server for apps/soon2026, on Stim's `metro.port` (committed in
  *                    apps/soon2026/.stim.json; 8081 without Stim), so `stim ios` reuses it.
  *                    Always `--dev-client`: the app runs as a development build, never in Expo Go
- *   1  splat-server  the Brush splat preview server in apps/soon2026/server (SPLAT_PORT, 8899)
+ *   1  splat-agent   the splat server's Mac agent (apps/soon2026/server/src/agent): trains captures
+ *                    with Brush and runs the live 3D reconstruction for the app on Vercel. It reads
+ *                    the app's Redis and Blob credentials from server/.env.local (`vercel env pull`)
  *
- * `--force` replaces a running stack and frees both ports, through `stim stop` when Stim's own dev
+ * `--force` replaces a running stack and frees its ports, through `stim stop` when Stim's own dev
  * server holds Metro's. `--port <n>` overrides the Metro port; every other argument goes to
  * `expo start` (`--clear`, …).
  *
@@ -22,8 +24,6 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-
-import { configFromEnv } from 'soon2026/server/src/config';
 
 import { APP_DIR, DEFAULT_METRO_PORT, listenerPid, REPO_ROOT, run, stimMetroPort } from './lib';
 
@@ -100,15 +100,13 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
   fail('mprocs is a terminal UI; run `vpx _dev` in an interactive terminal. Pane logs: .mprocs-logs/');
 }
 
-const splatPort = configFromEnv().port;
-
 if (force) {
   if (listenerPid(CONTROL_PORT)) {
     // Quitting mprocs stops its panes with their SIGINT first.
     spawnSync(MPROCS, ['--server', `127.0.0.1:${CONTROL_PORT}`, '--ctl', '{c: quit}']);
     await waitForRelease(CONTROL_PORT, 15_000);
   }
-  for (const port of [CONTROL_PORT, metroPort, splatPort]) await freePort(port);
+  for (const port of [CONTROL_PORT, metroPort]) await freePort(port);
 }
 
 const running = listenerPid(CONTROL_PORT);
@@ -119,15 +117,12 @@ if (running) {
   );
 }
 
-const busy = [
-  { name: 'Metro', port: metroPort },
-  { name: 'splat server', port: splatPort },
-].flatMap(({ name, port }) => {
-  const pid = listenerPid(port);
-  return pid ? [`${name} port ${port} is in use (${describePid(pid)})`] : [];
-});
-if (busy.length > 0) {
-  fail(`${busy.join('\n')}\nRun \`vpx _dev --force\` to stop them (\`stim stop\` for Stim's own dev server).`);
+const metroPid = listenerPid(metroPort);
+if (metroPid) {
+  fail(
+    `Metro port ${metroPort} is in use (${describePid(metroPid)})\n` +
+      "Run `vpx _dev --force` to stop it (`stim stop` for Stim's own dev server).",
+  );
 }
 
 // The real binary rather than a version manager's PATH shim, so mprocs' SIGINT reaches Expo itself.
@@ -145,9 +140,10 @@ const config = {
       env: { EXPO_PUBLIC_APP_VARIANT: 'development' },
       stop: 'SIGINT',
     },
-    'splat-server': {
-      cmd: [process.execPath, 'server/index.ts'],
-      cwd: APP_DIR,
+    'splat-agent': {
+      cmd: [process.execPath, 'src/agent/main.ts'],
+      // Bun loads server/.env.local from here.
+      cwd: path.join(APP_DIR, 'server'),
       stop: 'SIGINT',
     },
   },

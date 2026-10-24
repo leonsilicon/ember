@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
@@ -46,6 +48,13 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
   const redis = connect(redisUrl);
   const liveReader = connect(redisUrl);
   const queueReader = connect(redisUrl);
+  // Two agents would both answer every phone and viewer.
+  const id = randomUUID();
+  const other = await redis.get(k.agent);
+  if (other) {
+    for (const client of [redis, liveReader, queueReader]) client.disconnect();
+    throw new Error(`another Mac agent is already running (on ${(JSON.parse(other) as AgentInfo).host}); stop it first`);
+  }
   let running = true;
 
   const publish = (entry: OutEntry) => {
@@ -62,6 +71,8 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
 
   const beat = () => {
     const info: AgentInfo = {
+      id,
+      host: hostname(),
       brush: Boolean(config.brushBin),
       depthWorker: Boolean(config.depthWorkerBin && config.depthModel),
       steps: config.steps,
@@ -128,7 +139,7 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
       await loops;
       await trainer.close();
       hub.stop();
-      await redis.del(k.agent);
+      if ((JSON.parse((await redis.get(k.agent)) ?? '{}') as Partial<AgentInfo>).id === id) await redis.del(k.agent);
       redis.disconnect();
     },
   };

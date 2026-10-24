@@ -7,7 +7,7 @@ drives an ESP32 motor board over Bluetooth.
 
 ```bash
 bun install        # from the repo root: one hoisted node_modules for every workspace
-vpx _dev           # Metro + the splat server in mprocs; --force replaces a running stack
+vpx _dev           # Metro + the splat server's Mac agent in mprocs; --force replaces a running stack
 vpx _ios           # build the dev build onto the cabled iPhone and open it on that Metro (--simulator for no ARKit)
 vpx _ios production  # the production app (dev.improve.soon2026) in Release beside the dev build (com.leonsilicon.soon2026.development): no dev client or Metro
 ```
@@ -17,7 +17,7 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
 | `apps/soon2026` | The Expo / React Native iPhone app: camera, leaf detection, the rover's brain and autopilot, rover controls, 3D splat capture. Plus its splat server (`server/`) and the ESP32 firmware (`firmware/rover`). |
 | `apps/soon2026/src/lib/rover-brain` | Leaf localisation, obstacle scanning and the drive-to-leaf autopilot (pure TypeScript, unit-tested). |
 | `packages/owlvit` | Builds the on-device OWL-ViT leaf detector the app embeds. |
-| `packages/dev` | The `vpx _dev` and `vpx _ios` scripts, and the TestFlight workflow's group step. |
+| `packages/dev` | The `vpx _dev` and `vpx _ios` scripts. |
 | `.github/workflows/testflight.yml` | Ships every push to `main` to TestFlight from a self-hosted Mac; see "TestFlight" in [`apps/soon2026/AGENTS.md`](apps/soon2026/AGENTS.md). |
 | `backend` | Python on the Mac: the same leaf detector and depth logic as the app, for testing with a webcam, photo or RealSense, plus an HTTP perception service. See [`backend/README.md`](backend/README.md). |
 
@@ -171,7 +171,7 @@ get back the same result computed on the Mac: leaf positions, depth-rejected box
 occupancy grid and corridors. See [`backend/README.md`](backend/README.md).
 
 **The leaf model for the phone** is built by `packages/owlvit` into `packages/owlvit/dist/`
-(gitignored), and the splat server serves it. Leon's default fp16 build currently fails his own
+(gitignored), and the app bundles it at prebuild (`plugins/with-leaf-detector.js`). Leon's default fp16 build currently fails his own
 drift check by a hair (16.8 px against a 16 px limit, on a candidate scoring a few percent), so use
 `uv run export.py --precision fp32` from `packages/owlvit` (358 MB, exact, runs on the GPU rather
 than the Neural Engine) until that limit is revisited.

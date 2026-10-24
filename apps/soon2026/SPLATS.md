@@ -88,48 +88,64 @@ axis convention — i.e. poses, intrinsics and depth unprojection line up.
 ## Debug: preview the splat from the phone
 
 To compare against the production reconstruction, the app can train a capture with the reference
-server and show the result. `server/` is a small Bun server that accepts a capture zip, trains it
-with Brush (one job at a time), and serves progressive snapshots plus a three.js + Spark viewer page.
+pipeline and show the result. It has two halves, so a phone only ever needs the public URL:
+
+- **The splat server** (`server/`): a Next.js app on Vercel (region `yul1`). It serves the pages and
+  API, relays the live 3D sockets, and keeps the capture jobs in Redis (from the Vercel Marketplace)
+  and the zips and splats in a private Vercel Blob store.
+- **The Mac agent** (`server/src/agent`, `bun run splat-agent` or `vpx _dev`): a Bun process with no
+  server of its own. It trains queued captures with Brush (one at a time) and runs the live
+  reconstruction, talking to the same Redis and Blob store. Nothing trains while it's offline; the
+  queue waits for it.
 
 ```bash
 ./server/scripts/install-brush.sh     # Brush v0.3.0 into server/bin (sha256-checked)
-bun run splat-server                  # http://localhost:8899 — prints the address the phone should use
+cd server && vercel link && vercel env pull .env.local   # once: the agent's Redis and Blob credentials
+bun run splat-agent                   # or `vpx _dev`
 ```
 
-In the app, **Captures** → *Debug: splat preview* (on by default in development builds; the server
-address defaults to the Mac running Metro) → **Preview splat** on a capture. It uploads the zip,
-shows training progress, and **Open splat** renders it on the phone. The same viewer page,
-`http://<mac>:8899/view/<capture id>`, works in any browser, so it can sit next to the teammate's
-viewer. **Retrain splat** re-runs it, e.g. after changing the server settings below. Without the app:
-`curl --data-binary @capture-….zip -H 'X-Capture-Id: <id>' http://localhost:8899/api/captures`.
+Everything needs the access token, `SPLAT_TOKEN` (a Vercel environment variable): the app has it
+built in from `EXPO_PUBLIC_SPLAT_TOKEN`, with the server's address in `EXPO_PUBLIC_SPLAT_SERVER_URL`
+(both in `apps/soon2026/.env.local` for local builds, and EAS environment variables for EAS builds).
+A browser signs in once by opening any page with `?token=<SPLAT_TOKEN>` (or entering it on the page);
+it keeps it in a cookie. API clients send `Authorization: Bearer <SPLAT_TOKEN>`.
+
+In the app, **Captures** → *Debug: splat preview* (on by default in development builds) → **Preview
+splat** on a capture. The phone asks the server for an upload URL, uploads the zip straight to Blob,
+and the agent picks it up; the app shows training progress, and **Open splat** renders it. The viewer
+page, `<server>/view/<capture id>`, works in any signed-in browser, so it can sit next to the
+teammate's viewer. **Retrain splat** uploads it again, e.g. after changing the agent's settings.
 
 | Server request | Returns |
 |---|---|
-| `POST /api/captures` (body: capture zip) | `201` with the job |
+| `POST /api/captures` (`X-Capture-Id`) | `201` with the job and `uploadUrl`, a presigned Blob URL to `PUT` the zip to |
+| `POST /api/captures/:id/uploaded` | `201` with the job, now queued for the agent |
 | `GET /api/captures`, `GET /api/captures/:id` | jobs: `state`, `step`/`steps`, `gaussians`, `error` |
 | `GET /api/captures/:id/splat.ply?step=N` | the splat at step N (newest if omitted) |
+| `GET /health` | whether the agent is connected, and whether it has Brush and the depth worker |
 | `GET /view/:id` | three.js + Spark viewer page |
 
-Server settings (environment variables for `bun run splat-server`): `SPLAT_STEPS` (5000),
+Agent settings (environment variables for `bun run splat-agent`): `SPLAT_STEPS` (5000),
 `SPLAT_MAX_RESOLUTION` (960), `SPLAT_EXPORT_EVERY` (steps/10), `SPLAT_SH_DEGREE` (1),
 `SPLAT_GROWTH` (0.5, Brush's growth-select-fraction), `SPLAT_MAX_SPLATS` (600k, keeps a long
-capture's splat loadable in a phone browser, ~100 bytes each), `SPLAT_PORT` (8899),
-`SPLAT_DATA_DIR` (`server/data`), `BRUSH_BIN` (`server/bin/brush_app`).
+capture's splat loadable in a phone browser, ~100 bytes each), `SPLAT_DATA_DIR` (`server/data`,
+where it unpacks and trains), `BRUSH_BIN` (`server/bin/brush_app`). `SPLAT_REDIS_PREFIX`
+(`splat:`) separates deployments sharing one Redis.
 
 The viewer starts at the first camera and orbits around what it was looking at (the median
 depth of the seed points in view), so dragging pivots on the subject.
 
 ## Live reconstruction in the browser
 
-While the phone records, the same server can rebuild the scene live: open
-`http://localhost:8899/live` on the Mac, start recording, and coloured points appear as you move
-the phone, with its camera frustum, path and latest keyframe drawn in. The viewer follows the
-newest recording; drag to orbit (that stops following, **F** resumes), **C** hides points few
-keyframes agreed on, and **Download PLY** saves the cloud.
+While the phone records, the same server can rebuild the scene live: open `<server>/live`, start
+recording, and coloured points appear as you move the phone, with its camera frustum, path and
+latest keyframe drawn in. The viewer follows the newest recording; drag to orbit (that stops
+following, **F** resumes), **C** hides points few keyframes agreed on, and **Download PLY** saves
+the cloud.
 
 ```bash
 ./server/scripts/install-depth.sh     # once: Depth Anything V2 (Core ML, sha256-checked) + the Swift worker
-bun run splat-server                  # or `vpx _dev`
+bun run splat-agent                   # or `vpx _dev`
 bun server/scripts/live-replay.ts server/data/captures/<id>/<id>   # try it without the phone
 ```
 
@@ -140,30 +156,36 @@ viewfinder. Tap it to swap it with the camera, FaceTime style (drag the full-scr
 it follows the phone again a few seconds later), and tap the floating camera to swap back. That view is the same page
 for this one recording, `/live/<capture id>?embed`, without its controls.
 
-How it works (`modules/splat-capture/ios/LiveStreamer.swift` → `server/src/live`):
+How it works (`modules/splat-capture/ios/LiveStreamer.swift` → `server/src/web/relay.ts` →
+Redis → `server/src/agent` and `server/src/live`, and back):
 
 - The phone sends its pose ~15×/s and a keyframe whenever it has moved 3 cm or turned 3° (at most
   5/s, and at least 1/s): a 640×480 JPEG, pose, intrinsics, and the ARKit feature points it sees in
   that frame. LiDAR phones send their depth map instead.
+- A socket stays on whichever Vercel function instance accepted it, and instances share nothing, so
+  each instance relays its sockets through two Redis streams (`server/src/bus.ts`): messages in to
+  the agent, and messages out to whichever sockets they're for. Vercel closes sockets after 5
+  minutes (Hobby); the phone and viewers reconnect and the session carries on by its id. If the
+  agent restarts, the relays announce their sockets (and phones' hellos) to it again.
 - Without LiDAR, `server/depth-worker` runs Depth Anything V2 Small on the Mac's Neural Engine
   (~30–50 ms). Its depth is relative, so each keyframe's scale and shift are fitted (RANSAC, then
   reweighted least squares) to that frame's ARKit points and to what's already reconstructed, which
   keeps overlapping views from doubling surfaces. Frames the anchors can't pin down are skipped.
 - Depth is unprojected at 256×192 (edges dropped, up to 4 m) into a 2 cm voxel cloud, and every
-  viewer gets the voxels that changed over a WebSocket.
+  viewer gets the voxels that changed.
 - Measured against the LiDAR seed clouds of two iPhone 17 Pro captures, the fitted depth's median
   error was 1.4% and 5% (with 60 anchors per frame).
 
 Settings: `LIVE_VOXEL_SIZE` (0.02 m), `LIVE_MAX_DEPTH` (4 m), `DEPTH_WORKER_BIN`, `DEPTH_MODEL`.
-`GET /api/live` lists sessions (kept in memory, the newest 4), and
-`GET /api/live/:id/points.ply?minViews=N` exports one.
+`GET /api/live` lists sessions (the agent keeps the newest 4 in memory).
 
 ## Tests
 
 ```bash
 bun run test:native    # XCTest: capture library (zip/list/delete), projection math, frame selection,
                        #         colour sampling, PLY and transforms.json writers
-bun run test:server    # optional server: upload → unzip → train (fake Brush) → serve; live depth
-                       #   fitting, voxel fusion, and phone → server → viewer (fake depth model)
+bun run test:server    # optional server (starts a throwaway redis-server, `brew install redis`):
+                       #   download → unzip → train (fake Brush) → snapshots; API auth; live depth
+                       #   fitting, voxel fusion, and phone → relay → Redis → agent → viewer
 bun run typecheck
 ```
