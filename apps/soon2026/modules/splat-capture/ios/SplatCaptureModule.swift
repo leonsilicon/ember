@@ -5,6 +5,8 @@ struct StartCaptureOptions: Record {
   @Field var imageWidth: Int = 1280
   /// Use the no-LiDAR path even on a LiDAR device (to test the fallback).
   @Field var forceFeaturePoints: Bool = false
+  /// Splat server (http://host:port) to stream the recording to for live reconstruction.
+  @Field var liveServerUrl: String? = nil
 }
 
 public class SplatCaptureModule: Module {
@@ -25,7 +27,8 @@ public class SplatCaptureModule: Module {
 
     AsyncFunction("startCapture") { (options: StartCaptureOptions, promise: Promise) in
       let settings = CaptureSettings(maxFrames: options.maxFrames, imageWidth: options.imageWidth,
-                                     forceFeaturePoints: options.forceFeaturePoints)
+                                     forceFeaturePoints: options.forceFeaturePoints,
+                                     liveServerURL: options.liveServerUrl.flatMap { URL(string: $0) })
       CaptureController.shared.start(settings) { promise.settle($0) }
     }
 

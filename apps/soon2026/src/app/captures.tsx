@@ -11,7 +11,7 @@ import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { updateDebugSettings, useDebugSettings } from '@/hooks/use-debug-settings';
 import { useTheme } from '@/hooks/use-theme';
 import { describeCapture, shareCapture } from '@/lib/captures';
-import { checkServer } from '@/lib/splat-preview';
+import { checkServer, liveViewerUrl } from '@/lib/splat-preview';
 
 export default function CapturesScreen() {
   const debug = useDebugSettings();
@@ -113,7 +113,18 @@ function DebugCard() {
       if (!debug.splatPreview) return;
       let alive = true;
       checkServer(debug.serverUrl)
-        .then((h) => alive && setServer(h.brush ? 'Connected · Brush ready' : 'Connected, but Brush is not installed'))
+        .then(
+          (h) =>
+            alive &&
+            setServer(
+              [
+                h.brush ? 'Connected · Brush ready' : 'Connected, but Brush is not installed',
+                h.depthWorker === false ? 'live 3D needs server/scripts/install-depth.sh' : null,
+              ]
+                .filter(Boolean)
+                .join(' · '),
+            ),
+        )
         .catch((e) => alive && setServer(`Unreachable (${e instanceof Error ? e.message : e}). Run: bun run splat-server`));
       return () => {
         alive = false;
@@ -147,6 +158,14 @@ function DebugCard() {
           />
           <ThemedText type="small" themeColor="textSecondary">
             {server}
+          </ThemedText>
+          <View style={styles.cardHeader}>
+            <ThemedText type="smallBold">Live 3D while recording</ThemedText>
+            <Switch value={debug.liveStream} onValueChange={(liveStream) => updateDebugSettings({ liveStream })} />
+          </View>
+          <ThemedText type="small" themeColor="textSecondary">
+            Streams each recording to the server, which rebuilds the scene as you move. Watch it on the Mac at{' '}
+            <ThemedText type="code">{liveViewerUrl(debug.serverUrl)}</ThemedText>
           </ThemedText>
         </>
       )}

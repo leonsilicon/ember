@@ -54,7 +54,7 @@ function endpoint(serverUrl: string, path: string) {
 export async function checkServer(serverUrl: string) {
   const res = await fetch(endpoint(serverUrl, '/health'));
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return (await res.json()) as { ok: boolean; brush: string | null };
+  return (await res.json()) as { ok: boolean; brush: string | null; depthWorker?: boolean };
 }
 
 /** The job for a capture, or null if the server hasn't seen it. */
@@ -63,6 +63,11 @@ export async function getJob(serverUrl: string, captureId: string): Promise<Spla
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as SplatJob;
+}
+
+/** The browser page that shows recordings being reconstructed live. */
+export function liveViewerUrl(serverUrl: string) {
+  return endpoint(serverUrl, '/live');
 }
 
 export function viewerUrl(serverUrl: string, captureId: string) {

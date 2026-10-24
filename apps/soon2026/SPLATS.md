@@ -119,11 +119,48 @@ capture's splat loadable in a phone browser, ~100 bytes each), `SPLAT_PORT` (889
 The viewer starts at the first camera and orbits around what it was looking at (the median
 depth of the seed points in view), so dragging pivots on the subject.
 
+## Live reconstruction in the browser
+
+While the phone records, the same server can rebuild the scene live: open
+`http://localhost:8899/live` on the Mac, start recording, and coloured points appear as you move
+the phone, with its camera frustum, path and latest keyframe drawn in. The viewer follows the
+newest recording; drag to orbit (that stops following, **F** resumes), **C** hides points few
+keyframes agreed on, and **Download PLY** saves the cloud.
+
+```bash
+./server/scripts/install-depth.sh     # once: Depth Anything V2 (Core ML, sha256-checked) + the Swift worker
+bun run splat-server                  # or `vpx _dev`
+bun server/scripts/live-replay.ts server/data/captures/<id>/<id>   # try it without the phone
+```
+
+In the app it's *Live 3D while recording* in the Gallery's debug card (on by default in development
+builds, sent to the same server address); while recording, a chip shows how many keyframes the
+server has fused.
+
+How it works (`modules/splat-capture/ios/LiveStreamer.swift` → `server/src/live`):
+
+- The phone sends its pose ~15×/s and a keyframe whenever it has moved 3 cm or turned 3° (at most
+  5/s, and at least 1/s): a 640×480 JPEG, pose, intrinsics, and the ARKit feature points it sees in
+  that frame. LiDAR phones send their depth map instead.
+- Without LiDAR, `server/depth-worker` runs Depth Anything V2 Small on the Mac's Neural Engine
+  (~30–50 ms). Its depth is relative, so each keyframe's scale and shift are fitted (RANSAC, then
+  reweighted least squares) to that frame's ARKit points and to what's already reconstructed, which
+  keeps overlapping views from doubling surfaces. Frames the anchors can't pin down are skipped.
+- Depth is unprojected at 256×192 (edges dropped, up to 4 m) into a 2 cm voxel cloud, and every
+  viewer gets the voxels that changed over a WebSocket.
+- Measured against the LiDAR seed clouds of two iPhone 17 Pro captures, the fitted depth's median
+  error was 1.4% and 5% (with 60 anchors per frame).
+
+Settings: `LIVE_VOXEL_SIZE` (0.02 m), `LIVE_MAX_DEPTH` (4 m), `DEPTH_WORKER_BIN`, `DEPTH_MODEL`.
+`GET /api/live` lists sessions (kept in memory, the newest 4), and
+`GET /api/live/:id/points.ply?minViews=N` exports one.
+
 ## Tests
 
 ```bash
 bun run test:native    # XCTest: capture library (zip/list/delete), projection math, frame selection,
                        #         colour sampling, PLY and transforms.json writers
-bun run test:server    # optional server: upload → unzip → train (fake Brush) → serve
+bun run test:server    # optional server: upload → unzip → train (fake Brush) → serve; live depth
+                       #   fitting, voxel fusion, and phone → server → viewer (fake depth model)
 bun run typecheck
 ```

@@ -28,6 +28,8 @@ struct CaptureSettings {
   var maxFrames = 300
   var imageWidth = 1280
   var forceFeaturePoints = false
+  /// Splat server to stream the recording to for live reconstruction (see LiveStreamer), if any.
+  var liveServerURL: URL? = nil
 }
 
 /// Owns the AR session's frame stream while recording and turns it into a
@@ -54,6 +56,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
   // frameQueue state
   private var recording: Recording?
+  private var live: LiveStreamer?
   private var detectionRequest: DetectionRequest?
   private var recoveringFromFailure = false
   private var lastStatusAt: TimeInterval = 0
@@ -144,6 +147,10 @@ final class CaptureController: NSObject, ARSessionDelegate {
         let mode: CaptureMode = Self.supportsLiDAR && !settings.forceFeaturePoints ? .lidar : .features
         let recording = try Recording(settings: settings, mode: mode)
         self.recording = recording
+        self.live = settings.liveServerURL.flatMap {
+          LiveStreamer(serverURL: $0, sessionId: recording.id, mode: mode, frameQueue: self.frameQueue,
+                       ciContext: self.ciContext)
+        }
         self.emitStatus()
         completion(.success(["captureId": recording.id, "mode": mode.rawValue]))
       } catch {
@@ -157,6 +164,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
       guard let recording = self.recording else { return completion(.failure(CaptureError.notRecording)) }
       recording.stopping = true
       self.recording = nil
+      self.live?.close()
+      self.live = nil
       self.emitStatus()
       DispatchQueue.main.async { self.pauseIfHidden() }
       // Every frame accepted before `stopping` was already queued here, so this runs after them.
@@ -269,6 +278,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
         }
       }
     }
+    if let live, let recording, !recording.frozen {
+      live.offer(frame, trackingNormal: tracking.0 == "normal")
+    }
     if frame.timestamp - lastStatusAt >= 0.25 {
       lastStatusAt = frame.timestamp
       emitStatus()
@@ -279,6 +291,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
     // A restarted session has a new world origin, so frames after it can't join a
     // recording made before it: freeze the recording at what it has.
     recording?.frozen = true
+    live?.close(reason: "Tracking was lost, so live streaming stopped")
     recoveringFromFailure = true
     emitStatus(error: error.localizedDescription)
     DispatchQueue.main.async { self.restartAfterFailure() }
@@ -296,6 +309,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
       "frozen": recording?.frozen ?? false,
     ]
     if let reason = tracking.1 { status["trackingReason"] = reason }
+    if let live { status["live"] = live.status }
     if let error { status["error"] = error }
     onStatus?(status)
   }
@@ -454,7 +468,7 @@ private final class Recording {
 }
 
 /// e.g. "iPhone14,4" — readable from any thread, unlike UIDevice.
-private func hardwareModel() -> String {
+func hardwareModel() -> String {
   var info = utsname()
   uname(&info)
   return withUnsafeBytes(of: info.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
@@ -462,7 +476,7 @@ private func hardwareModel() -> String {
 
 /// Copies a single-plane pixel buffer into a tightly packed row-major array,
 /// dropping any row padding.
-private func copyRows<T>(_ buffer: CVPixelBuffer, width: Int, height: Int) -> [T] {
+func copyRows<T>(_ buffer: CVPixelBuffer, width: Int, height: Int) -> [T] {
   CVPixelBufferLockBaseAddress(buffer, .readOnly)
   defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
   guard let base = CVPixelBufferGetBaseAddress(buffer) else { return [] }

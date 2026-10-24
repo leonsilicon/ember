@@ -47,7 +47,7 @@ export function liveViewerPage(sessionId: string | null) {
 <div id="bottom" class="hud">
   <button id="follow" aria-pressed="true" title="F">Follow phone</button>
   <button id="confidence" title="C">Show: all points</button>
-  <label>Size <input id="size" type="range" min="0.4" max="3" step="0.1" value="1"></label>
+  <label>Size <input id="size" type="range" min="0.4" max="3" step="0.1" value="1.3"></label>
   <a id="download" class="button" href="#" download>Download PLY</a>
 </div>
 <script type="module">

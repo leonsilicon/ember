@@ -4,7 +4,8 @@
  * process. Pane order is the index mprocs' remote control uses:
  *
  *   0  metro         Expo dev server for apps/soon2026, on Stim's `metro.port` (committed in
- *                    apps/soon2026/.stim.json; 8081 without Stim), so `stim ios` reuses it
+ *                    apps/soon2026/.stim.json; 8081 without Stim), so `stim ios` reuses it.
+ *                    Always `--dev-client`: the app runs as a development build, never in Expo Go
  *   1  splat-server  the Brush splat preview server in apps/soon2026/server (SPLAT_PORT, 8899)
  *
  * `--force` replaces a running stack and frees both ports, through `stim stop` when Stim's own dev
@@ -106,6 +107,9 @@ for (let i = 0; i < args.length; i++) {
   else if (arg.startsWith('--port=')) metroPort = Number(arg.slice('--port='.length));
   else expoArgs.push(arg);
 }
+if (expoArgs.includes('--go')) {
+  fail('the app only runs as a development build; Expo Go (--go) is not supported');
+}
 metroPort ??= stimMetroPort() ?? DEFAULT_METRO_PORT;
 if (!Number.isInteger(metroPort) || metroPort < 1 || metroPort > 65_535) {
   fail('--port needs a port number, e.g. --port 8081');
@@ -155,7 +159,7 @@ const config = {
   proc_log: { dir: LOG_DIR, file: '{name}.log', mode: 'truncate' },
   procs: {
     metro: {
-      cmd: [node, expoCli, 'start', '--port', String(metroPort), ...expoArgs],
+      cmd: [node, expoCli, 'start', '--dev-client', '--port', String(metroPort), ...expoArgs],
       cwd: APP_DIR,
       stop: 'SIGINT',
     },

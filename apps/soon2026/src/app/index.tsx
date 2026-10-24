@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SplatCapture, {
   SplatCaptureView,
   type CaptureStatus,
+  type LiveStatus,
   type SavedCapture,
 } from '../../modules/splat-capture';
 
@@ -18,6 +19,7 @@ import { RoverSheet } from '@/components/rover-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import { useDebugSettings } from '@/hooks/use-debug-settings';
 import { useDetections, type Detection } from '@/hooks/use-detections';
 import { compact, describeCapture, shareCapture } from '@/lib/captures';
 import { useRover } from '@/lib/rover';
@@ -50,6 +52,16 @@ function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The live-reconstruction chip while recording: how the stream to the server is doing. */
+function describeLive(live: LiveStatus): { label: string; tone?: 'good' | 'warn' } {
+  if (live.state === 'open') {
+    const points = live.points ? ` · ${compact(live.points)} pts` : '';
+    return { label: `Live 3D · ${live.fused} fused${points}`, tone: live.fused > 0 ? 'good' : undefined };
+  }
+  if (live.state === 'connecting') return { label: 'Live 3D · connecting…' };
+  return { label: `Live 3D · ${live.error ?? live.state}`, tone: 'warn' };
+}
+
 function summarize(detections: Detection[]) {
   const byLabel = new Map<string, { count: number; confidence: number }>();
   for (const { label, confidence } of detections) {
@@ -80,10 +92,13 @@ export default function CameraScreen() {
   const status = useEvent(SplatCapture, 'onStatus', INITIAL_STATUS);
   const detections = useDetections(detection && capabilities.arkit);
   const rover = useRover();
+  const debug = useDebugSettings();
 
   async function startRecording() {
     try {
-      await SplatCapture.startCapture({});
+      // With Live 3D on, the server rebuilds the scene as it records (open <server>/live on the Mac).
+      const live = debug.splatPreview && debug.liveStream;
+      await SplatCapture.startCapture({ liveServerUrl: live ? debug.serverUrl : undefined });
       setPhase({ kind: 'recording' });
     } catch (error) {
       setPhase({ kind: 'failed', message: message(error) });
@@ -171,6 +186,7 @@ export default function CameraScreen() {
               <Chip label={lidar ? 'LiDAR depth' : 'No LiDAR · feature points'} />
             )}
             <Chip label={trackingLabel} tone={status.tracking === 'normal' ? 'good' : 'warn'} />
+            {phase.kind === 'recording' && status.live && <Chip {...describeLive(status.live)} />}
           </View>
         </View>
 

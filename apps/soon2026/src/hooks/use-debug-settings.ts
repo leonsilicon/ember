@@ -6,10 +6,12 @@ export type DebugSettings = {
   /** Show the splat-preview tools. On by default in development builds only. */
   splatPreview: boolean;
   serverUrl: string;
+  /** Stream recordings to the server's live reconstruction (`<serverUrl>/live`). */
+  liveStream: boolean;
 };
 
 // Shared by every screen for the session; not persisted.
-let settings: DebugSettings = { splatPreview: __DEV__, serverUrl: defaultServerUrl() };
+let settings: DebugSettings = { splatPreview: __DEV__, serverUrl: defaultServerUrl(), liveStream: __DEV__ };
 const listeners = new Set<() => void>();
 
 function subscribe(listener: () => void) {

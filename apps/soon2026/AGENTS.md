@@ -14,7 +14,7 @@ Use `bunx` instead of `npx` if the project uses bun (`bun.lock` present).
 
 ```bash
 npx expo install <package>  # ALWAYS use instead of npm/yarn/pnpm/bun add — resolves SDK-compatible versions
-npx expo start              # start the dev server
+npx expo start --dev-client # start the dev server (never Expo Go)
 npx expo lint               # lint
 npx tsc --noEmit            # typecheck
 npx expo-doctor             # diagnose dependency and config issues
@@ -27,6 +27,7 @@ Run lint and typecheck before declaring any task done.
 
 The repo is a bun workspace (`apps/*`, `packages/*`, hoisted `node_modules` at the root); run `bun install` from the root. `vpx _dev` (anywhere in the repo, in an interactive terminal) runs everything in mprocs: pane 0 is Metro, on Stim's `metro.port` (pinned to 8082 in `.stim.json`; 8081 without Stim), so `stim ios` reuses it, and pane 1 is the splat server on 8899. `vpx _dev --force` replaces a running stack and frees both ports (through `stim stop` when Stim's own dev server holds Metro's). Extra arguments go to `expo start` (`vpx _dev --clear`); `--port <n>` overrides the Metro port. The script is `packages/dev/_dev.ts`.
 
+- The Metro pane always runs `expo start --dev-client`, and `vpx _dev` refuses `--go`. For the phone, Stim's LAN check rejects a Metro it did not start (`STIM_LAN_METRO_UNREACHABLE`), so while `vpx _dev` is running build with `stim ios --device --no-metro-check`.
 - Read pane output from `.mprocs-logs/metro.log` and `.mprocs-logs/splat-server.log` at the repo root instead of the TUI.
 - Restart a pane through the control port: `vpx mprocs --server 127.0.0.1:8898 --ctl '{c: select-proc, index: 0}'`, then `vpx mprocs --server 127.0.0.1:8898 --ctl '{c: restart-proc}'`. Check whether it is up with `lsof -nP -iTCP:8898 -sTCP:LISTEN`, never by connecting: mprocs 0.9 crashes on an empty connection.
 
@@ -44,5 +45,5 @@ Docs: https://docs.expo.dev/eas/index.md
 ## Rules
 
 - If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
-- Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
+- Never use Expo Go. The app is always a development build (`expo-dev-client` is installed, and every `expo start` passes `--dev-client`); never pass `--go` or press S in the Expo CLI to switch targets. After adding a library with native code or changing the app config, rebuild it: `stim ios --device` (or `npx expo run:ios|android`) locally, or `eas build --profile development`.
 - Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md

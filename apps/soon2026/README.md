@@ -10,18 +10,14 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npm install
    ```
 
-2. Start the app
+2. Build and install the [development build](https://docs.expo.dev/develop/development-builds/introduction/), then start the dev server
 
    ```bash
-   npx expo start
+   npx expo run:ios --device
+   npx expo start --dev-client
    ```
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+The app uses native modules that Expo Go doesn't include, so it only runs as a development build, never in Expo Go.
 
 You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 

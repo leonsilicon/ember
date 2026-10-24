@@ -25,6 +25,22 @@ export type CaptureStatus = {
   frozen?: boolean;
   /** Set when the AR session failed; it restarts by itself. */
   error?: string;
+  /** Present while a recording streams to the live reconstruction (`liveServerUrl`). */
+  live?: LiveStatus;
+};
+
+/** The live stream to the splat server, and what the server has made of it so far. */
+export type LiveStatus = {
+  state: 'connecting' | 'open' | 'reconnecting' | 'closed';
+  /** Keyframes sent, and fused into the reconstruction or skipped by the server. */
+  sent: number;
+  fused: number;
+  skipped: number;
+  /** Points in the reconstruction. */
+  points: number;
+  /** Why the server skipped its latest skipped keyframe. */
+  lastSkip?: string;
+  error?: string;
 };
 
 export type StartCaptureOptions = {
@@ -32,6 +48,11 @@ export type StartCaptureOptions = {
   imageWidth?: number;
   /** Use the no-LiDAR path even on a LiDAR device. */
   forceFeaturePoints?: boolean;
+  /**
+   * Splat server (server/, e.g. http://192.168.1.10:8899) to stream the recording to while it
+   * records; the scene is rebuilt live at `<server>/live` in a browser.
+   */
+  liveServerUrl?: string;
 };
 
 /**
