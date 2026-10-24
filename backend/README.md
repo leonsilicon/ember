@@ -1,13 +1,18 @@
 # Backend: rover vision
 
-Perception for the leaf-collecting rover: finding dry leaves, spotting
-obstacles, and fusing both into where to drive.
+Perception for the leaf-collecting rover on the Mac: the OWL-ViT leaf
+detector, a trained **hazard** model, and a service that turns a camera frame
+(+ LiDAR depth) into what the rover needs, in metres. The iPhone app does
+the same leaf/obstacle work on-device (`apps/soon2026/src/lib/rover-brain`).
+This service adds the hazard model (water above all, which LiDAR can't see),
+and the Mac tools are for testing with a webcam, RealSense or video.
 
-| Piece | What it does | Model |
-|---|---|---|
-| [`leaf_detector.py`](rover_vision/leaf_detector.py) | Finds dry leaves from text prompts, no training | OWL-ViT (open vocabulary) |
-| hazards | Segments what the rover must not drive into: `water`, `rock`, `log`, `tree`, `bush`, `person`, `structure` | YOLOv8-seg trained on RUGD |
-| [`navigation.py`](rover_vision/navigation.py) | Fuses leaves + hazards + optional depth into `drive_to_target` / `explore` / `stop` with a steering angle | rules, no model |
+| Piece | What it does |
+|---|---|
+| [`leaf_detector.py`](rover_vision/leaf_detector.py) | OWL-ViT dry-leaf detection from text prompts (no training) |
+| hazards | YOLOv8-seg trained on RUGD: `water`, `rock`, `log`, `tree`, `bush`, `person`, `structure` |
+| [`perception.py`](rover_vision/perception.py) | frame → leaves and hazards in metres, top-down occupancy grid, corridors, suggestion (`rover-perception/1` JSON) |
+| [`server.py`](rover_vision/server.py) | HTTP API taking the app's own keyframe message |
 
 ## Setup
 
@@ -21,64 +26,91 @@ pip install pyrealsense2-macosx        # only if you use a RealSense
 ## Run it
 
 ```bash
-# Everything together: point the camera ahead and move it around
-python -m rover_vision navigate                         # webcam
-python -m rover_vision navigate --source realsense      # + depth
-python -m rover_vision navigate --source walk.mp4 --save out.mp4
-python -m rover_vision navigate --json --no-show        # Pi payload per frame
+# Service for the phone app (POST /v1/perceive)
+python -m rover_vision serve                              # http://0.0.0.0:8765
+python -m rover_vision serve --no-leaf-detector           # the phone sends its own leaf boxes
 
-# Leaves only (your original script)
+# Live view on the Mac: camera view + top-down minimap
+python -m rover_vision navigate                           # webcam (intrinsics from --hfov)
+python -m rover_vision navigate --source realsense        # calibrated, with depth
+python -m rover_vision navigate --source walk.mp4 --save out.mp4 --pitch 20 --camera-height 0.3
+python -m rover_vision navigate --json --no-show          # rover-perception/1 per frame
+
+# Pieces on their own
 python -m rover_vision.leaf_detector --image photo.jpg
-python -m rover_vision.leaf_detector                    # RealSense, falls back to webcam
-
-# Hazards only
-python -m rover_vision detect --source 0
+python -m rover_vision detect --source 0                  # hazards only
 ```
 
-## How the two are combined
+## How it works
 
-The view is split into 7 vertical **sectors**, each a steering direction
-(about ±35°). A sector turns **red** (blocked) when:
+Everything metric is in the **rover frame**: origin on the ground below the
+camera, `x` right, `y` up, `z` forward, and `bearing_deg = atan2(x, z)` (+ is
+right). Which way is up comes from the ARKit pose when the frame has one,
+otherwise from the mount (`--pitch`, `--roll`). The camera height comes from
+`--camera-height`, or is fitted from depth (the most common level below the
+camera that stretches away from it), or defaults to 0.30 m.
 
-1. **Hazard masks** cover ≥12% of its **near band**, the bottom 40% of the
-   image. For a forward-facing camera that's the ground the rover is about
-   to drive onto. Hazards further up the image are further away and don't
-   block yet.
-2. **Depth** (RealSense now, iPhone LiDAR later) shows anything closer than
-   0.6 m in the middle rows of the sector, where upright obstacles appear.
+1. **Leaves.** Box centre → LiDAR depth there, or the ray onto the floor.
+   Gives position, distance and bearing.
+2. **Hazards.** Upright things (rocks, trees…) are placed by where their mask
+   meets the ground. Water is flat, so every pixel of its mask is ray-cast
+   onto the ground (LiDAR on water is missing or mirrors the sky).
+3. **Grid.** A 4 × 5 m top-down map in 10 cm cells: `free`, `obstacle` (taller
+   than `--max-step`), `drop`, a hazard class, or `unknown`.
+4. **Corridors.** For each bearing from −45° to +45°, how far a
+   `--rover-width` strip is clear. A leaf is `reachable` if its corridor is
+   clear up to it and it isn't inside a hazard.
+5. **Suggestion.** `drive_to_leaf` (nearest reachable), `explore` (straightest
+   open corridor), or `stop`.
 
-The two cover each other's blind spots. Depth catches any obstacle,
-including ones the hazard model has never seen. The hazard model catches
-what depth can't: water reflects or absorbs the sensor and returns little
-or no depth.
+The detectors see the image upright (it's turned using the pose), so a
+sideways phone still works.
 
-Then:
+## The service
 
-- **`drive_to_target`**: the nearest leaf that isn't inside a hazard or in a
-  blocked sector. Nearest means by depth when available, otherwise lowest in
-  the image. The angle is the steering angle to it.
-- **`explore`**: no reachable leaf, so head for the open sector closest to
-  straight ahead.
-- **`stop`**: every sector is blocked.
-
-The orange arrow is heading to a leaf, the white arrow is exploring, and
-the bar along the bottom shows blocked (red, with the reason) and open
-(green) sectors. `--json` prints what goes to the Pi:
+`POST /v1/perceive` takes exactly the message the app's `LiveStreamer`
+sends to the splat server: `u32 header length | JSON header | JPEG | float32
+depth | uint8 confidence`. The header has `intrinsics`, `jpegBytes`, `pose`
+and `depth`, with these optional extras:
 
 ```json
-{"action": "drive_to_target", "angle_deg": -12.4, "target": "dry leaf",
- "target_px": [412, 388], "distance_cm": 118,
- "blocked": [{"angle_deg": 30.5, "by": "water"}]}
+{
+  "leaves": [{"box": [x1, y1, x2, y2], "score": 0.12, "label": "dry leaf"}],
+  "leavesFrame": {"width": 576, "height": 768, "turns": 3},
+  "cameraHeightM": 0.3
+}
 ```
 
-Tuning lives in `NavConfig` (`--sectors`, `--hfov`, `--stop-distance` on
-the CLI). Set `--hfov` to your camera's horizontal field of view: D435
-colour is about 69°, iPhone wide is about 70°.
+`leaves` skips the server's own OWL-ViT run. `leavesFrame` says the boxes are
+in the app's upright detection frame: the JPEG rotated `turns` quarter turns
+counter-clockwise and scaled to that size. `turns: 3` is the app's
+`.oriented(.right)`.
 
-**Timing.** The hazard model runs every frame (~30 ms). OWL-ViT takes about
-1.5 s per frame on the M4 GPU, so it runs in the background on the newest
-frame and its result is reused until the next one lands. Obstacle
-avoidance is real-time; leaf boxes lag by a second or so.
+Response (`?grid=0` leaves out the grid):
+
+```json
+{
+  "schema": "rover-perception/1",
+  "camera": {"height_m": 0.31, "height_source": "depth_fit", "pitch_deg": 18.2, "roll_deg": 0.4},
+  "leaves": [{"label": "dry leaf", "score": 0.21, "box_px": [..], "point_px": [..],
+              "position": {"x_m": 0.42, "y_m": 0.0, "z_m": 1.37, "distance_m": 1.43,
+                           "bearing_deg": 17.0, "source": "depth"},
+              "reachable": true, "blocked_by": null}],
+  "hazards": [{"label": "water", "score": 0.7, "contact": {"distance_m": 2.1, "bearing_deg": -20.5, ...}}],
+  "corridors": [{"bearing_deg": 0.0, "clearance_m": 2.3, "blocked_by": "rock", "observed_m": 4.8}],
+  "grid": {"resolution_m": 0.1, "rows": 50, "cols": 40, "codes_b64": "...", "legend": {"0": "unknown", ...}},
+  "suggestion": {"action": "drive_to_leaf", "bearing_deg": 17.0, "distance_m": 1.43, "leaf_index": 0}
+}
+```
+
+`POST /v1/perceive/annotated` returns the overlay as a JPEG, and
+`GET /v1/health` reports which models are loaded.
+
+**Timing.** Hazards take about 75 ms per frame on the M4 CPU at 512 px.
+OWL-ViT takes about 1.5 s on the GPU with 2×2 tiles. PyTorch's Apple-GPU
+backend can't run two models at once from different threads, so the hazard
+model goes on the CPU whenever OWL-ViT uses the GPU (`models.py`). The
+service handles one frame at a time.
 
 ## Training the hazards model
 
@@ -107,8 +139,14 @@ frames. An M4 takes 15+ minutes per epoch; a Colab T4 is several times faster.
 rover_vision/
   leaf_detector.py  OWL-ViT leaf detection (standalone script too)
   leaves.py         its output → Detection records
-  navigation.py     sectors, blocking, decision, overlay
-  navigate.py       live loop (camera → hazards + leaves → decision)
+  spatial.py        camera geometry in the rover frame (pose/mount, rays, depth)
+  occupancy.py      top-down grid and corridors
+  perception.py     the pipeline and rover-perception/1 JSON
+  protocol.py       decodes the app's keyframe message
+  server.py         FastAPI service
+  navigation.py     suggestion + drawing (minimap)
+  navigate.py       live loop on webcam / video / RealSense
+  models.py         loading models on compatible devices
   camera.py         webcam / video / image / RealSense-with-depth
   tasks.py          hazard classes (single source of truth)
   detection.py      model output → Detection records
@@ -126,7 +164,8 @@ archive/            earlier trained leaf-model experiments (gitignored)
 - The hazard model was trained on daytime RUGD footage from the eastern
   US, so expect misses at night and on unfamiliar terrain. Depth is the
   safety net.
-- The bands assume a roughly level, forward-facing camera. If you mount
-  it tilted down, raise `near_band` / `depth_band` in `NavConfig`.
+- Without depth, positions come from the ray onto flat ground, so they are
+  only as good as `--pitch` and `--camera-height` (or the ARKit pose) and
+  the ground being flat.
 - OWL-ViT scores are low in absolute terms. The default threshold of 0.05
   matches `leaf_detector.py`; raise it if it fires on bark or soil.

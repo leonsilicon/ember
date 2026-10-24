@@ -9,6 +9,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from rover_vision.spatial import Intrinsics
+
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
@@ -16,6 +18,7 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 class Frame:
     color: np.ndarray  # BGR
     depth_m: np.ndarray | None = None  # metres, aligned to color; 0 = no reading
+    intrinsics: Intrinsics | None = None  # None: uncalibrated (estimate from field of view)
 
 
 @contextmanager
@@ -66,6 +69,8 @@ def _realsense(width: int = 640, height: int = 480, fps: int = 30) -> Iterator[I
     profile = pipeline.start(config)
     depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()
     align = rs.align(rs.stream.color)
+    k = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+    intrinsics = Intrinsics(k.fx, k.fy, k.ppx, k.ppy, k.width, k.height)
 
     def frames() -> Iterator[Frame]:
         while True:
@@ -76,6 +81,7 @@ def _realsense(width: int = 640, height: int = 480, fps: int = 30) -> Iterator[I
             yield Frame(
                 color=np.asanyarray(color.get_data()).copy(),
                 depth_m=np.asanyarray(depth.get_data()).astype(np.float32) * depth_scale,
+                intrinsics=intrinsics,
             )
 
     try:

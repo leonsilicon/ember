@@ -54,25 +54,43 @@ def cmd_detect(args):
     run(detector, args.source, args.save, show=not args.no_show, emit_json=args.json)
 
 
-def cmd_navigate(args):
-    from rover_vision.navigate import run
-    from rover_vision.navigation import NavConfig
+def _perception_setup(args, leaf_detector_in_perception: bool):
+    """Models + Perception from the shared model/rover/mount flags."""
+    from rover_vision.models import load_models
+    from rover_vision.occupancy import GridSpec, RoverSpec
+    from rover_vision.perception import Perception
+    from rover_vision.spatial import Mount
 
-    cfg = NavConfig(sectors=args.sectors, hfov_deg=args.hfov, stop_distance_m=args.stop_distance)
-    run(
-        args.source,
-        use_hazard_model=not args.no_hazard_model,
+    hazards, leaves = load_models(
+        hazard_model=not args.no_hazard_model,
         hazard_weights=args.hazard_weights,
         hazard_conf=args.hazard_conf,
-        hazard_device=args.hazard_device,
         hazard_imgsz=args.hazard_imgsz,
+        hazard_device=args.hazard_device,
+        leaf_detector=not args.no_leaf_detector,
         leaf_threshold=args.leaf_threshold,
         tile_grid=args.tile_grid,
-        cfg=cfg,
-        show=not args.no_show,
-        save=args.save,
-        emit_json=args.json,
     )
+    mount = Mount(pitch_deg=args.pitch, roll_deg=args.roll, camera_height_m=args.camera_height)
+    rover = RoverSpec(width_m=args.rover_width, max_step_m=args.max_step)
+    perception = Perception(hazards, leaves if leaf_detector_in_perception else None, rover, GridSpec(), mount)
+    return perception, leaves, mount
+
+
+def cmd_navigate(args):
+    from rover_vision.navigate import run
+
+    perception, leaves, _ = _perception_setup(args, leaf_detector_in_perception=False)
+    run(perception, leaves, args.source, args.hfov, show=not args.no_show, save=args.save, emit_json=args.json)
+
+
+def cmd_serve(args):
+    import uvicorn
+
+    from rover_vision.server import create_app
+
+    perception, _, mount = _perception_setup(args, leaf_detector_in_perception=True)
+    uvicorn.run(create_app(perception, mount), host=args.host, port=args.port, log_level="info")
 
 
 def cmd_export(args):
@@ -137,23 +155,38 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--json", action="store_true", help="print one JSON line of detections per frame")
     detect.set_defaults(func=cmd_detect)
 
+    # shared by navigate and serve
+    perception_args = argparse.ArgumentParser(add_help=False)
+    g = perception_args.add_argument_group("models")
+    g.add_argument("--leaf-threshold", type=float, default=0.05, help="OWL-ViT score needed to count as a leaf")
+    g.add_argument("--tile-grid", type=int, choices=(1, 2, 3), default=2, help="OWL-ViT crops per side")
+    g.add_argument("--no-leaf-detector", action="store_true", help="don't load OWL-ViT (leaves come from the phone)")
+    g.add_argument("--hazard-conf", type=float, default=0.35)
+    g.add_argument("--hazard-weights", type=Path, help="default: runs/segment/hazards/weights/best.pt")
+    g.add_argument("--hazard-device", help="default: cpu when OWL-ViT uses the Apple GPU (MPS isn't thread-safe)")
+    g.add_argument("--hazard-imgsz", type=int, default=512, help="hazard model input size")
+    g.add_argument("--no-hazard-model", action="store_true", help="obstacles from depth only")
+    g = perception_args.add_argument_group("rover and camera mount (used when the frame has no ARKit pose)")
+    g.add_argument("--pitch", type=float, default=15.0, help="degrees the camera looks below horizontal")
+    g.add_argument("--roll", type=float, default=0.0, help="degrees of clockwise camera roll")
+    g.add_argument("--camera-height", type=float, help="lens height above ground in m (default: estimate from depth, else 0.30)")
+    g.add_argument("--rover-width", type=float, default=0.45, help="m; corridors are this wide")
+    g.add_argument("--max-step", type=float, default=0.08, help="m; anything taller blocks the rover")
+
     # navigate
-    nav = sub.add_parser("navigate", help="leaves + hazards + depth → where to drive (live)")
+    nav = sub.add_parser("navigate", parents=[perception_args], help="live view: leaves + hazards + depth → map and corridors")
     nav.add_argument("--source", default="0", help='"realsense", camera index, video file/URL or image')
-    nav.add_argument("--leaf-threshold", type=float, default=0.05, help="OWL-ViT score needed to count as a leaf")
-    nav.add_argument("--tile-grid", type=int, choices=(1, 2, 3), default=2, help="OWL-ViT crops per side")
-    nav.add_argument("--hazard-conf", type=float, default=0.35)
-    nav.add_argument("--hazard-weights", type=Path, help="default: runs/segment/hazards/weights/best.pt")
-    nav.add_argument("--hazard-device", help="default: cpu when OWL-ViT uses the Apple GPU (MPS isn't thread-safe)")
-    nav.add_argument("--hazard-imgsz", type=int, default=512, help="hazard model input size")
-    nav.add_argument("--no-hazard-model", action="store_true", help="depth-only obstacle detection")
-    nav.add_argument("--sectors", type=int, default=7, help="steering directions across the view")
-    nav.add_argument("--hfov", type=float, default=69.0, help="camera horizontal field of view (deg)")
-    nav.add_argument("--stop-distance", type=float, default=0.6, help="metres; closer depth blocks a sector")
+    nav.add_argument("--hfov", type=float, default=69.0, help="horizontal field of view (deg) for cameras without intrinsics")
     nav.add_argument("--save", type=Path, help="output video (streams) or image (single image)")
     nav.add_argument("--no-show", action="store_true")
-    nav.add_argument("--json", action="store_true", help="print the Pi payload as one JSON line per frame")
+    nav.add_argument("--json", action="store_true", help="print rover-perception/1 JSON (without grid) per frame")
     nav.set_defaults(func=cmd_navigate)
+
+    # serve
+    serve = sub.add_parser("serve", parents=[perception_args], help="HTTP API for the phone app (POST /v1/perceive)")
+    serve.add_argument("--host", default="0.0.0.0")
+    serve.add_argument("--port", type=int, default=8765)
+    serve.set_defaults(func=cmd_serve)
 
     # export
     export = sub.add_parser("export", help="export a trained task model to CoreML")

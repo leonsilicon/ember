@@ -1,6 +1,7 @@
 """Adapter from the OWL-ViT leaf detector (``leaf_detector.py``) to the
 shared :class:`Detection` records used by navigation and rendering."""
 
+import cv2
 import numpy as np
 
 from rover_vision import leaf_detector
@@ -17,10 +18,14 @@ class LeafDetector:
     navigation loop runs it in the background and reuses the latest result.
     """
 
-    def __init__(self, threshold: float = 0.05, tile_grid: int = 2, max_detections: int = 20):
+    def __init__(self, threshold: float = 0.05, tile_grid: int = 2, max_detections: int = 20, max_side: int | None = 640):
         self.threshold = threshold
         self.tile_grid = tile_grid
         self.max_detections = max_detections
+        # OWL-ViT finds far more leaves in a ~640 px frame than at full camera resolution. On
+        # 1280 px test photos, full size gave 0 hits above 0.05 on all five, while 640 px gave
+        # 2-20 on four. (The phone runs it on a 768 px frame.)
+        self.max_side = max_side
         self._model = leaf_detector.load_detector()
 
     @property
@@ -28,8 +33,15 @@ class LeafDetector:
         return self._model[3]
 
     def __call__(self, frame: np.ndarray) -> list[Detection]:
+        h, w = frame.shape[:2]
+        scale = 1.0
+        if self.max_side and max(h, w) > self.max_side:
+            scale = self.max_side / max(h, w)
+            frame = cv2.resize(frame, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA)
         raw = leaf_detector.detect(frame, self._model, self.tile_grid)
-        return to_detections(raw, self.threshold, frame.shape, self.max_detections)
+        if scale != 1.0:
+            raw = {**raw, "boxes": raw["boxes"] / scale}
+        return to_detections(raw, self.threshold, (h, w), self.max_detections)
 
 
 def query_label(label_id: int) -> str:

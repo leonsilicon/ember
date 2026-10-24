@@ -9,3 +9,6 @@ pyyaml
 pillow
 numpy
 pytest
+fastapi
+uvicorn
+httpx
