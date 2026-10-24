@@ -6,9 +6,10 @@ final class CameraStreamServerTests: XCTestCase {
   func testParsesTheRequestLineOnceTheHeadersEnd() {
     XCTAssertNil(HTTPRequestHead(Data("GET /camera.mjpg HTTP/1.1\r\nHost: x\r\n".utf8)))
     let head = HTTPRequestHead(Data("GET /camera.mjpg?t=12 HTTP/1.1\r\nHost: x\r\n\r\n".utf8))
-    XCTAssertEqual(head, HTTPRequestHead(Data("GET /camera.mjpg HTTP/1.1\r\n\r\n".utf8)))
+    XCTAssertEqual(head?.path, HTTPRequestHead(Data("GET /camera.mjpg HTTP/1.1\r\n\r\n".utf8))?.path)
     XCTAssertEqual(head?.method, "GET")
     XCTAssertEqual(head?.path, "/camera.mjpg")
+    XCTAssertEqual(head?.query, ["t": "12"])
     XCTAssertNil(HTTPRequestHead(Data("nonsense\r\n\r\n".utf8)))
   }
 
@@ -99,6 +100,27 @@ final class CameraStreamServerTests: XCTestCase {
     browser.start(queue: DispatchQueue(label: "browser"))
     wait(for: [found], timeout: 10)
     browser.cancel()
+  }
+
+  func testSizedFrameIsAFreshStillFromTheProvider() throws {
+    server.publish(jpeg: Data("stream".utf8), width: 1, height: 1)
+    var askedFor: Int?
+    server.stillProvider = { size, done in
+      askedFor = size
+      done(Data("still at \(size)".utf8))
+    }
+    let (status, _, body) = try get("/frame.jpg?size=1920")
+    XCTAssertEqual(status, 200)
+    XCTAssertEqual(String(decoding: body, as: UTF8.self), "still at 1920")
+    XCTAssertEqual(askedFor, 1920)
+    XCTAssertEqual(try get("/frame.jpg").body, Data("stream".utf8)) // no size: the stream's newest frame
+  }
+
+  func testStillThatNeverComesIsA503() throws {
+    server.stillProvider = { _, _ in } // the camera isn't running
+    let start = Date()
+    XCTAssertEqual(try get("/frame.jpg?size=1920").status, 503)
+    XCTAssertEqual(Date().timeIntervalSince(start), CameraStreamServer.stillTimeout, accuracy: 1)
   }
 
   func testStreamSendsTheLatestFrameThenEachNewOne() throws {

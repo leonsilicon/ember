@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DiscoveredPhone } from '../../phone-discovery'
+import { useFrameCapture } from '../hooks/useFrameCapture'
+import { CaptureControls } from './CaptureControls'
 import { MjpegView } from './MjpegView'
 import { PHONE_CAMERA_PORT, phoneCameraOrigin } from '../phoneCamera'
 
@@ -10,6 +12,9 @@ const POLL_MS = 2000
 const LOST_AFTER = 2
 /** After a failed link-up with a found phone, wait this long before trying it again. */
 const AUTO_RETRY_MS = 5000
+/** Captured frames are stills this size (longer side), encoded fresh on the phone, not stream frames. */
+const CAPTURE_SIZE = 1920
+const CAPTURE_TIMEOUT_MS = 4000
 
 type PhoneStatus = { device: string; viewers: number; frames: number; width: number; height: number }
 
@@ -43,8 +48,9 @@ async function fetchStatus(origin: string): Promise<PhoneStatus> {
 const displayAddress = (origin: string) => origin.replace(/^https?:\/\//, '').replace(new RegExp(`:${PHONE_CAMERA_PORT}$`), '')
 
 /**
- * The camera of the iPhone riding on the rover, streamed over the Wi-Fi by the rover app while its camera
- * screen is open. The stream is MJPEG, so a plain <img> plays it. `discovered` is a phone the dev server
+ * Capture from the camera of the iPhone riding on the rover, streamed over the Wi-Fi by the leaf detector
+ * app while its camera screen is open. The live view is the MJPEG stream; captured frames are
+ * full-resolution stills the phone encodes on request (`/frame.jpg?size=1920`). `discovered` is a phone the dev server
  * found on the Wi-Fi (usePhoneDiscovery): the panel links up with it by itself, unless the user stopped.
  */
 export function PhoneCameraPanel({ discovered = null }: { discovered?: DiscoveredPhone | null }) {
@@ -59,6 +65,8 @@ export function PhoneCameraPanel({ discovered = null }: { discovered?: Discovere
   const shownFrames = useRef(0)
   const lastFrames = useRef<{ frames: number; at: number } | null>(null)
   const missed = useRef(0)
+  /** The newest stream frame: what's saved if a full-resolution still can't be had. */
+  const latestFrame = useRef<Blob | null>(null)
   /** The user pressed Stop: don't link up again by itself until they press Connect. */
   const [stopped, setStopped] = useState(false)
   const lastAuto = useRef<{ origin: string; at: number } | null>(null)
@@ -165,10 +173,38 @@ export function PhoneCameraPanel({ discovered = null }: { discovered?: Discovere
   const busy = state.kind === 'checking'
   const streaming = state.kind === 'streaming'
 
+  const capture = useFrameCapture(async () => {
+    if (!origin) return null
+    try {
+      const response = await fetch(`${origin}/frame.jpg?size=${CAPTURE_SIZE}`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(CAPTURE_TIMEOUT_MS),
+      })
+      if (response.ok) return await response.blob()
+    } catch {
+      // Slow or refused: fall back to the stream's newest frame below.
+    }
+    return latestFrame.current
+  })
+  const { stop: stopRecording } = capture
+  // Recording stops with the stream: the phone gone, or the user stopping it.
+  useEffect(() => {
+    if (!streaming) stopRecording()
+  }, [streaming, stopRecording])
+
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold tracking-wide text-zinc-300 uppercase">iPhone camera</h2>
+        <h2 className="flex items-center gap-2 text-sm font-semibold tracking-wide text-zinc-300 uppercase">
+          Capture
+          <span
+            className={`rounded-full px-2 py-0.5 text-[11px] font-medium tracking-normal normal-case ${
+              capture.recording ? 'bg-red-500/20 text-red-300' : 'bg-sky-500/15 text-sky-300'
+            }`}
+          >
+            {capture.recording ? `recording · ${capture.count}` : 'iPhone camera'}
+          </span>
+        </h2>
         <span className="flex items-center gap-1.5 text-xs text-zinc-400">
           <span
             className={`inline-block h-2 w-2 rounded-full ${
@@ -232,7 +268,10 @@ export function PhoneCameraPanel({ discovered = null }: { discovered?: Discovere
             url={streamUrl}
             alt="Live view from the rover's iPhone"
             className="h-full w-full object-contain"
-            onFrame={() => (shownFrames.current += 1)}
+            onFrame={(jpeg) => {
+              shownFrames.current += 1
+              latestFrame.current = jpeg
+            }}
             onEnd={() => {
               setStreamUrl(null)
               setFps(null)
@@ -249,6 +288,8 @@ export function PhoneCameraPanel({ discovered = null }: { discovered?: Discovere
           </p>
         )}
       </div>
+
+      <CaptureControls capture={capture} ready={streaming} />
 
       {insecurePage && (
         <p className="mt-2 text-xs text-amber-300">

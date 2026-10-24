@@ -55,4 +55,8 @@ src/components/                 DPad, StopButton, ArmPanel, ConnectionPanel, Vie
   phone's http stream from an https page). The panel reconnects to the last address, shows the frame rate, and
   reports a phone that's gone or a frozen picture. Without the phone, `python3 scripts/mock-phone-camera.py`
   serves and advertises a test picture on port 8787 (needs Pillow; advertising uses macOS's dns-sd).
-- **Capture panel** (Simulated mode) — webcam stand-in until the depth camera is decided. Start camera → Choose folder (Chrome's File System Access API) → Record 1 fps writes `frame_0001.jpg…` into that folder; "Snap one" takes a single frame. Feed the folder to `pipeline/reconstruct.py`.
+- **Capture panel** — records from the iPhone camera whenever the leaf detector app is open and linked (above),
+  otherwise from the laptop webcam ("Use laptop webcam"). Choose folder (Chrome's File System Access API) →
+  Record 1 fps writes `frame_0001.jpg…` into that folder; "Snap one" takes a single frame. From the iPhone, each
+  frame is a full-resolution still (1920 px, `/frame.jpg?size=1920`) encoded fresh on the phone, not a stream
+  frame. Feed the folder to `pipeline/reconstruct.py`.
