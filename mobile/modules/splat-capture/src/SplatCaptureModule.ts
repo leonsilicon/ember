@@ -32,6 +32,12 @@ declare class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> 
    * Serves the camera preview on the local network for the web app's live mode: an MJPEG stream at
    * `/camera.mjpg` (plus `/frame.jpg` and `/status`). Frames are only encoded while someone watches.
    */
+  /**
+   * Where recordings stream for live reconstruction (`liveServerUrl`), from now on; null for nowhere.
+   * The connection is made straight away while the viewfinder is on screen (back camera), so a
+   * recording streams from its first frame rather than after a handshake.
+   */
+  setLiveServer(url: string | null, token: string | null): void;
   startCameraStream(port: number): CameraStreamStatus;
   stopCameraStream(): void;
   cameraStreamStatus(): CameraStreamStatus;

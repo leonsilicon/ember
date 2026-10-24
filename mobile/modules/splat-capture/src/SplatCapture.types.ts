@@ -37,6 +37,8 @@ export type CaptureStatus = {
 /** The live stream to the splat server, and what the server has made of it so far. */
 export type LiveStatus = {
   state: 'connecting' | 'open' | 'reconnecting' | 'closed';
+  /** Connected ahead of a recording (see `setLiveServer`), with nothing to stream yet. */
+  standby?: boolean;
   /** Keyframes sent, and fused into the reconstruction or skipped by the server. */
   sent: number;
   fused: number;

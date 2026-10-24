@@ -251,6 +251,11 @@ export class LiveHub {
     }
   }
 
+  /** Starts the depth worker now, so the first keyframe doesn't wait for its model to load. */
+  warm() {
+    this.depthEstimator().catch(() => {});
+  }
+
   private depthEstimator() {
     this.estimator ??= this.startEstimator();
     return this.estimator.catch((error) => {

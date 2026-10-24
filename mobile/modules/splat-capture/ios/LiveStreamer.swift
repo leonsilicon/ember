@@ -13,10 +13,13 @@ import CoreImage
 final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
   private static let imageWidth = 640
 
+  /// Where it streams to, so a connection made ahead of a recording can serve one to the same server.
+  let serverURL: URL
+  let token: String?
   private let endpoint: URL
-  private let token: String?
-  private let sessionId: String
-  private let mode: CaptureMode
+  /// The recording being streamed; nil while standing by, connected before a recording so one streams from its first frame.
+  private(set) var sessionId: String?
+  private var mode: CaptureMode?
   /// The owner's frame queue; every `var` below is only touched on it.
   private let frameQueue: DispatchQueue
   private let encodeQueue = DispatchQueue(label: "soon2026.splatcapture.live", qos: .userInitiated)
@@ -26,10 +29,16 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
   private var task: URLSessionWebSocketTask?
   private var state = "connecting"
   private var error: String?
-  private var closed = false
+  private(set) var closed = false
   /// Denser than the dataset's selection: the reconstruction wants overlapping views.
-  private var selector = FrameSelector(config: FrameSelectorConfig(
-    minInterval: 0.2, maxInterval: 1.0, minTranslation: 0.03, minRotation: 3 * .pi / 180, maxFrames: .max))
+  private static let steadyConfig = FrameSelectorConfig(
+    minInterval: 0.2, maxInterval: 1.0, minTranslation: 0.03, minRotation: 3 * .pi / 180, maxFrames: .max)
+  /// Until the server has fused a keyframe, they go faster: the first ones are often skipped (too few
+  /// feature points in view to pin the depth's scale), and each wait would otherwise be a full second.
+  private static let eagerConfig = FrameSelectorConfig(
+    minInterval: 0.2, maxInterval: 0.3, minTranslation: 0.03, minRotation: 3 * .pi / 180, maxFrames: .max)
+  private var selector = FrameSelector(config: LiveStreamer.steadyConfig)
+  private var eagerSelector = FrameSelector(config: LiveStreamer.eagerConfig)
   private var inFlight = 0
   private var sequence = 0
   private var sent = 0
@@ -38,8 +47,8 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
   private var serverStats: [String: Any] = [:]
 
   /// `serverURL` is the splat server's address (e.g. https://<project>.vercel.app), `token` its access token.
-  init?(serverURL: URL, token: String?, sessionId: String, mode: CaptureMode, frameQueue: DispatchQueue,
-        ciContext: CIContext) {
+  /// Connects at once and stands by; `begin` starts streaming a recording.
+  init?(serverURL: URL, token: String?, frameQueue: DispatchQueue, ciContext: CIContext) {
     guard var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false),
           components.scheme == "http" || components.scheme == "https" else { return nil }
     components.scheme = components.scheme == "https" ? "wss" : "ws"
@@ -47,10 +56,9 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
       ? "/live/ingest"
       : "/" + components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/live/ingest"
     guard let endpoint = components.url else { return nil }
+    self.serverURL = serverURL
     self.endpoint = endpoint
     self.token = token
-    self.sessionId = sessionId
-    self.mode = mode
     self.frameQueue = frameQueue
     self.ciContext = ciContext
     super.init()
@@ -65,6 +73,7 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
   var status: [String: Any] {
     var status: [String: Any] = [
       "state": state,
+      "standby": sessionId == nil,
       "sent": sent,
       "fused": serverStats["fused"] as? Int ?? 0,
       "skipped": serverStats["skipped"] as? Int ?? 0,
@@ -75,18 +84,36 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
     return status
   }
 
+  /// Frame queue only. Starts streaming a recording: over the standby connection if it's open (the
+  /// hello goes at once), else as soon as it connects.
+  func begin(sessionId: String, mode: CaptureMode) {
+    self.sessionId = sessionId
+    self.mode = mode
+    selector = FrameSelector(config: Self.steadyConfig)
+    eagerSelector = FrameSelector(config: Self.eagerConfig)
+    inFlight = 0
+    sequence = 0
+    sent = 0
+    lastPoseAt = 0
+    serverStats = [:]
+    if state == "open", let task { sendHello(on: task) }
+  }
+
   /// Frame queue only. Sends the pose, and the frame as a keyframe if the phone has moved enough.
   func offer(_ frame: ARFrame, trackingNormal: Bool) {
-    guard !closed, state == "open", let task, trackingNormal else { return }
+    guard !closed, state == "open", let task, sessionId != nil, let mode, trackingNormal else { return }
     if frame.timestamp - lastPoseAt >= 1.0 / 15 {
       lastPoseAt = frame.timestamp
       if let message = Self.message(["type": "pose", "t": frame.timestamp, "pose": Self.columnMajor(frame.camera.transform)]) {
         task.send(.data(message)) { _ in }
       }
     }
-    guard inFlight < 2,
-          selector.shouldKeep(timestamp: frame.timestamp, cameraToWorld: frame.camera.transform, trackingNormal: true)
-    else { return }
+    guard inFlight < 2 else { return }
+    let fusedYet = (serverStats["fused"] as? Int ?? 0) > 0
+    let keep = fusedYet
+      ? selector.shouldKeep(timestamp: frame.timestamp, cameraToWorld: frame.camera.transform, trackingNormal: true)
+      : eagerSelector.shouldKeep(timestamp: frame.timestamp, cameraToWorld: frame.camera.transform, trackingNormal: true)
+    guard keep else { return }
     inFlight += 1
     sequence += 1
     let keyframe = LiveKeyframe(frame: frame, sequence: sequence, mode: mode)
@@ -162,14 +189,21 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
 
   func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
     frameQueue.async {
-      guard webSocketTask === self.task, !self.closed,
-            let hello = Self.message(["type": "hello", "session": self.sessionId, "mode": self.mode.rawValue,
-                                      "device": hardwareModel()]) else { return }
+      guard webSocketTask === self.task, !self.closed else { return }
       self.state = "open"
       self.error = nil
-      webSocketTask.send(.data(hello)) { _ in }
+      // Standing by, there's no recording to announce yet; `begin` sends it.
+      self.sendHello(on: webSocketTask)
       self.receive(on: webSocketTask)
     }
+  }
+
+  /// Frame queue only. Announces the recording to the server, which starts (or picks back up) its session.
+  private func sendHello(on task: URLSessionWebSocketTask) {
+    guard let sessionId, let mode,
+          let hello = Self.message(["type": "hello", "session": sessionId, "mode": mode.rawValue, "device": hardwareModel()])
+    else { return }
+    task.send(.data(hello)) { _ in }
   }
 
   func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,

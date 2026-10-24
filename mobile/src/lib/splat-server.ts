@@ -101,6 +101,14 @@ export function liveViewerUrl(serverUrl: string) {
   return endpoint(serverUrl, '/live');
 }
 
+/**
+ * The same page following whichever recording is newest, without its controls: the app loads it
+ * ahead of recording, then locks it onto its recording (see LiveSplatView's `lockSession`).
+ */
+export function liveFollowEmbedUrl(serverUrl: string) {
+  return signedIn(endpoint(serverUrl, '/live?embed'));
+}
+
 /** The same page for one recording (its capture id), without its controls, for showing in the app. */
 export function liveEmbedUrl(serverUrl: string, captureId: string) {
   return signedIn(endpoint(serverUrl, `/live/${encodeURIComponent(captureId)}?embed`));
