@@ -1,22 +1,19 @@
 """Top-down map of where the rover can and can't drive.
 
 A grid over the ground in front of the rover (rover frame, see
-``spatial.py``). Each cell gets one code:
+``spatial.py``), filled from depth. Each cell gets one code:
 
 =====  ==========  ===================================================
 code   kind        meaning
 =====  ==========  ===================================================
-0      unknown     not observed (no depth there, nothing detected)
+0      unknown     not observed (no depth there)
 1      free        ground seen at ground level
 2      obstacle    something sticks up higher than the rover can climb
 3      drop        ground falls away (ditch, hole, edge)
-4+i    hazard      hazard-model class ``i`` (water, rock, ...) on the ground there
 =====  ==========  ===================================================
 
-Depth finds obstacles and drops geometrically, so it catches anything,
-including objects the hazard model has never seen. The hazard model adds
-what depth can't see: water returns little or no LiDAR, and it labels what
-the obstacle is.
+Depth finds obstacles and drops geometrically, so it catches anything solid.
+It can't see water (LiDAR returns little or nothing from it).
 
 **Corridors** answer where *not* to go: for each steering bearing, how far
 the rover, as a strip ``rover_width_m`` wide, can drive before hitting a
@@ -28,8 +25,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-UNKNOWN, FREE, OBSTACLE, DROP, HAZARD_BASE = 0, 1, 2, 3, 4
-BLOCKING_FIXED = {OBSTACLE: "obstacle", DROP: "drop"}
+UNKNOWN, FREE, OBSTACLE, DROP = 0, 1, 2, 3
+KINDS = ("unknown", "free", "obstacle", "drop")
 
 
 @dataclass(frozen=True)
@@ -71,31 +68,19 @@ class GridSpec:
 class OccupancyGrid:
     spec: GridSpec
     codes: np.ndarray  # uint8, spec.shape
-    hazard_names: list[str]
 
     def kind(self, code: int) -> str:
-        if code >= HAZARD_BASE:
-            return self.hazard_names[code - HAZARD_BASE]
-        return ("unknown", "free", "obstacle", "drop")[code]
+        return KINDS[code]
 
     def legend(self) -> dict[int, str]:
-        codes = {UNKNOWN: "unknown", FREE: "free", OBSTACLE: "obstacle", DROP: "drop"}
-        codes.update({HAZARD_BASE + i: name for i, name in enumerate(self.hazard_names)})
-        return codes
+        return dict(enumerate(KINDS))
 
     def is_blocking(self, codes: np.ndarray) -> np.ndarray:
-        return (codes == OBSTACLE) | (codes == DROP) | (codes >= HAZARD_BASE)
+        return (codes == OBSTACLE) | (codes == DROP)
 
 
-def build_grid(
-    spec: GridSpec,
-    rover: RoverSpec,
-    hazard_names: list[str],
-    depth_points: np.ndarray | None = None,
-    hazard_points: list[tuple[int, np.ndarray]] = (),
-) -> OccupancyGrid:
-    """``depth_points``: (N, 3) rover-frame points from LiDAR. ``hazard_points``:
-    (hazard class id, (M, 3) rover-frame ground points) per detection."""
+def build_grid(spec: GridSpec, rover: RoverSpec, depth_points: np.ndarray | None = None) -> OccupancyGrid:
+    """``depth_points``: (N, 3) rover-frame points from depth."""
     n_rows, n_cols = spec.shape
     codes = np.zeros((n_rows, n_cols), dtype=np.uint8)
 
@@ -116,16 +101,7 @@ def build_grid(
         codes[dip >= rover.min_points_per_cell] = DROP
         codes[tall >= rover.min_points_per_cell] = OBSTACLE
 
-    for class_id, points in hazard_points:
-        if points is None or not len(points):
-            continue
-        rows, cols, inside = spec.cell_of(points[:, 0], points[:, 2])
-        target = codes[rows[inside], cols[inside]]
-        # A hazard label never overrides a geometric obstacle: that's the
-        # more certain of the two, and both block.
-        keep = target != OBSTACLE
-        codes[rows[inside][keep], cols[inside][keep]] = HAZARD_BASE + class_id
-    return OccupancyGrid(spec, codes, hazard_names)
+    return OccupancyGrid(spec, codes)
 
 
 @dataclass(frozen=True)

@@ -1,8 +1,7 @@
 import numpy as np
 import pytest
 
-from rover_vision.occupancy import DROP, FREE, HAZARD_BASE, OBSTACLE, UNKNOWN, GridSpec, RoverSpec, build_grid, corridors
-from rover_vision.tasks import HAZARDS
+from rover_vision.occupancy import DROP, FREE, OBSTACLE, UNKNOWN, GridSpec, RoverSpec, build_grid, corridors
 from tests.scenes import camera, render_depth
 
 SPEC = GridSpec()
@@ -11,7 +10,7 @@ ROVER = RoverSpec()
 
 def grid_from(cam, depth):
     points, _ = cam.unproject_depth(depth)
-    return build_grid(SPEC, ROVER, HAZARDS.names, points)
+    return build_grid(SPEC, ROVER, points)
 
 
 def lane(lanes, bearing):
@@ -40,7 +39,7 @@ def test_wall_ahead_blocks_straight_with_correct_clearance_but_not_the_sides():
 def test_low_bump_is_climbable_and_overhead_is_ignored():
     rover = RoverSpec(max_step_m=0.08, clearance_height_m=0.6)
     points = np.array([[0.0, 0.05, 1.0]] * 10 + [[0.0, 1.2, 1.5]] * 10 + [[0.0, 0.0, 0.5]])
-    grid = build_grid(SPEC, rover, HAZARDS.names, points)
+    grid = build_grid(SPEC, rover, points)
     assert not (grid.codes == OBSTACLE).any()
 
 
@@ -51,20 +50,13 @@ def test_hole_is_a_drop():
     assert lane(corridors(grid, ROVER), 0).blocked_by == "drop"
 
 
-def test_hazard_points_mark_cells_but_never_override_obstacles():
-    water = np.array([[x, 0.0, z] for x in np.arange(-0.5, 0.5, 0.05) for z in np.arange(2.0, 2.5, 0.05)])
-    rock = np.array([[0.0, 0.3, 2.2]] * 5)  # an obstacle point inside the water patch
-    grid = build_grid(SPEC, ROVER, HAZARDS.names, rock, [(HAZARDS.class_id("water"), water)])
-    water_code = HAZARD_BASE + HAZARDS.class_id("water")
-    assert (grid.codes == water_code).sum() > 10
-    rows, cols, _ = SPEC.cell_of(np.array([0.0]), np.array([2.2]))
-    assert grid.codes[rows[0], cols[0]] == OBSTACLE
-    assert grid.kind(water_code) == "water" and grid.legend()[water_code] == "water"
-    assert lane(corridors(grid, ROVER), 0).blocked_by in {"water", "obstacle"}
+def test_legend():
+    grid = build_grid(SPEC, ROVER, None)
+    assert grid.legend() == {0: "unknown", 1: "free", 2: "obstacle", 3: "drop"}
 
 
 def test_no_data_is_unknown_and_not_blocking():
-    grid = build_grid(SPEC, ROVER, HAZARDS.names, None)
+    grid = build_grid(SPEC, ROVER, None)
     assert (grid.codes == UNKNOWN).all()
     lanes = corridors(grid, ROVER)
     assert all(c.blocked_by is None and c.observed_m == 0 for c in lanes)

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { headingFromPose } from '../../src/lib/rover-brain/geometry';
-import { corridorAt, corridors, DEFAULT_ROVER, scanDepth } from '../../src/lib/rover-brain/obstacles';
+import { corridorAt, corridors, DEFAULT_ROVER, inView, ObstacleMemory, scanDepth } from '../../src/lib/rover-brain/obstacles';
 import { pose, renderDepth, snapshot } from './scene';
 
 describe('obstacles', () => {
@@ -60,3 +60,53 @@ describe('obstacles', () => {
     expect(scan.floorY).toBeCloseTo(0.35 - DEFAULT_ROVER.cameraHeightM);
   });
 });
+
+describe('ObstacleMemory', () => {
+  const wall = { center: [0, 0, -1.5] as [number, number, number], halfWidth: 0.3, height: 0.5 };
+
+  test('an obstacle stays blocked after the rover turns away from it', () => {
+    const memory = new ObstacleMemory();
+    const ahead = pose([0, 0.35, 0], 15, 0);
+    memory.add(scanDepth(snapshot(ahead, renderDepth(ahead, [wall])))!, 0);
+    // Turned 60° right: the wall is now out of the camera's view.
+    const turned = pose([0, 0.35, 0], 15, 60);
+    memory.add(scanDepth(snapshot(turned, renderDepth(turned)))!, 200);
+    const lanes = corridors(memory.scan(200), headingFromPose(turned)!);
+    expect(corridorAt(lanes, -45)!.blockedBy).toBe('obstacle');
+    // Without memory, the fresh scan alone knows nothing about it.
+    const fresh = corridors(scanDepth(snapshot(turned, renderDepth(turned))), headingFromPose(turned)!);
+    expect(corridorAt(fresh, -45)!.blockedBy).toBeNull();
+  });
+
+  test('what the camera sees now overrides memory, and old points expire', () => {
+    const memory = new ObstacleMemory();
+    const p = pose([0, 0.35, 0], 15, 0);
+    memory.add(scanDepth(snapshot(p, renderDepth(p, [wall])))!, 0);
+    expect(corridorAt(corridors(memory.scan(0), headingFromPose(p)!), 0)!.blockedBy).toBe('obstacle');
+    // The obstacle moved away: the next scan of the same view is clear.
+    memory.add(scanDepth(snapshot(p, renderDepth(p)))!, 200);
+    expect(corridorAt(corridors(memory.scan(200), headingFromPose(p)!), 0)!.blockedBy).toBeNull();
+    expect(memory.scan(10_000)!.points.length).toBe(0);
+    expect(memory.ageMs(1200)).toBe(1000);
+  });
+
+  test('keeps a LiDAR floor over a camera-height guess', () => {
+    const memory = new ObstacleMemory();
+    const p = pose([0, 0.35, 0], 20, 0);
+    memory.add(scanDepth(snapshot(p, renderDepth(p)))!, 0);
+    const fitted = memory.floorY!;
+    const level = pose([0, 0.35, 0], 0, 0);
+    memory.add(scanDepth(snapshot(level, renderDepth(level, [{ center: [0, 0, -0.5], halfWidth: 3, height: 3 }])))!, 100);
+    expect(memory.floorY).toBe(fitted);
+  });
+
+  test('inView', () => {
+    const p = pose([0, 0.35, 0], 0, 0);
+    const view = { pose: p, intrinsics: snapshot(p).intrinsics };
+    expect(inView([0, 0.35, -2], view)).toBe(true);
+    expect(inView([0, 0.35, 2], view)).toBe(false); // behind
+    expect(inView([5, 0.35, -1], view)).toBe(false); // far off to the side
+    expect(inView([0, 0.35, -9], view)).toBe(false); // beyond LiDAR range
+  });
+});
+

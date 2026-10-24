@@ -28,8 +28,8 @@ MAX_BODY_BYTES = 32 * 1024 * 1024
 
 def create_app(perception: Perception, mount: Mount = Mount()) -> FastAPI:
     app = FastAPI(title="rover-vision", version="1")
-    # One frame at a time: the models share the Apple GPU, and PyTorch's MPS
-    # backend crashes if two threads use it at once.
+    # One frame at a time: PyTorch's MPS backend (OWL-ViT on the Apple GPU)
+    # crashes if two threads use it at once.
     lock = threading.Lock()
 
     async def read_frame(request: Request):
@@ -49,7 +49,6 @@ def create_app(perception: Perception, mount: Mount = Mount()) -> FastAPI:
         return {
             "ok": True,
             "schema": SCHEMA,
-            "hazard_model": perception.hazard_detector is not None,
             "leaf_detector": perception.leaf_detector is not None,
             "mount": {"pitch_deg": mount.pitch_deg, "roll_deg": mount.roll_deg, "camera_height_m": mount.camera_height_m},
         }

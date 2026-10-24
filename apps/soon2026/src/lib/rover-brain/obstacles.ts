@@ -63,6 +63,8 @@ export type DepthScan = {
   floorSource: 'lidar' | 'camera_height';
   /** ARKit timestamp of the frame, seconds. */
   timestamp: number;
+  /** The camera that took it, so memory knows which volume this scan covers. */
+  view?: { pose: Pose; intrinsics: Intrinsics };
 };
 
 /** Depth-map pixels → world points, every `stride` pixels. */
@@ -137,9 +139,10 @@ export function scanDepth(
   if (!map || !heading) return null;
   const points = depthToWorld(map, camera.pose, camera.intrinsics);
   const fitted = estimateFloorY(points, heading);
+  const view = { pose: camera.pose, intrinsics: camera.intrinsics };
   return fitted == null
-    ? { points, floorY: heading.origin[1] - rover.cameraHeightM, floorSource: 'camera_height', timestamp: camera.timestamp }
-    : { points, floorY: fitted, floorSource: 'lidar', timestamp: camera.timestamp };
+    ? { points, floorY: heading.origin[1] - rover.cameraHeightM, floorSource: 'camera_height', timestamp: camera.timestamp, view }
+    : { points, floorY: fitted, floorSource: 'lidar', timestamp: camera.timestamp, view };
 }
 
 /** Corridor clearances from the rover's current heading. */
@@ -187,6 +190,108 @@ export function corridors(
       observedM: s.observed,
     };
   });
+}
+
+export type ObstacleMemoryOptions = {
+  /** Points older than this are forgotten (things move; AR drift adds up). */
+  maxAgeMs: number;
+  /** Points are merged into cubes this size, keeping the newest, so memory stays small. */
+  voxelM: number;
+  maxPoints: number;
+};
+
+export const DEFAULT_OBSTACLE_MEMORY: ObstacleMemoryOptions = { maxAgeMs: 4000, voxelM: 0.05, maxPoints: 20000 };
+
+/** Whether a world point falls inside a camera's image, in front of it and within LiDAR range. */
+export function inView(p: Vec3, view: { pose: Pose; intrinsics: Intrinsics }, maxDepthM = MAX_RANGE_M): boolean {
+  const m = view.pose;
+  const d = [p[0] - m[12], p[1] - m[13], p[2] - m[14]];
+  // Camera-space point: the transpose of the pose's rotation applied to the offset.
+  const x = m[0] * d[0] + m[1] * d[1] + m[2] * d[2];
+  const y = m[4] * d[0] + m[5] * d[1] + m[6] * d[2];
+  const z = m[8] * d[0] + m[9] * d[1] + m[10] * d[2];
+  const depth = -z;
+  if (depth < 0.1 || depth > maxDepthM) return false;
+  const k = view.intrinsics;
+  const u = k.cx + (k.fx * x) / depth;
+  const v = k.cy - (k.fy * y) / depth;
+  return u >= 0 && u < k.width && v >= 0 && v < k.height;
+}
+
+/**
+ * LiDAR points from the last few seconds, in world coordinates.
+ *
+ * The phone sees about 50° side to side in portrait, but the rover steers across ±45° and turns in
+ * place to search. Keeping recent scans means that a rock it just turned away from is still
+ * blocked, rather than "unknown" because it's out of view. Each new scan is the truth for what the
+ * camera can see now: remembered points inside its view are dropped before it's added, so memory
+ * only fills in what's out of view, and forgets that after `maxAgeMs`.
+ */
+export class ObstacleMemory {
+  private cells = new Map<string, { point: Vec3; atMs: number }>();
+  private floor: { y: number; source: DepthScan['floorSource'] } | null = null;
+  private lastScanAtMs = -Infinity;
+  private lastTimestamp = 0;
+
+  constructor(private readonly options: ObstacleMemoryOptions = DEFAULT_OBSTACLE_MEMORY) {}
+
+  add(scan: DepthScan, nowMs: number) {
+    if (scan.view) {
+      const view = scan.view;
+      for (const [key, cell] of this.cells) {
+        if (inView(cell.point, view)) this.cells.delete(key);
+      }
+    }
+    const v = this.options.voxelM;
+    for (const p of scan.points) {
+      const key = `${Math.floor(p[0] / v)},${Math.floor(p[1] / v)},${Math.floor(p[2] / v)}`;
+      this.cells.set(key, { point: p, atMs: nowMs });
+    }
+    // A LiDAR-fitted floor beats the camera-height guess; keep the last good one.
+    if (scan.floorSource === 'lidar' || !this.floor || this.floor.source !== 'lidar') {
+      this.floor = { y: scan.floorY, source: scan.floorSource };
+    }
+    this.lastScanAtMs = nowMs;
+    this.lastTimestamp = scan.timestamp;
+    this.prune(nowMs);
+  }
+
+  /** The remembered points as one scan, for `corridors`. Null before the first scan. */
+  scan(nowMs: number): DepthScan | null {
+    if (!this.floor) return null;
+    this.prune(nowMs);
+    return {
+      points: [...this.cells.values()].map((c) => c.point),
+      floorY: this.floor.y,
+      floorSource: this.floor.source,
+      timestamp: this.lastTimestamp,
+    };
+  }
+
+  /** Milliseconds since the last scan was added. */
+  ageMs(nowMs: number) {
+    return nowMs - this.lastScanAtMs;
+  }
+
+  get floorY(): number | null {
+    return this.floor?.y ?? null;
+  }
+
+  clear() {
+    this.cells.clear();
+    this.floor = null;
+    this.lastScanAtMs = -Infinity;
+  }
+
+  private prune(nowMs: number) {
+    for (const [key, cell] of this.cells) {
+      if (nowMs - cell.atMs > this.options.maxAgeMs) this.cells.delete(key);
+    }
+    if (this.cells.size > this.options.maxPoints) {
+      const oldest = [...this.cells].sort((a, b) => a[1].atMs - b[1].atMs);
+      for (const [key] of oldest.slice(0, this.cells.size - this.options.maxPoints)) this.cells.delete(key);
+    }
+  }
 }
 
 /** The corridor closest to a bearing. */

@@ -6,14 +6,13 @@ import pytest
 from rover_vision.detection import Detection
 from rover_vision.perception import FrameInput, Perception, rotate_points_back, upright_turns
 from rover_vision.spatial import Mount, up_from_mount
-from rover_vision.tasks import HAZARDS, Role
 from tests.scenes import camera, render_depth
 
 W, H = 320, 240
 
 
 def leaf_at(u, v, half=6, score=0.2):
-    return Detection("leaves", "dry leaf", Role.TARGET, score, (u - half, v - half, u + half, v + half), (u, v), None)
+    return Detection.from_box("dry leaf", score, (u - half, v - half, u + half, v + half))
 
 
 @pytest.mark.parametrize("turns", [0, 1, 2, 3])
@@ -35,18 +34,10 @@ def test_upright_turns_from_roll():
     assert np.rot90(image, turns)[0].all()  # becomes the top row
 
 
-class FakeHazards:
-    def __init__(self, detections):
-        self.detections = detections
-
-    def __call__(self, image):
-        return self.detections
-
-
-def perceive(leaves, depth=True, hazards=(), height=None):
-    cam = camera(pitch_deg=20, height_m=0.4, w=W, h=H)
-    d = render_depth(cam, walls=[(0.6, 1.4, 1.2, 0.5)]) if depth else None
-    p = Perception(FakeHazards(list(hazards)), None, mount=Mount(20, 0, camera_height_m=height))
+def perceive(leaves, depth=True, height=None, walls=((0.6, 1.4, 1.2, 0.5),), pitch=20):
+    cam = camera(pitch_deg=pitch, height_m=0.4, w=W, h=H)
+    d = render_depth(cam, walls=list(walls)) if depth else None
+    p = Perception(None, mount=Mount(pitch, 0, camera_height_m=height))
     return p.perceive(FrameInput(np.zeros((H, W, 3), np.uint8), cam.intrinsics, depth_m=d, leaves=leaves)), cam
 
 
@@ -68,42 +59,48 @@ def test_leaf_behind_wall_is_unreachable_and_clear_leaf_is_suggested():
     result, _ = perceive([behind, clear])
     by_box = {l.detection.box_xyxy: l for l in result.leaves}
     assert by_box[clear.box_xyxy].reachable
-    blocked = by_box[behind.box_xyxy]
-    assert blocked.position.x_m > 0
-    if blocked.position.distance_m > 1.4:
+    blocked = by_box.get(behind.box_xyxy)
+    if blocked is not None and blocked.position.distance_m > 1.4:
         assert not blocked.reachable and blocked.blocked_by == "obstacle"
     assert result.suggestion.action == "drive_to_leaf"
-    assert result.leaves[result.suggestion.leaf_index].detection is clear
+    assert result.leaves[result.suggestion.leaf_index].detection == clear
 
 
-def test_leaf_inside_water_is_not_reachable_and_water_blocks():
-    water_poly = np.array([[40, 239], [280, 239], [280, 170], [40, 170]], dtype=np.float32)
-    water = Detection("hazards", "water", Role.HAZARD, 0.8, (40, 170, 280, 239), (160, 239), water_poly)
-    result, _ = perceive([leaf_at(160, 200)], hazards=[water])
-    assert result.leaves[0].reachable is False and result.leaves[0].blocked_by == "in hazard"
-    assert result.hazards[0].contact is not None and result.hazards[0].contact.source in {"depth", "ground_plane"}
-    ahead = min(result.corridors, key=lambda c: abs(c.bearing_deg))
-    assert ahead.blocked_by == "water"
+def test_depth_rejects_a_leaf_up_on_a_wall():
+    # A wall 1.2 m ahead, 1 m tall: a box high on it is ~0.6 m off the ground.
+    on_wall = leaf_at(160, 60)
+    on_ground = leaf_at(160, 225)
+    result, _ = perceive([on_wall, on_ground], walls=((-2, 2, 1.2, 1.0),), pitch=5)
+    assert [(r.detection, r.reason) for r in result.rejected] == [(on_wall, "off_ground")]
+    assert result.rejected[0].position.y_m == pytest.approx(0.6, abs=0.05)
+    assert [l.detection for l in result.leaves] == [on_ground]
+
+
+def test_depth_rejects_boxes_too_big_for_a_leaf_pile():
+    # Full-width box around the image centre, ~1.1 m out on open ground: ~1.6 m across.
+    huge = Detection.from_box("leaf pile", 0.2, (0, 100, 319, 140))
+    pile = Detection.from_box("leaf pile", 0.2, (100, 100, 220, 140))  # ~0.6 m: a real pile
+    result, _ = perceive([huge, pile], walls=())
+    assert [(r.detection, r.reason) for r in result.rejected] == [(huge, "too_big")]
+    assert [l.detection for l in result.leaves] == [pile]
 
 
 def test_json_contract():
     result, _ = perceive([leaf_at(160, 200)])
     d = result.to_dict()
-    assert d["schema"] == "rover-perception/1"
-    assert set(d) >= {"image", "camera", "leaves", "hazards", "corridors", "grid", "suggestion", "timing_ms"}
+    assert d["schema"] == "rover-perception/2"
+    assert set(d) >= {"image", "camera", "leaves", "rejected", "corridors", "grid", "suggestion", "timing_ms"}
     leaf = d["leaves"][0]
     assert set(leaf["position"]) == {"x_m", "y_m", "z_m", "distance_m", "bearing_deg", "source"}
+    assert 0.02 < leaf["size_m"] < 0.3
     g = d["grid"]
     codes = np.frombuffer(base64.b64decode(g["codes_b64"]), np.uint8).reshape(g["rows"], g["cols"])
-    assert codes.max() <= 3 + len(HAZARDS.names)
+    assert codes.max() <= 3
     assert "grid" not in result.to_dict(include_grid=False)
 
 
 def test_no_leaves_explores_and_all_blocked_stops():
     result, _ = perceive([])
     assert result.suggestion.action == "explore"
-    cam = camera(pitch_deg=20, height_m=0.4, w=W, h=H)
-    wall = render_depth(cam, walls=[(-3, 3, 0.5, 1.0)])
-    p = Perception(None, None, mount=Mount(20, 0))
-    blocked = p.perceive(FrameInput(np.zeros((H, W, 3), np.uint8), cam.intrinsics, depth_m=wall, leaves=[]))
+    blocked, _ = perceive([], walls=((-3, 3, 0.5, 1.0),))
     assert blocked.suggestion.action == "stop"

@@ -1,14 +1,13 @@
-ultralytics>=8.3
-transformers>=4.40
+# Leaf detector (OWL-ViT)
 torch
-opencv-python
-coremltools
-pycocotools
-huggingface_hub
-pyyaml
+transformers>=4.40
 pillow
+# Geometry, drawing, cameras
 numpy
-pytest
+opencv-python
+# Perception service
 fastapi
 uvicorn
+# Tests
+pytest
 httpx
