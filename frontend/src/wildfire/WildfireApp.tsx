@@ -93,9 +93,15 @@ export default function WildfireApp() {
 
   // On phones the open sheet covers the lower 60% of the map; pad the camera so the selected
   // building / search pin stays in the visible part.
+  const tapEaseRef = useRef(false)
   useEffect(() => {
     const map = mapRef.current
     if (!map || !ready) return
+    if (tapEaseRef.current) {
+      // the tap handler already started an easeTo with centre + padding; don't cancel it
+      tapEaseRef.current = false
+      return
+    }
     const mobile = window.matchMedia('(max-width: 767px)').matches
     map.easeTo({ padding: { top: 0, left: 0, right: 0, bottom: mobile && sheetOpen ? Math.round(window.innerHeight * 0.6) : 0 }, duration: 300 })
   }, [sheetOpen, ready])
@@ -145,11 +151,13 @@ export default function WildfireApp() {
       const props = normalizeProps(f.properties, f.id)
       setSearch({ kind: 'idle' })
       setSelected({ props, geometry: f.geometry })
-      openSheet()
       if (window.matchMedia('(max-width: 767px)').matches) {
-        // keep the tapped footprint in the strip of map left above the sheet
+        // keep the tapped footprint in the strip of map left above the sheet; flag so the
+        // sheet-padding effect doesn't start a competing easeTo that cancels this one
+        tapEaseRef.current = true
         map.easeTo({ center: [props.lon, props.lat], padding: { top: 0, left: 0, right: 0, bottom: Math.round(window.innerHeight * 0.6) }, duration: 350 })
       }
+      openSheet()
     })
     map.on('mouseenter', L.buildingsFill, () => (map.getCanvas().style.cursor = 'pointer'))
     map.on('mouseleave', L.buildingsFill, () => (map.getCanvas().style.cursor = ''))
