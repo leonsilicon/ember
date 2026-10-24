@@ -28,7 +28,7 @@ export function BuildingPanel({ b, categories, coverage, dryness, drynessFactor,
   const score = liveScore(b, drynessFactor)
   const lo = coverage.leafoff
   const litter = b.leafoff_30m
-  const litterLabel = litter == null ? 'no clear satellite view' : litter >= (lo?.full_drop ?? 0.35) ? 'canopy fully dropped' : litter >= 0.15 ? 'leaves coming down' : 'little leaf drop'
+  const litterLabel = litter == null ? 'no clear satellite view' : litter >= (lo?.full_drop ?? 0.35) ? 'canopy fully dropped' : litter >= 0.15 ? 'canopy dropping' : 'little canopy change'
 
   let explain: string
   if (verdict === 'overlap') {
@@ -74,7 +74,7 @@ export function BuildingPanel({ b, categories, coverage, dryness, drynessFactor,
             <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
               <dt className="text-slate-500">Mapped hazard</dt>
               <dd className="text-slate-200">{verdict === 'overlap' ? 'on footprint' : verdict === 'within' ? `${b.nearest_hazard_m != null ? fmtM(b.nearest_hazard_m) : '<30 m'} away` : 'none within 30 m'}</dd>
-              <dt className="text-slate-500">Leaf litter</dt>
+              <dt className="text-slate-500">Canopy leaf-off</dt>
               <dd className="text-slate-200">
                 {litterLabel}
                 {litter != null && <span className="font-mono text-slate-500"> · ΔNDVI {litter.toFixed(2)}</span>}
@@ -93,7 +93,7 @@ export function BuildingPanel({ b, categories, coverage, dryness, drynessFactor,
               Scan with rover
               <span aria-hidden>→</span>
             </a>
-            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Satellite prioritises, the rover verifies: debris itself is not visible from orbit.</p>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Leaf-off is measured canopy greenness loss (Sentinel‑2), not litter on the ground. Satellite prioritises, the rover verifies.</p>
           </div>
         )}
 
@@ -136,7 +136,7 @@ export function BuildingPanel({ b, categories, coverage, dryness, drynessFactor,
           Hazard: {categories.source.name}, {categories.source.date}, {categories.source.resolution_m} m cells. {screen} m is this tool's screening
           distance, informed by FireSmart's Home Ignition Zone; it is not a FireSmart assessment. Footprint: Overture
           {b.footprint_source ? ` (${b.footprint_source})` : ''}.
-          {lo?.leaf_on && lo.leaf_off && ` Leaf litter: Sentinel‑2 NDVI change ${lo.leaf_on.date} → ${lo.leaf_off.date}.`} Dryness: CWFIS Fine Fuel Moisture Code, daily.
+          {lo?.leaf_on && lo.leaf_off && ` Canopy leaf-off: Sentinel‑2 NDVI change ${lo.leaf_on.date} → ${lo.leaf_off.date}.`} Dryness: CWFIS Fine Fuel Moisture Code, daily.
         </p>
       </div>
     </div>

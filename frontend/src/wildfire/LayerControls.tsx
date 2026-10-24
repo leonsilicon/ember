@@ -64,7 +64,7 @@ export function LayerControls(p: Props) {
             <input type="range" min={0} max={1} step={0.05} value={p.opacity} disabled={!p.showHazard} onChange={(e) => p.onOpacity(Number(e.target.value))} className="mt-1 w-full accent-red-500" />
           </label>
           <Toggle label="Buildings" hint="Overture footprints, screened" checked={p.showBuildings} onChange={p.onBuildings} />
-          {lo && <Toggle label="Fresh leaf litter" hint={`Sentinel‑2 ${lo.leaf_on?.date ?? ''} → ${lo.leaf_off?.date ?? ''}`} checked={p.showLeafoff} onChange={p.onLeafoff} accent="accent-amber-400" />}
+          {lo && <Toggle label="Canopy leaf-off" hint={`Sentinel‑2 ${lo.leaf_on?.date ?? ''} → ${lo.leaf_off?.date ?? ''}`} checked={p.showLeafoff} onChange={p.onLeafoff} accent="accent-amber-400" />}
           <Toggle label="Fire weather (FWI)" hint="CWFIS daily grid, coarse" checked={p.showDryness} onChange={p.onDryness} accent="accent-emerald-400" />
 
           <div>
@@ -105,7 +105,7 @@ export function LayerControls(p: Props) {
           </div>
           {lo && p.showLeafoff && (
             <div>
-              <p className={`mb-1 ${MICRO}`}>Fresh leaf litter · NDVI drop</p>
+              <p className={`mb-1 ${MICRO}`}>Canopy leaf-off · NDVI drop</p>
               <ul className="space-y-1 text-xs text-slate-300">
                 {lo.classes.map((c, i) => (
                   <li key={c.drop_class} className="flex items-center gap-2">

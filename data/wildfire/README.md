@@ -44,7 +44,7 @@ area-specific.
 
 `pytest tests` covers inside / boundary / 20 m / far / pine / nodata cases on a synthetic raster.
 
-## Leaf-off (fresh litter) layer and scan priority
+## Canopy leaf-off layer and scan priority
 
 `leafoff.py` pulls two Sentinel-2 L2A scenes from Microsoft Planetary Computer (no key): the clearest
 leaf-on scene (Aug–Sep) and the latest clear autumn scene, masks clouds with SCL, and writes the NDVI
@@ -59,4 +59,9 @@ distance; else 0.1) × litter (0.5 + 0.5 × drop/0.35). The UI multiplies this b
 Moisture Code (live GetFeatureInfo), so the number on screen moves with the weather. `leafoff.pmtiles`
 holds the drop classes (≥0.25 / ≥0.32 / ≥0.40) where there was canopy (leaf-on NDVI > 0.4).
 
-Satellites can't see a leaf pile; this ranks where the rover should look first, the rover verifies.
+Satellites can't see a leaf pile; the drop measures canopy greenness loss, not litter on the ground. It ranks where the
+rover should look first, the rover verifies.
+
+`validate_leafoff.py` checks the layer against Ontario's fuel types (independent data): on the pilot, hardwood (D-1)
+cells show a median NDVI drop of 0.26 (57% ≥ 0.25), conifer stands 0.09 (0.5% ≥ 0.25), water 0.01; the drop separates
+hardwood from conifer with AUC 0.96. It cannot validate litter on a specific lawn — nobody has ground truth for that.
