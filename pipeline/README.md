@@ -28,7 +28,8 @@ export OPENSPLAT=~/OpenSplat/build/opensplat     # or pass --opensplat
 ```
 
 Metal (GPU) acceleration needs the full Xcode app plus its Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`);
-with only Command Line Tools installed, cmake prints "Metal compiler not found" and builds a CPU-only binary, which works but is slower.
+with only Command Line Tools installed, cmake prints "Metal compiler not found" and builds a CPU-only binary, which works but is slower
+(`reconstruct.py` notices the "GPU support not built" error and re-runs OpenSplat with `--cpu`; pass `--cpu` to skip the first attempt).
 The exact flags are maintained in the OpenSplat README (https://github.com/pierotofy/OpenSplat#macos).
 
 ## Linux (what the VM used)

@@ -20,13 +20,20 @@ from pathlib import Path
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png'}
 
 
-def run(cmd, log):
+def run(cmd, log, check=True):
     print(f'$ {" ".join(str(c) for c in cmd)}', flush=True)
     with open(log, 'ab') as f:
         f.write(f'\n$ {" ".join(str(c) for c in cmd)}\n'.encode())
         proc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)
-    if proc.returncode != 0:
+    if check and proc.returncode != 0:
         sys.exit(f'command failed (exit {proc.returncode}); see {log}')
+    return proc.returncode
+
+
+def log_tail(log, nbytes=4000):
+    with open(log, 'rb') as f:
+        f.seek(max(0, Path(log).stat().st_size - nbytes))
+        return f.read().decode(errors='replace')
 
 
 def which_or_die(name, override=None):
@@ -72,10 +79,11 @@ def main():
                          'exhaustive = unordered photos (default for small sets)')
     ap.add_argument('--overlap', type=int, default=10, help='sequential matcher: neighbours per frame')
     ap.add_argument('--skip-colmap', action='store_true', help='reuse an existing sparse/0')
+    ap.add_argument('--cpu', action='store_true', help='force OpenSplat onto the CPU (auto-detected when the build has no GPU support)')
     args = ap.parse_args()
 
     images_src = Path(args.images).resolve()
-    frames = sorted(p for p in images_src.iterdir() if p.suffix.lower() in IMAGE_EXTS)
+    frames = sorted(p for p in images_src.iterdir() if p.suffix.lower() in IMAGE_EXTS and not p.name.startswith('.'))
     if len(frames) < 5:
         sys.exit(f'need at least 5 images, found {len(frames)} in {images_src}')
 
@@ -126,7 +134,16 @@ def main():
     # OpenSplat expects the COLMAP layout <project>/images + <project>/sparse/0.
     t0 = time.time()
     print(f'[2/3] OpenSplat {args.iters} iterations', flush=True)
-    run([opensplat, out, '-n', str(args.iters), '-d', str(args.downscale), '--center', '-o', splat_out], log)
+    cmd = [opensplat, out, '-n', str(args.iters), '-d', str(args.downscale), '--center', '-o', splat_out]
+    if args.cpu:
+        cmd.append('--cpu')
+    rc = run(cmd, log, check=False)
+    if rc != 0 and not args.cpu and 'GPU support not built' in log_tail(log):
+        # macOS OpenSplat defaults to Metal even when compiled without it (no Xcode); fall back to CPU.
+        print('      this opensplat has no GPU support; retrying with --cpu', flush=True)
+        run(cmd + ['--cpu'], log)
+    elif rc != 0:
+        sys.exit(f'command failed (exit {rc}); see {log}')
     print(f'      done in {time.time() - t0:.0f}s', flush=True)
 
     print(f'[3/3] splat written: {splat_out} ({splat_out.stat().st_size / 1e6:.1f} MB)')
