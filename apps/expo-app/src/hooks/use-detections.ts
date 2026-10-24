@@ -6,6 +6,7 @@ import type { SharedValue } from 'react-native-reanimated';
 import SplatCapture, { type DetectionCamera, type DetectionFrame } from '../../modules/splat-capture';
 
 import type { Size } from '@/components/detection-overlay';
+import { lidarDistances } from '@/lib/rover-brain';
 
 const MODEL_NAME = 'OWL-ViT · leaves';
 /** packages/owlvit's build, which plugins/with-leaf-detector.js embeds in the app. */
@@ -44,6 +45,12 @@ export type DetectionResult = {
   latencyMs: number;
   /** Where the camera was for the frame, to place the detections in the world. */
   camera?: DetectionCamera;
+  /**
+   * How far each detection is from the phone in metres, by index, measured with LiDAR on the same
+   * frame; null where LiDAR has no reading. Missing for frames without depth (no LiDAR, or the front
+   * camera).
+   */
+  distances?: (number | null)[];
 };
 
 export type Detections = {
@@ -162,10 +169,14 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
           });
           if (cancelled) break;
           const latencyMs = Date.now() - start;
+          const boxes = uncrop(detections, frame);
           setResult((previous) => ({
-            ...uncrop(detections, frame),
+            ...boxes,
             zoom: frame.zoom,
             camera: frame.camera,
+            // Measured here, with the boxes, rather than by the rover brain a render later, so no box
+            // ever shows without its distance.
+            distances: frame.camera && lidarDistances(boxes.detections, boxes.frameSize, frame.camera),
             latencyMs: previous ? previous.latencyMs * 0.9 + latencyMs * 0.1 : latencyMs,
           }));
           setError(undefined);

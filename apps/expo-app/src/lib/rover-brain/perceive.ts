@@ -15,7 +15,7 @@
  * Floor-ray placements can't be height-checked (they're on the floor by construction), only sized.
  */
 
-import { decodeDepth, depthAt, headingFromPose, rayToFloor, toRover, transformPoint, unproject, uprightToSensor } from './geometry';
+import { decodeDepth, depthAt, headingFromPose, norm, rayToFloor, toRover, transformPoint, unproject, uprightToSensor } from './geometry';
 import type { DepthMap, Intrinsics, Pose, RoverPoint, Size, Vec3 } from './geometry';
 import type { LeafObservation } from './leaf-map';
 
@@ -93,6 +93,29 @@ export function boxDepth(map: DepthMap, corners: [number, number][], k: Intrinsi
   if (!samples.length) return depthAt(map, cx, cy, k, 1);
   samples.sort((a, b) => a - b);
   return samples[Math.floor(samples.length / 2)];
+}
+
+/**
+ * How far each detection is from the phone, measured with LiDAR: metres in a straight line to
+ * where the box centre's ray meets the box's median depth (`boxDepth`). Null for a box LiDAR has
+ * no reading in (beyond its ~5 m range, or only low-confidence readings); undefined for a frame
+ * without depth (no LiDAR, or the front camera). Unlike placing leaves, it needs no AR tracking.
+ */
+export function lidarDistances(
+  detections: readonly BoxDetection[],
+  frameSize: Size,
+  camera: Pick<CameraSnapshot, 'intrinsics' | 'depth'>,
+): (number | null)[] | undefined {
+  const depth = decodeDepth(camera.depth);
+  if (!depth || frameSize.width <= 0 || frameSize.height <= 0) return undefined;
+  const k = camera.intrinsics;
+  return detections.map(({ box }) => {
+    const corners = [uprightToSensor(box.xmin, box.ymin, frameSize, k), uprightToSensor(box.xmax, box.ymax, frameSize, k)];
+    const d = boxDepth(depth, corners, k);
+    if (d == null) return null;
+    const [x, y] = uprightToSensor((box.xmin + box.xmax) / 2, (box.ymin + box.ymax) / 2, frameSize, k);
+    return norm(unproject(x, y, d, k));
+  });
 }
 
 /**

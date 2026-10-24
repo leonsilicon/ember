@@ -26,7 +26,12 @@ type DetectionOverlayProps = {
   zoom: SharedValue<number>;
   /** Whether the model input was upside down, so boxes have to be rotated back. */
   rotated180: boolean;
-  /** Extra text per detection, by index, e.g. how far away it is. */
+  /**
+   * How far each detection is from the phone in metres, by index; null where it isn't known. When
+   * given, each tag shows it in place of the detector's confidence.
+   */
+  distances?: readonly (number | null)[];
+  /** Extra text per detection, by index, e.g. why the rover ignores it. */
   captions?: readonly (string | undefined)[];
 };
 
@@ -38,6 +43,13 @@ export function labelColor(label: string) {
     hash = (hash * 31 + label.charCodeAt(i)) | 0;
   }
   return PALETTE[Math.abs(hash) % PALETTE.length];
+}
+
+/** "45 cm" up close, "1.4 m" from a metre on, "– m" when unknown. */
+export function formatDistance(metres: number | null | undefined) {
+  if (metres == null) return '– m';
+  const cm = Math.round(metres * 100);
+  return cm < 100 ? `${cm} cm` : `${metres.toFixed(1)} m`;
 }
 
 function rotateBox(box: Box, size: Size): Box {
@@ -57,6 +69,7 @@ export function DetectionOverlay({
   viewSize,
   zoom,
   rotated180,
+  distances,
   captions,
 }: DetectionOverlayProps) {
   // Follows the pinch, so the boxes stay on what they found as the preview zooms.
@@ -97,7 +110,8 @@ export function DetectionOverlay({
             <View
               style={[styles.tag, top < 24 ? styles.tagInside : styles.tagAbove, { backgroundColor: color }]}>
               <ThemedText type="smallBold" style={styles.tagText} numberOfLines={1}>
-                {detection.label} {Math.round(detection.confidence * 100)}%
+                {detection.label}{' '}
+                {distances ? formatDistance(distances[index]) : `${Math.round(detection.confidence * 100)}%`}
                 {captions?.[index] ? ` · ${captions[index]}` : ''}
               </ThemedText>
             </View>

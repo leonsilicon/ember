@@ -360,6 +360,7 @@ export default function CameraScreen() {
                   viewSize={viewSize}
                   zoom={zoom}
                   rotated180={false}
+                  distances={result.distances}
                   captions={brain.captionsFor === result ? brain.captions : undefined}
                 />
               )}
