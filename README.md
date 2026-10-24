@@ -217,6 +217,11 @@ phone and in `backend/rover_vision/leaf_detector.py` for the Mac.
   halfway towards each new sighting, and keeps its label until another clearly wins. The rover
   brain places only the frame's actual sightings in the world, never a coasting box. Tuning:
   `trackerOptions` there.
+- **It's meant to run the whole time the app is open.** The leaf indicator spins while the model
+  loads (Core ML compiles it on the phone the first time) and while it runs its first frames; a
+  load that fails is tried again after 5, 10, 30, then 60 s; switching detection off in the camera
+  options leaves a dimmed leaf that turns it back on when tapped; and the camera screen keeps the
+  phone awake, since a locked screen stops ARKit and detection with it.
 
 **What we tried first** (`backend/archive/`, gitignored): a YOLOv8-seg model trained on a
 beet/rye leaf-disease dataset (green leaves 0.54 mAP50, but dead leaves only 0.04 because that data

@@ -38,8 +38,8 @@ def which_or_die(name, override=None):
 
 def colmap_option_prefixes(colmap):
     """COLMAP <= 3.x names these SiftExtraction/SiftMatching; 3.10+ renamed them FeatureExtraction/FeatureMatching."""
-    help_text = subprocess.run([colmap, 'feature_extractor', '--help'], capture_output=True, text=True).stdout
-    if 'FeatureExtraction.use_gpu' in help_text:
+    proc = subprocess.run([colmap, 'feature_extractor', '--help'], capture_output=True, text=True)
+    if 'FeatureExtraction.use_gpu' in proc.stdout + proc.stderr:
         return 'FeatureExtraction', 'FeatureMatching'
     return 'SiftExtraction', 'SiftMatching'
 

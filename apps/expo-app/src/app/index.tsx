@@ -1,5 +1,6 @@
 import { useEvent } from 'expo';
 import { Image } from 'expo-image';
+import { useKeepAwake } from 'expo-keep-awake';
 import { router, useFocusEffect, useIsFocused } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SymbolView } from 'expo-symbols';
@@ -141,6 +142,8 @@ function describeDetections(detections: Detections): Indicator {
       icon: detections.unavailable ? 'leaf-off' : 'leaf',
       tone: detections.unavailable ? 'warn' : 'dim',
       label: detections.status,
+      // Loading, or running its first frames: the spinner says so, since there's nothing to show yet.
+      busy: detections.busy,
     };
   }
   if (detections.error) return { key, icon: 'leaf-off', tone: 'warn', label: `Detection failed: ${detections.error}` };
@@ -174,6 +177,9 @@ function summarize(detections: Detection[]) {
 export default function CameraScreen() {
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();
+  // The phone rides on the rover: were the screen to lock, ARKit and detection would stop with it.
+  // (Development builds already keep it awake; this is for the production app.)
+  useKeepAwake();
   const [capabilities] = useState(() => SplatCapture.getCapabilities());
   const [phase, setPhase] = useState<Phase>({ kind: 'ready' });
   const [mode, setMode] = useState<Mode>('camera');
@@ -326,7 +332,22 @@ export default function CameraScreen() {
     );
   }
   if (recording && status.live) indicators.push(describeLive(status.live));
-  if (detection) indicators.push(describeDetections(detections));
+  if (detection) {
+    indicators.push(describeDetections(detections));
+  } else {
+    // Switched off in the camera options: say so, rather than leaving no trace, since the rover's
+    // brain is off with it. A tap turns it back on, like the LiDAR indicator.
+    indicators.push({
+      key: 'detections',
+      icon: 'leaf-off',
+      tone: 'dim',
+      label: 'Detection off. Tap to turn it on',
+      onPress: () => {
+        setDetection(true);
+        showCaption('Detection on');
+      },
+    });
+  }
   if (cameraStream) indicators.push(describeCameraStream(cameraStream));
   const busy = recording || phase.kind === 'saving';
   const result = detections.result;

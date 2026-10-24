@@ -3,7 +3,7 @@ import {
   type MaterialDesignIconsIconName,
 } from '@react-native-vector-icons/material-design-icons';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { Glass } from './glass';
@@ -20,6 +20,8 @@ export type Indicator = {
   tone?: 'dim' | 'good' | 'warn' | 'on';
   /** A count beside the icon. */
   text?: string;
+  /** Something is on its way (a model loading, say): a spinner turns over the icon. */
+  busy?: boolean;
   /** For a setting, like the Camera app's flash: what a tap does, instead of saying what it means. */
   onPress?: () => void;
 };
@@ -72,7 +74,10 @@ export function CameraStatus({
               hitSlop={Spacing.one}
               onPress={indicator.onPress ?? (() => onPressIndicator(indicator))}
               style={({ pressed }) => [styles.indicator, pressed && styles.pressed]}>
-              <MaterialDesignIcons name={indicator.icon} size={22} color={color} />
+              <View style={styles.icon}>
+                <MaterialDesignIcons name={indicator.icon} size={ICON_SIZE} color={color} />
+                {indicator.busy && <ActivityIndicator size="small" color="#fff" style={styles.spinner} />}
+              </View>
               {indicator.text && <Text style={[styles.text, { color }]}>{indicator.text}</Text>}
             </Pressable>
           );
@@ -96,6 +101,7 @@ export function useCaption(durationMs = 2500) {
 }
 
 const RAIL_WIDTH = 40;
+const ICON_SIZE = 22;
 
 const styles = StyleSheet.create({
   container: {
@@ -119,6 +125,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minWidth: RAIL_WIDTH,
     minHeight: 28,
+  },
+  icon: {
+    width: ICON_SIZE,
+    height: ICON_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  /** Rings the icon rather than covering it: the small indicator is 20 pt, scaled past the glyph. */
+  spinner: {
+    position: 'absolute',
+    transform: [{ scale: 1.4 }],
   },
   text: {
     fontSize: 11,
