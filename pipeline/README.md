@@ -17,17 +17,18 @@ Options: `--iters N` (default 2000; 300 is a fast smoke test, 7000+ looks good),
 ## Install on macOS (Apple Silicon)
 
 ```
-brew install colmap cmake opencv
-# OpenSplat (Metal build)
-git clone https://github.com/pierotofy/OpenSplat ~/OpenSplat && cd ~/OpenSplat
-pip3 install torch      # or download libtorch for macOS arm64 from pytorch.org
-mkdir build && cd build
-cmake -DGPU_RUNTIME=MPS -DCMAKE_PREFIX_PATH=$(python3 -c 'import torch;print(torch.utils.cmake_prefix_path)') ..
-make -j
+brew install colmap cmake opencv pytorch     # pytorch = libtorch; ~15 min of downloads
+git clone https://github.com/pierotofy/OpenSplat ~/OpenSplat
+cd ~/OpenSplat && mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/pytorch \
+      -DTorch_DIR=$(dirname $(find /opt/homebrew/opt/pytorch/ -name TorchConfig.cmake | head -1)) ..
+make -j$(sysctl -n hw.logicalcpu)
 export OPENSPLAT=~/OpenSplat/build/opensplat     # or pass --opensplat
 ```
 
-If the Metal build gives trouble, `-DGPU_RUNTIME=CPU` works too (slower; still fine for a few thousand iterations on a small dataset).
+Metal (GPU) acceleration needs the full Xcode app plus its Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`);
+with only Command Line Tools installed, cmake prints "Metal compiler not found" and builds a CPU-only binary, which works but is slower.
 The exact flags are maintained in the OpenSplat README (https://github.com/pierotofy/OpenSplat#macos).
 
 ## Linux (what the VM used)

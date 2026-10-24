@@ -36,6 +36,14 @@ def which_or_die(name, override=None):
     return path
 
 
+def colmap_option_prefixes(colmap):
+    """COLMAP <= 3.x names these SiftExtraction/SiftMatching; 3.10+ renamed them FeatureExtraction/FeatureMatching."""
+    help_text = subprocess.run([colmap, 'feature_extractor', '--help'], capture_output=True, text=True).stdout
+    if 'FeatureExtraction.use_gpu' in help_text:
+        return 'FeatureExtraction', 'FeatureMatching'
+    return 'SiftExtraction', 'SiftMatching'
+
+
 def promote_largest_model(sparse: Path):
     """COLMAP may split the scene into several models; OpenSplat reads sparse/0, so put the biggest there."""
     models = [p for p in sparse.iterdir() if p.is_dir() and (p / 'images.bin').exists()]
@@ -97,15 +105,16 @@ def main():
 
         t0 = time.time()
         print(f'[1/3] COLMAP on {len(frames)} images', flush=True)
+        extraction, matching = colmap_option_prefixes(colmap)
         run([colmap, 'feature_extractor', '--database_path', db, '--image_path', images,
              '--ImageReader.single_camera', '1', '--ImageReader.camera_model', 'SIMPLE_RADIAL',
-             '--SiftExtraction.use_gpu', '0', '--SiftExtraction.max_image_size', str(args.max_image_size)], log)
+             f'--{extraction}.use_gpu', '0', f'--{extraction}.max_image_size', str(args.max_image_size)], log)
         matcher = args.matcher if args.matcher != 'auto' else ('sequential' if len(frames) >= 30 else 'exhaustive')
         if matcher == 'sequential':
-            run([colmap, 'sequential_matcher', '--database_path', db, '--SiftMatching.use_gpu', '0',
+            run([colmap, 'sequential_matcher', '--database_path', db, f'--{matching}.use_gpu', '0',
                  '--SequentialMatching.overlap', str(args.overlap)], log)
         else:
-            run([colmap, 'exhaustive_matcher', '--database_path', db, '--SiftMatching.use_gpu', '0'], log)
+            run([colmap, 'exhaustive_matcher', '--database_path', db, f'--{matching}.use_gpu', '0'], log)
         run([colmap, 'mapper', '--database_path', db, '--image_path', images, '--output_path', sparse], log)
         promote_largest_model(sparse)
         print(f'      done in {time.time() - t0:.0f}s ({matcher} matching)', flush=True)
