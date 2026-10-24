@@ -23,6 +23,10 @@ class LeafDetector:
         self.max_detections = max_detections
         self._model = leaf_detector.load_detector()
 
+    @property
+    def device(self) -> str:
+        return self._model[3]
+
     def __call__(self, frame: np.ndarray) -> list[Detection]:
         raw = leaf_detector.detect(frame, self._model, self.tile_grid)
         return to_detections(raw, self.threshold, frame.shape, self.max_detections)

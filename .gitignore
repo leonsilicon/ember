@@ -1,6 +1,34 @@
+# OS / editors
 .DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Python
 .venv/
 venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+
+# Secrets
 .env
+.env.*
+
+# Large media and model files, wherever they end up
+*.mp4
+*.mov
+*.MOV
+*.avi
+*.pt
+*.onnx
+*.mlpackage
+*.mlmodel
+*.zip
+*.7z
+
+# leaf_detector.py output next to input images
+*-detections.jpg
+*-detections.png

@@ -30,6 +30,8 @@ def run(
     use_hazard_model: bool = True,
     hazard_weights: Path | None = None,
     hazard_conf: float = 0.35,
+    hazard_device: str | None = None,
+    hazard_imgsz: int = 512,  # training size; ~75 ms/frame on M4 CPU vs ~135 ms at 640
     leaf_threshold: float = 0.05,
     tile_grid: int = 2,
     cfg: NavConfig = NavConfig(),
@@ -39,12 +41,24 @@ def run(
 ):
     from rover_vision.leaves import LeafDetector  # heavy import (transformers); keep CLI startup fast
 
+    leaf_model = LeafDetector(leaf_threshold, tile_grid)
+    # PyTorch's MPS backend is not thread-safe: OWL-ViT encoding on the GPU in
+    # its background thread while the hazard model also uses the GPU aborts
+    # the process ("A command encoder is already encoding"). The nano hazard
+    # model is fast enough on CPU, so the GPU stays OWL-ViT's alone.
+    if hazard_device is None:
+        hazard_device = "cpu" if leaf_model.device == "mps" else None
     hazards_model = (
-        Detector([HAZARDS], {HAZARDS.name: hazard_weights} if hazard_weights else None, conf=hazard_conf)
+        Detector(
+            [HAZARDS],
+            {HAZARDS.name: hazard_weights} if hazard_weights else None,
+            conf=hazard_conf,
+            imgsz=hazard_imgsz,
+            device=hazard_device,
+        )
         if use_hazard_model
         else None
     )
-    leaf_model = LeafDetector(leaf_threshold, tile_grid)
     single_image = Path(source).suffix.lower() in IMAGE_SUFFIXES
 
     leaves: list[Detection] = []

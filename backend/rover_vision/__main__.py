@@ -64,6 +64,8 @@ def cmd_navigate(args):
         use_hazard_model=not args.no_hazard_model,
         hazard_weights=args.hazard_weights,
         hazard_conf=args.hazard_conf,
+        hazard_device=args.hazard_device,
+        hazard_imgsz=args.hazard_imgsz,
         leaf_threshold=args.leaf_threshold,
         tile_grid=args.tile_grid,
         cfg=cfg,
@@ -142,6 +144,8 @@ def build_parser() -> argparse.ArgumentParser:
     nav.add_argument("--tile-grid", type=int, choices=(1, 2, 3), default=2, help="OWL-ViT crops per side")
     nav.add_argument("--hazard-conf", type=float, default=0.35)
     nav.add_argument("--hazard-weights", type=Path, help="default: runs/segment/hazards/weights/best.pt")
+    nav.add_argument("--hazard-device", help="default: cpu when OWL-ViT uses the Apple GPU (MPS isn't thread-safe)")
+    nav.add_argument("--hazard-imgsz", type=int, default=512, help="hazard model input size")
     nav.add_argument("--no-hazard-model", action="store_true", help="depth-only obstacle detection")
     nav.add_argument("--sectors", type=int, default=7, help="steering directions across the view")
     nav.add_argument("--hfov", type=float, default=69.0, help="camera horizontal field of view (deg)")
