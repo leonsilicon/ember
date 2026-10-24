@@ -2,7 +2,7 @@
 """Images -> COLMAP (poses + sparse points) -> OpenSplat (Gaussian splat) -> .splat/.ply.
 
 Usage:
-  python3 pipeline/reconstruct.py <images_dir> [--out <project_dir>] [--iters 2000]
+  python3 pipeline/reconstruct.py <images_dir> [--out <project_dir>] [--iters 3000]
                                   [--splat <path/to/out.splat>] [--opensplat <path>]
 
 Produces <project_dir>/images/, <project_dir>/sparse/0/ (COLMAP) and the final splat
@@ -68,7 +68,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('images', help='folder of .jpg/.png frames of one scene')
     ap.add_argument('--out', help='project dir (default: <images>/../recon)')
-    ap.add_argument('--iters', type=int, default=2000, help='OpenSplat iterations (2000 quick, 7000+ nicer)')
+    ap.add_argument('--iters', type=int, default=3000, help='OpenSplat iterations (3000 decent, 7000+ nicer)')
     ap.add_argument('--splat', help='output splat path (default: <out>/scene.splat)')
     ap.add_argument('--opensplat', default=os.environ.get('OPENSPLAT'), help='path to opensplat binary')
     ap.add_argument('--colmap', default=os.environ.get('COLMAP', 'colmap'), help='path to colmap binary')
@@ -134,7 +134,13 @@ def main():
     # OpenSplat expects the COLMAP layout <project>/images + <project>/sparse/0.
     t0 = time.time()
     print(f'[2/3] OpenSplat {args.iters} iterations', flush=True)
-    cmd = [opensplat, out, '-n', str(args.iters), '-d', str(args.downscale), '--center', '-o', splat_out]
+    # OpenSplat's stock schedule densifies only at steps 500/1000 on short runs, which leaves the
+    # splat count at roughly the sparse-point count; refine often and keep growing until 80% of the run.
+    cmd = [
+        opensplat, out, '-n', str(args.iters), '-d', str(args.downscale), '--center',
+        '--refine-every', '100', '--densify-from', '300', '--densify-until', str(int(args.iters * 0.8)),
+        '-o', splat_out,
+    ]
     if args.cpu:
         cmd.append('--cpu')
     rc = run(cmd, log, check=False)
