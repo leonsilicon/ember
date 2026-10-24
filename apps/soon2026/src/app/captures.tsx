@@ -117,15 +117,17 @@ function DebugCard() {
           (h) =>
             alive &&
             setServer(
-              [
-                h.brush ? 'Connected · Brush ready' : 'Connected, but Brush is not installed',
-                h.depthWorker === false ? 'live 3D needs server/scripts/install-depth.sh' : null,
-              ]
-                .filter(Boolean)
-                .join(' · '),
+              !h.agent
+                ? 'Connected, but the Mac agent is offline (bun run agent in server/), so nothing trains'
+                : [
+                    h.brush ? 'Connected · Mac agent ready' : 'Connected, but Brush is not installed on the Mac',
+                    h.depthWorker ? null : 'live 3D needs server/scripts/install-depth.sh',
+                  ]
+                    .filter(Boolean)
+                    .join(' · '),
             ),
         )
-        .catch((e) => alive && setServer(`Unreachable (${e instanceof Error ? e.message : e}). Run: bun run splat-server`));
+        .catch((e) => alive && setServer(`Unreachable (${e instanceof Error ? e.message : e})`));
       return () => {
         alive = false;
       };
@@ -139,8 +141,9 @@ function DebugCard() {
         <Switch value={debug.splatPreview} onValueChange={(splatPreview) => updateDebugSettings({ splatPreview })} />
       </View>
       <ThemedText type="small" themeColor="textSecondary">
-        Trains a capture into a splat on a Mac running server/ (Brush) and opens it in the browser, to compare
-        with the real reconstruction. The viewer link works on any device.
+        Sends a capture to the splat server, where a Mac running its agent trains it into a splat (Brush),
+        and opens it in the browser, to compare with the real reconstruction. The viewer link works on any
+        device.
       </ThemedText>
       {debug.splatPreview && (
         <>
@@ -164,7 +167,8 @@ function DebugCard() {
             <Switch value={debug.liveStream} onValueChange={(liveStream) => updateDebugSettings({ liveStream })} />
           </View>
           <ThemedText type="small" themeColor="textSecondary">
-            Streams each recording to the server, which rebuilds the scene as you move. Watch it on the Mac at{' '}
+            Streams each recording to the server, which rebuilds the scene as you move. It floats over the
+            camera while you record (tap it to swap the two), and the Mac can watch it at{' '}
             <ThemedText type="code">{liveViewerUrl(debug.serverUrl)}</ThemedText>
           </ThemedText>
         </>

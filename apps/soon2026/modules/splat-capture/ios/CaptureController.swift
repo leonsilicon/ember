@@ -8,11 +8,19 @@ enum CaptureMode: String {
   case features
 }
 
+enum CameraPosition: String, CaseIterable {
+  /// World tracking: the camera that records.
+  case back
+  /// Face tracking on the TrueDepth camera, which previews and feeds detection but can't record.
+  case front
+}
+
 enum CaptureError: LocalizedError {
   case arkitUnsupported
   case alreadyRecording
   case notRecording
   case noFrames
+  case frontCamera
 
   var errorDescription: String? {
     switch self {
@@ -20,6 +28,7 @@ enum CaptureError: LocalizedError {
     case .alreadyRecording: return "A capture is already recording."
     case .notRecording: return "No capture is recording."
     case .noFrames: return "No frames were kept. Move the phone slowly around the subject and keep it tracking (not 'limited')."
+    case .frontCamera: return "Recording needs the back camera. Flip back to record."
     }
   }
 }
@@ -53,6 +62,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
   private var isRunning = false
   private var previewVisible = false
   private var consecutiveFailures = 0
+  private var camera = CameraPosition.back
 
   // frameQueue state
   private var recording: Recording?
@@ -63,12 +73,14 @@ final class CaptureController: NSObject, ARSessionDelegate {
   private var recoveringFromFailure = false
   private var lastStatusAt: TimeInterval = 0
   private var tracking = ("notAvailable", nil as String?)
+  private var frontCamera = false
 
   static var supportsARKit: Bool { ARWorldTrackingConfiguration.isSupported }
   static var supportsLiDAR: Bool { ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) }
+  static var supportsFrontCamera: Bool { ARFaceTrackingConfiguration.isSupported }
 
   static func capabilities() -> [String: Any] {
-    ["arkit": supportsARKit, "lidar": supportsLiDAR]
+    ["arkit": supportsARKit, "lidar": supportsLiDAR, "frontCamera": supportsFrontCamera]
   }
 
   /// Where a capture is written while it records; it is zipped into `library` when it stops.
@@ -107,15 +119,40 @@ final class CaptureController: NSObject, ARSessionDelegate {
     }
   }
 
+  /// Main thread only. Switches the preview's camera, restarting a running session on it. The front
+  /// camera has no world tracking, so a recording in progress stops taking frames, as on tracking loss.
+  func setCamera(_ position: CameraPosition) {
+    let position = Self.supportsFrontCamera ? position : .back
+    guard position != camera else { return }
+    camera = position
+    frameQueue.async {
+      self.frontCamera = position == .front
+      guard self.frontCamera, let recording = self.recording else { return }
+      recording.frozen = true
+      self.live?.close(reason: "Switched to the front camera, so live streaming stopped")
+    }
+    if isRunning {
+      isRunning = false
+      runSession(reset: true)
+    }
+  }
+
   private func runSession(reset: Bool = false) {
     guard Self.supportsARKit, let session, !isRunning else { return }
+    session.run(configuration(), options: reset ? [.resetTracking, .removeExistingAnchors] : [])
+    isRunning = true
+  }
+
+  private func configuration() -> ARConfiguration {
+    if camera == .front {
+      return ARFaceTrackingConfiguration()
+    }
     let config = ARWorldTrackingConfiguration()
     config.worldAlignment = .gravity
     if Self.supportsLiDAR {
       config.frameSemantics.insert(.sceneDepth)
     }
-    session.run(config, options: reset ? [.resetTracking, .removeExistingAnchors] : [])
-    isRunning = true
+    return config
   }
 
   /// Main thread only. World tracking doesn't recover from a failure by itself (e.g.
@@ -145,6 +182,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
     guard Self.supportsARKit else { return completion(.failure(CaptureError.arkitUnsupported)) }
     frameQueue.async {
       guard self.recording == nil else { return completion(.failure(CaptureError.alreadyRecording)) }
+      guard !self.frontCamera else { return completion(.failure(CaptureError.frontCamera)) }
       do {
         let mode: CaptureMode = Self.supportsLiDAR && !settings.forceFeaturePoints ? .lidar : .features
         let recording = try Recording(settings: settings, mode: mode)
@@ -203,9 +241,11 @@ final class CaptureController: NSObject, ARSessionDelegate {
   }
 
   /// ARKit delivers the camera image in the sensor's landscape orientation; turn it upright for
-  /// the portrait UI and scale it down, as tightly packed RGBA rows.
-  private func detectionImage(from buffer: CVPixelBuffer, maxSize: Int) -> [String: Any]? {
-    let upright = CIImage(cvPixelBuffer: buffer).oriented(.right)
+  /// the portrait UI (mirroring the front camera's, as its preview is) and scale it down, as tightly
+  /// packed RGBA rows.
+  private func detectionImage(from buffer: CVPixelBuffer, maxSize: Int,
+                              orientation: CGImagePropertyOrientation) -> [String: Any]? {
+    let upright = CIImage(cvPixelBuffer: buffer).oriented(orientation)
     let scale = CGFloat(maxSize) / max(upright.extent.width, upright.extent.height)
     let width = Int((upright.extent.width * scale).rounded())
     let height = Int((upright.extent.height * scale).rounded())
@@ -264,7 +304,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
   func session(_ session: ARSession, didUpdate frame: ARFrame) {
     tracking = Self.describe(frame.camera.trackingState)
-    latestCamera = DetectionCamera(frame: frame)
+    // The front camera has no world tracking, and its detection frames are mirrored, so what it
+    // sees can't be placed in the world.
+    latestCamera = frontCamera ? nil : DetectionCamera(frame: frame)
     if recoveringFromFailure && tracking.0 == "normal" {
       recoveringFromFailure = false
       DispatchQueue.main.async { self.consecutiveFailures = 0 }
@@ -272,10 +314,11 @@ final class CaptureController: NSObject, ARSessionDelegate {
     if let request = detectionRequest {
       detectionRequest = nil
       let image = frame.capturedImage
-      let camera = DetectionCamera(frame: frame)
+      let orientation: CGImagePropertyOrientation = frontCamera ? .leftMirrored : .right
+      let camera = latestCamera
       detectionQueue.async {
-        var result = self.detectionImage(from: image, maxSize: request.maxSize)
-        result?["camera"] = camera.dictionary()
+        var result = self.detectionImage(from: image, maxSize: request.maxSize, orientation: orientation)
+        result?["camera"] = camera?.dictionary()
         request.completion(result)
       }
     }

@@ -13,13 +13,9 @@ const keyframe = new Keyframe({
   0: {
     transform: [{ scale: 0 }],
   },
-  60: {
-    transform: [{ scale: 1.2 }],
-    easing: Easing.elastic(1.2),
-  },
   100: {
     transform: [{ scale: 1 }],
-    easing: Easing.elastic(1.2),
+    easing: Easing.out(Easing.cubic),
   },
 });
 
@@ -30,12 +26,12 @@ const logoKeyframe = new Keyframe({
   60: {
     transform: [{ scale: 1.2 }],
     opacity: 0,
-    easing: Easing.elastic(1.2),
+    easing: Easing.out(Easing.cubic),
   },
   100: {
     transform: [{ scale: 1 }],
     opacity: 1,
-    easing: Easing.elastic(1.2),
+    easing: Easing.out(Easing.cubic),
   },
 });
 
@@ -47,7 +43,7 @@ const glowKeyframe = new Keyframe({
   [DURATION / 1000]: {
     transform: [{ rotateZ: '0deg' }, { scale: 1 }],
     opacity: 1,
-    easing: Easing.elastic(0.7),
+    easing: Easing.out(Easing.cubic),
   },
   100: {
     transform: [{ rotateZ: '7200deg' }],

@@ -5,9 +5,14 @@ export type CaptureMode = 'lidar' | 'features';
 
 export type TrackingState = 'normal' | 'limited' | 'notAvailable';
 
+/** `back`: world tracking, which recording needs. `front`: the TrueDepth camera, for preview and detection. */
+export type CameraPosition = 'back' | 'front';
+
 export type Capabilities = {
   arkit: boolean;
   lidar: boolean;
+  /** The front camera can be shown (ARKit face tracking, which needs a TrueDepth camera). */
+  frontCamera: boolean;
 };
 
 export type CaptureStatus = {
@@ -136,5 +141,10 @@ export type SplatCaptureViewProps = {
    * the camera; an in-progress recording keeps it running. Defaults to true.
    */
   active?: boolean;
+  /**
+   * Which camera to show. The front one's preview is mirrored, like the Camera app's, and so are its
+   * detection frames; it can't record. Defaults to `back`.
+   */
+  camera?: CameraPosition;
   style?: StyleProp<ViewStyle>;
 };

@@ -24,12 +24,12 @@ export function AnimatedSplashOverlay() {
     },
     70: {
       opacity: 0,
-      easing: Easing.elastic(0.7),
+      easing: Easing.out(Easing.cubic),
     },
     100: {
       opacity: 0,
       transform: [{ scale: 1 }],
-      easing: Easing.elastic(0.7),
+      easing: Easing.out(Easing.cubic),
     },
   });
 
@@ -65,7 +65,7 @@ const keyframe = new Keyframe({
   },
   100: {
     transform: [{ scale: 1 }],
-    easing: Easing.elastic(0.7),
+    easing: Easing.out(Easing.cubic),
   },
 });
 
@@ -77,12 +77,12 @@ const logoKeyframe = new Keyframe({
   40: {
     transform: [{ scale: 1.3 }],
     opacity: 0,
-    easing: Easing.elastic(0.7),
+    easing: Easing.out(Easing.cubic),
   },
   100: {
     opacity: 1,
     transform: [{ scale: 1 }],
-    easing: Easing.elastic(0.7),
+    easing: Easing.out(Easing.cubic),
   },
 });
 

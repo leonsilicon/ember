@@ -1,19 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Linking,
   Pressable,
   StyleSheet,
+  Text,
   View,
   type GestureResponderEvent,
 } from 'react-native';
 import { State } from 'react-native-ble-plx';
 
+import { Glass } from './glass';
 import { ThemedText } from './themed-text';
-import { ThemedView } from './themed-view';
 
 import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
 import {
   connect,
   disconnect,
@@ -28,19 +28,19 @@ import {
   type RoverTelemetry,
 } from '@/lib/rover';
 
-const SPEEDS = [
-  { label: 'Slow', value: 40 },
-  { label: 'Normal', value: 70 },
-  { label: 'Fast', value: 100 },
-];
+const SPEEDS = [40, 70, 100];
 
-/** Connection and driving controls; shown in the rover sheet over the camera. */
-export function RoverControl() {
+/**
+ * The camera's Remote mode: the joystick where the record button is, with the speeds above it like
+ * the Camera app's zoom levels, and the connection above those. `left` and `right` go either side
+ * of the joystick, as they do either side of the record button.
+ */
+export function RoverRemote({ left, right }: { left?: ReactNode; right?: ReactNode }) {
   const rover = useRover();
-  const [maxSpeed, setMaxSpeed] = useState(SPEEDS[0].value);
+  const [maxSpeed, setMaxSpeed] = useState(SPEEDS[0]);
   const { connection } = rover;
 
-  // Look for rovers while the controls are open and nothing is connected, and stop driving on closing them.
+  // Look for rovers while the remote is shown and nothing is connected, and stop driving on leaving it.
   const idle = rover.bluetooth === State.PoweredOn && connection.state === 'disconnected';
   useEffect(() => {
     enableBluetooth();
@@ -53,21 +53,32 @@ export function RoverControl() {
 
   return (
     <View style={styles.container}>
-      <ThemedView type="backgroundElement" style={styles.card}>
+      <View style={styles.panel}>
+        <Glass style={[StyleSheet.absoluteFill, styles.panelShape]} />
         <ConnectionStatus rover={rover} />
-      </ThemedView>
+      </View>
 
-      <View style={styles.controls}>
-        <View style={styles.speeds}>
-          {SPEEDS.map(({ label, value }) => (
-            <Button
-              key={value}
-              label={`${label} ${value}%`}
-              secondary={value !== maxSpeed}
-              onPress={() => setMaxSpeed(value)}
-            />
-          ))}
-        </View>
+      <View accessibilityRole="radiogroup" accessibilityLabel="Top speed" style={styles.speeds}>
+        {SPEEDS.map((speed) => {
+          const active = speed === maxSpeed;
+          return (
+            <Pressable
+              key={speed}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={`${speed}% speed`}
+              onPress={() => setMaxSpeed(speed)}
+              style={[styles.speed, active && styles.speedActive]}>
+              <Text style={[styles.speedLabel, active && styles.speedLabelActive]}>
+                {active ? `${speed}%` : speed}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={styles.row}>
+        <View style={styles.side}>{left}</View>
         <Joystick
           disabled={connection.state !== 'connected'}
           onMove={(throttle, turn) => {
@@ -76,9 +87,7 @@ export function RoverControl() {
           }}
           onRelease={stop}
         />
-        <ThemedText type="small" themeColor="textSecondary">
-          {connection.state === 'connected' ? 'Drag to drive, let go to stop' : 'Connect to a rover to drive'}
-        </ThemedText>
+        <View style={styles.side}>{right}</View>
       </View>
     </View>
   );
@@ -92,10 +101,15 @@ function ConnectionStatus({ rover }: { rover: RoverSnapshot }) {
     return (
       <>
         <View style={styles.header}>
-          <ThemedText type="smallBold">{connection.rover.name}</ThemedText>
+          <View style={styles.busy}>
+            <View style={styles.dot} />
+            <ThemedText type="smallBold" style={styles.light} numberOfLines={1}>
+              {connection.rover.name}
+            </ThemedText>
+          </View>
           <Button label="Disconnect" secondary onPress={disconnect} />
         </View>
-        <ThemedText type="small" themeColor="textSecondary" style={styles.stats}>
+        <ThemedText type="small" style={[styles.secondary, styles.stats]}>
           {telemetry ? describeTelemetry(telemetry) : 'Connected, waiting for telemetry…'}
         </ThemedText>
         {telemetry?.watchdogStopped && (
@@ -111,8 +125,10 @@ function ConnectionStatus({ rover }: { rover: RoverSnapshot }) {
     return (
       <View style={styles.header}>
         <View style={styles.busy}>
-          <ActivityIndicator />
-          <ThemedText type="small">Connecting to {connection.rover.name}…</ThemedText>
+          <ActivityIndicator color="#fff" />
+          <ThemedText type="small" style={styles.light} numberOfLines={1}>
+            Connecting to {connection.rover.name}…
+          </ThemedText>
         </View>
         <Button label="Cancel" secondary onPress={disconnect} />
       </View>
@@ -121,22 +137,24 @@ function ConnectionStatus({ rover }: { rover: RoverSnapshot }) {
 
   if (rover.bluetooth !== State.PoweredOn) {
     return (
-      <>
-        <ThemedText type="small" themeColor="textSecondary">
+      <View style={styles.header}>
+        <ThemedText type="small" style={[styles.secondary, styles.shrink]}>
           {describeBluetooth(rover.bluetooth)}
         </ThemedText>
         {rover.bluetooth === State.Unauthorized && (
           <Button label="Open Settings" onPress={() => Linking.openSettings()} />
         )}
-      </>
+      </View>
     );
   }
 
   return (
     <>
       <View style={styles.busy}>
-        {rover.scanning && <ActivityIndicator />}
-        <ThemedText type="smallBold">{rover.scanning ? 'Looking for rovers…' : 'Not scanning'}</ThemedText>
+        {rover.scanning && <ActivityIndicator color="#fff" />}
+        <ThemedText type="smallBold" style={styles.light}>
+          {rover.scanning ? 'Looking for rovers…' : 'Not scanning'}
+        </ThemedText>
       </View>
       {rover.error && (
         <ThemedText type="small" style={styles.warning}>
@@ -144,7 +162,7 @@ function ConnectionStatus({ rover }: { rover: RoverSnapshot }) {
         </ThemedText>
       )}
       {rover.found.length === 0 ? (
-        <ThemedText type="small" themeColor="textSecondary">
+        <ThemedText type="small" style={styles.secondary}>
           Power the ESP32 and keep it nearby. Its blue LED blinks while it waits for the phone.
         </ThemedText>
       ) : (
@@ -154,13 +172,13 @@ function ConnectionStatus({ rover }: { rover: RoverSnapshot }) {
             accessibilityRole="button"
             accessibilityLabel={`Connect to ${found.name}`}
             onPress={() => connect(found)}
-            style={({ pressed }) => pressed && styles.pressed}>
-            <ThemedView type="backgroundSelected" style={styles.found}>
-              <ThemedText type="smallBold">{found.name}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {found.rssi != null ? `${found.rssi} dBm · ` : ''}Connect
-              </ThemedText>
-            </ThemedView>
+            style={({ pressed }) => [styles.found, pressed && styles.pressed]}>
+            <ThemedText type="smallBold" style={styles.light}>
+              {found.name}
+            </ThemedText>
+            <ThemedText type="small" style={styles.secondary}>
+              {found.rssi != null ? `${found.rssi} dBm · ` : ''}Connect
+            </ThemedText>
           </Pressable>
         ))
       )}
@@ -190,10 +208,12 @@ function describeTelemetry(telemetry: RoverTelemetry) {
   return parts.join(' · ');
 }
 
-const PAD_SIZE = 220;
-const KNOB_SIZE = 84;
+const PAD_SIZE = 160;
+const KNOB_SIZE = 64;
 const TRAVEL = (PAD_SIZE - KNOB_SIZE) / 2;
 const DEADZONE = 0.1;
+/** Matches the room either side of the record button on the camera screen. */
+const SIDE_WIDTH = 64;
 
 function Joystick({
   disabled,
@@ -205,7 +225,6 @@ function Joystick({
   onMove: (throttle: number, turn: number) => void;
   onRelease: () => void;
 }) {
-  const theme = useTheme();
   const [knob, setKnob] = useState({ x: 0, y: 0 });
   // Where the touch began, in pad and page coordinates. Moves are tracked as page deltas from it,
   // since locationX/Y are relative to whatever view is under the finger.
@@ -239,7 +258,7 @@ function Joystick({
 
   return (
     <View
-      accessibilityLabel="Drive joystick"
+      accessibilityLabel={disabled ? 'Drive joystick, connect to a rover first' : 'Drive joystick'}
       onStartShouldSetResponder={() => !disabled}
       onMoveShouldSetResponder={() => !disabled}
       onResponderTerminationRequest={() => false}
@@ -247,19 +266,11 @@ function Joystick({
       onResponderMove={move}
       onResponderRelease={release}
       onResponderTerminate={release}
-      style={[
-        styles.pad,
-        { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected },
-        disabled && styles.disabled,
-      ]}>
+      style={[styles.pad, disabled && styles.disabled]}>
+      {/* A background rather than a wrapper, so touches start on the pad and locationX/Y are relative to it. */}
+      <Glass style={[StyleSheet.absoluteFill, styles.padShape]} />
       <View
-        style={[
-          styles.knob,
-          {
-            backgroundColor: theme.text,
-            transform: [{ translateX: knob.x * TRAVEL }, { translateY: knob.y * TRAVEL }],
-          },
-        ]}
+        style={[styles.knob, { transform: [{ translateX: knob.x * TRAVEL }, { translateY: knob.y * TRAVEL }] }]}
       />
     </View>
   );
@@ -274,17 +285,12 @@ function Button({
   onPress: () => void;
   secondary?: boolean;
 }) {
-  const theme = useTheme();
   return (
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.button,
-        { backgroundColor: secondary ? theme.backgroundSelected : theme.text },
-        pressed && styles.pressed,
-      ]}>
-      <ThemedText type="smallBold" style={{ color: secondary ? theme.text : theme.background }}>
+      style={({ pressed }) => [styles.button, secondary && styles.buttonSecondary, pressed && styles.pressed]}>
+      <ThemedText type="smallBold" style={secondary ? styles.light : styles.buttonLabel}>
         {label}
       </ThemedText>
     </Pressable>
@@ -294,11 +300,14 @@ function Button({
 const styles = StyleSheet.create({
   container: {
     gap: Spacing.three,
+    pointerEvents: 'box-none',
   },
-  card: {
+  panel: {
     gap: Spacing.two,
     padding: Spacing.three,
-    borderRadius: Spacing.three,
+  },
+  panelShape: {
+    borderRadius: Spacing.four,
   },
   header: {
     flexDirection: 'row',
@@ -312,38 +321,89 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     flexShrink: 1,
   },
+  shrink: {
+    flexShrink: 1,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#30D158',
+  },
+  light: {
+    color: '#fff',
+  },
+  secondary: {
+    color: 'rgba(255,255,255,0.7)',
+  },
   stats: {
     fontVariant: ['tabular-nums'],
   },
   warning: {
-    color: '#d97706',
+    color: '#FFD60A',
   },
   found: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     padding: Spacing.three,
-    borderRadius: Spacing.two,
-  },
-  controls: {
-    alignItems: 'center',
-    gap: Spacing.three,
+    borderRadius: Spacing.three,
+    backgroundColor: 'rgba(255,255,255,0.12)',
   },
   speeds: {
     flexDirection: 'row',
-    gap: Spacing.two,
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: Spacing.one,
+    padding: Spacing.one,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  speed: {
+    minWidth: 36,
+    height: 36,
+    borderRadius: 18,
+    paddingHorizontal: Spacing.one,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  speedActive: {
+    minWidth: 48,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  speedLabel: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: 600,
+    fontVariant: ['tabular-nums'],
+  },
+  speedLabelActive: {
+    color: '#FFD60A',
+  },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    pointerEvents: 'box-none',
+  },
+  side: {
+    width: SIDE_WIDTH,
+    alignItems: 'center',
+    pointerEvents: 'box-none',
   },
   pad: {
     width: PAD_SIZE,
     height: PAD_SIZE,
-    borderRadius: PAD_SIZE / 2,
-    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  padShape: {
+    borderRadius: PAD_SIZE / 2,
   },
   knob: {
     width: KNOB_SIZE,
     height: KNOB_SIZE,
     borderRadius: KNOB_SIZE / 2,
+    backgroundColor: '#fff',
     // Touches go to the pad, so locationX/Y at the start are relative to it.
     pointerEvents: 'none',
   },
@@ -351,10 +411,16 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   button: {
-    alignSelf: 'flex-start',
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+    paddingVertical: Spacing.one + Spacing.half,
     borderRadius: 999,
+    backgroundColor: '#fff',
+  },
+  buttonSecondary: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  buttonLabel: {
+    color: '#000',
   },
   pressed: {
     opacity: 0.6,

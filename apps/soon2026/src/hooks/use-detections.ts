@@ -1,21 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { File, Paths } from 'expo-file-system';
+import { useEffect, useState } from 'react';
 import { useObjectDetector, type ObjectDetection, type ObjectDetectorModel } from 'react-native-executorch';
 
 import SplatCapture, { type DetectionCamera } from '../../modules/splat-capture';
 
 import type { Size } from '@/components/detection-overlay';
-import { useDebugSettings } from '@/hooks/use-debug-settings';
 
 const MODEL_NAME = 'OWL-ViT · leaves';
-/** packages/owlvit's build, which the splat server serves at /models/. */
-const MANIFEST_PATH = '/models/owlvit-leaves.json';
+/** packages/owlvit's build, which plugins/with-leaf-detector.js embeds in the app. */
+const MANIFEST_FILE = 'owlvit-leaves.json';
 // The model sees each frame stretched to 768×768 (OWL-ViT's input), so this is as much as it uses.
 const FRAME_SIZE = 768;
 const RETRY_MS = 1000;
 
 /** What `bun run --filter @soon2026/owlvit build` writes next to the model (see export.py). */
 type LeafDetectorManifest = {
-  /** File name of the .pte, unique to each build. */
+  /** File name of the .pte, beside the manifest in the app. */
   model: string;
   precision: string;
   inputSize: number;
@@ -41,23 +41,26 @@ export type DetectionResult = {
 };
 
 export type Detections = {
-  /** The model, and how fast it runs once it does. */
+  /** The model's name. */
   model: string;
-  /** Why detection isn't running: the model is still downloading or loading, or failed to load. */
+  /** Why detection isn't running: the model is still loading, failed to load, or isn't in this build. */
   status?: string;
+  /** The model isn't in this build or failed to load, rather than still loading. */
+  unavailable: boolean;
   result?: DetectionResult;
   error?: string;
 };
 
-function serverEndpoint(serverUrl: string, path: string) {
-  return `${serverUrl.replace(/\/+$/, '')}${path}`;
+/** A file in the app bundle as a plain path, which react-native-executorch loads without copying. */
+function bundlePath(name: string) {
+  return decodeURIComponent(new File(Paths.bundle, name).uri.replace(/^file:\/\//, ''));
 }
 
 /** react-native-executorch's object detector, run on the leaf detector's export. */
-function detectorConfig(serverUrl: string, manifest: LeafDetectorManifest): ObjectDetectorModel<'xyxy', string> {
+function detectorConfig(manifest: LeafDetectorManifest): ObjectDetectorModel<'xyxy', string> {
   const { mean, std } = manifest;
   return {
-    modelPath: serverEndpoint(serverUrl, `/models/${manifest.model}`),
+    modelPath: bundlePath(manifest.model),
     modelOpts: {
       labels: manifest.labels,
       boxFormat: 'xyxy',
@@ -73,60 +76,42 @@ function detectorConfig(serverUrl: string, manifest: LeafDetectorManifest): Obje
   };
 }
 
-// Stands in until the manifest arrives; `preventLoad` keeps it from being fetched.
-const NO_MODEL: ObjectDetectorModel<'xyxy', string> = {
-  modelPath: '',
-  modelOpts: {
-    labels: [],
-    boxFormat: 'xyxy',
-    resizeMode: 'stretch',
-    interpolation: 'linear',
-    normalizeOpts: {},
-    defaultConfidenceThreshold: 1,
-    defaultIouThreshold: 1,
-  },
-};
-
-type Fetched = { serverUrl: string; manifest?: LeafDetectorManifest; error?: string };
-
-/** The leaf detector's manifest from the splat server, which says which model to download. */
-function useManifest(serverUrl: string): Omit<Fetched, 'serverUrl'> {
-  const [fetched, setFetched] = useState<Fetched>();
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(serverEndpoint(serverUrl, MANIFEST_PATH));
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-        if (!cancelled) setFetched({ serverUrl, manifest: body });
-      } catch (e) {
-        if (!cancelled) setFetched({ serverUrl, error: `${serverUrl}: ${e instanceof Error ? e.message : String(e)}` });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [serverUrl]);
-
-  // Until the server the settings now name answers, there's no manifest.
-  return fetched?.serverUrl === serverUrl ? fetched : {};
+/** The embedded leaf detector's manifest, or why there isn't one. */
+function readManifest(): { manifest?: LeafDetectorManifest; error?: string } {
+  try {
+    const file = new File(Paths.bundle, MANIFEST_FILE);
+    if (!file.exists) return { error: "it isn't in this build (see packages/owlvit's README)" };
+    return { manifest: JSON.parse(file.textSync()) };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
 }
+
+const BUNDLED = readManifest();
+
+const CONFIG: ObjectDetectorModel<'xyxy', string> = BUNDLED.manifest
+  ? detectorConfig(BUNDLED.manifest)
+  : // Stands in for the missing model; `preventLoad` keeps it from being loaded.
+    {
+      modelPath: '',
+      modelOpts: {
+        labels: [],
+        boxFormat: 'xyxy',
+        resizeMode: 'stretch',
+        interpolation: 'linear',
+        normalizeOpts: {},
+        defaultConfidenceThreshold: 1,
+        defaultIouThreshold: 1,
+      },
+    };
 
 /**
  * Runs the OWL-ViT leaf detector on the capture camera's frames while `enabled`. The AR session
  * owns the camera, so frames come from it (see `nextDetectionFrame`) rather than from a second
- * camera session. The model is built on the Mac and downloaded from the splat server once.
+ * camera session. The model is built on the Mac and embedded in the app.
  */
 export function useDetections(enabled: boolean): Detections {
-  const { serverUrl } = useDebugSettings();
-  const manifest = useManifest(serverUrl);
-  const config = useMemo(
-    () => (manifest.manifest ? detectorConfig(serverUrl, manifest.manifest) : NO_MODEL),
-    [serverUrl, manifest.manifest],
-  );
-  const detector = useObjectDetector(config, { preventLoad: !manifest.manifest });
+  const detector = useObjectDetector(CONFIG, { preventLoad: !BUNDLED.manifest });
   const { detectObjects } = detector;
   const [result, setResult] = useState<DetectionResult>();
   const [error, setError] = useState<string>();
@@ -172,25 +157,20 @@ export function useDetections(enabled: boolean): Detections {
   }, [enabled, detectObjects]);
 
   let status: string | undefined;
-  if (manifest.error) {
-    status = `Couldn't get ${MODEL_NAME} from ${manifest.error}`;
-  } else if (!manifest.manifest) {
-    status = `Looking up ${MODEL_NAME}…`;
+  if (BUNDLED.error) {
+    status = `No ${MODEL_NAME}: ${BUNDLED.error}`;
   } else if (detector.error) {
     status = `Couldn't load ${MODEL_NAME}: ${detector.error.message}`;
   } else if (!detector.isReady) {
-    status =
-      detector.downloadProgress < 100
-        ? `Downloading ${MODEL_NAME}… ${Math.round(detector.downloadProgress)}%`
-        : // Core ML compiles a model for the phone the first time it loads it.
-          `Loading ${MODEL_NAME}…`;
+    // Core ML compiles a model for the phone the first time it loads it.
+    status = `Loading ${MODEL_NAME}…`;
   }
 
   const running = enabled && !status;
   return {
-    // Rounded so the menu showing it isn't rebuilt on every frame.
-    model: running && result ? `${MODEL_NAME} · ~${Math.round(result.latencyMs / 10) * 10} ms` : MODEL_NAME,
+    model: MODEL_NAME,
     status,
+    unavailable: Boolean(BUNDLED.error || detector.error),
     result: running ? result : undefined,
     error: running ? error : undefined,
   };

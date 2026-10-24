@@ -15,8 +15,7 @@ first run also downloads the checkpoint from Hugging Face (~600 MB).
 
 The build writes to `dist/`:
 
-- `owlvit-leaves-<hash>.pte`, about 180 MB. Every build has a new name, since the app caches
-  models by URL.
+- `owlvit-leaves-<hash>.pte`, about 180 MB, named after its contents.
 - `owlvit-leaves.json`, the manifest: which `.pte` is current, the labels, preprocessing and
   thresholds.
 
@@ -27,10 +26,11 @@ fp16, the default, moves boxes by up to ~10 px (of 768) on candidates scoring a 
 
 ## How the app gets it
 
-The splat server (`apps/soon2026/server`, pane 1 of `vpx _dev`) serves `dist/` at `/models/`. The
-camera screen reads the manifest from the server set under Captures › Debug (the Mac running Metro
-by default), downloads the model once, and Core ML compiles it the first time it loads, which takes
-a while. After a rebuild, relaunching the app picks up the new model.
+It's embedded in the iOS app: `apps/soon2026/plugins/with-leaf-detector.js` copies `dist/` into the
+app bundle whenever the app is prebuilt (`vpx _ios` prebuilds on every build), so the phone has the
+model from the first launch, without the splat server. Prebuild stops with an error until the model
+is built. Core ML compiles the model the first time the app loads it, which takes a while. After
+rebuilding the model, rebuild the app.
 
 ## Changing what it looks for
 

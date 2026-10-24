@@ -5,7 +5,7 @@ import { Capabilities, SavedCapture, SplatCaptureModuleEvents } from './SplatCap
 // Capture needs ARKit, so on the web the module only reports that it can't capture.
 class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> {
   getCapabilities(): Capabilities {
-    return { arkit: false, lidar: false };
+    return { arkit: false, lidar: false, frontCamera: false };
   }
 
   async listCaptures(): Promise<SavedCapture[]> {

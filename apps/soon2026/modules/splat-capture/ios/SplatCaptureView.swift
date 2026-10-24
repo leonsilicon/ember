@@ -17,6 +17,11 @@ class SplatCaptureView: ExpoView {
     didSet { updateSession() }
   }
 
+  /// The front camera previews and feeds detection, but only the back camera records.
+  var camera = CameraPosition.back {
+    didSet { updateSession() }
+  }
+
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
     clipsToBounds = true
@@ -25,6 +30,9 @@ class SplatCaptureView: ExpoView {
     sceneView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     sceneView.automaticallyUpdatesLighting = false
     sceneView.debugOptions = [.showFeaturePoints]
+    // SceneKit exposes its nodes to accessibility, and walking them while ARKit swaps the anchors'
+    // nodes (as when the camera flips) crashed in SCNGeometry. The preview has nothing to read anyway.
+    sceneView.accessibilityElementsHidden = true
     addSubview(sceneView)
   }
 
@@ -37,6 +45,7 @@ class SplatCaptureView: ExpoView {
     let visible = window != nil && active
     if visible {
       CaptureController.shared.attach(sceneView.session)
+      CaptureController.shared.setCamera(camera)
     }
     CaptureController.shared.setPreviewVisible(visible)
   }

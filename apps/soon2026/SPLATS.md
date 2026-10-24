@@ -134,8 +134,11 @@ bun server/scripts/live-replay.ts server/data/captures/<id>/<id>   # try it with
 ```
 
 In the app it's *Live 3D while recording* in the Gallery's debug card (on by default in development
-builds, sent to the same server address); while recording, a chip shows how many keyframes the
-server has fused.
+builds, sent to the same server address); while recording, the cube in the status rail says how
+many keyframes the server has fused (tap it), and the reconstruction floats top left of the
+viewfinder. Tap it to swap it with the camera, FaceTime style (drag the full-screen one to orbit;
+it follows the phone again a few seconds later), and tap the floating camera to swap back. That view is the same page
+for this one recording, `/live/<capture id>?embed`, without its controls.
 
 How it works (`modules/splat-capture/ios/LiveStreamer.swift` → `server/src/live`):
 

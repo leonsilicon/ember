@@ -80,9 +80,14 @@ public class SplatCaptureModule: Module {
       Prop("active", true) { (view: SplatCaptureView, active: Bool) in
         view.active = active
       }
+      Prop("camera", CameraPosition.back) { (view: SplatCaptureView, camera: CameraPosition) in
+        view.camera = camera
+      }
     }
   }
 }
+
+extension CameraPosition: Enumerable {}
 
 private extension Promise {
   func settle(_ result: Result<[String: Any], Error>) {

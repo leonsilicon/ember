@@ -4,37 +4,50 @@ import {
   background,
   buttonStyle,
   frame,
+  glassEffect,
   menuIndicator,
   menuStyle,
   shapes,
 } from '@expo/ui/swift-ui/modifiers';
+
+import { LIQUID_GLASS } from './glass';
 
 export type CameraMenuProps = {
   detection: boolean;
   onDetectionChange: (detection: boolean) => void;
   featurePoints: boolean;
   onFeaturePointsChange: (featurePoints: boolean) => void;
-  /** Heads the detection section, e.g. the model and how fast it runs. */
+  /** Shows timings over the viewfinder. */
+  debug: boolean;
+  onDebugChange: (debug: boolean) => void;
+  /** Heads the detection section: the model, or why it isn't running. */
   detectionInfo: string;
 };
 
-/** The camera screen's options, as a native menu behind a round button. */
+/** The camera screen's options, as a native menu behind a round glass button beside the record button. */
 export function CameraMenu({
   detection,
   onDetectionChange,
   featurePoints,
   onFeaturePointsChange,
+  debug,
+  onDebugChange,
   detectionInfo,
 }: CameraMenuProps) {
   return (
-    <Host matchContents>
+    <Host matchContents colorScheme="dark">
       <Menu
         label={
           <Image
-            systemName="line.3.horizontal"
-            size={18}
+            systemName="ellipsis"
+            size={20}
             color="#ffffff"
-            modifiers={[frame({ width: 44, height: 44 }), background('rgba(0,0,0,0.55)', shapes.circle())]}
+            modifiers={[
+              frame({ width: 48, height: 48 }),
+              LIQUID_GLASS
+                ? glassEffect({ glass: { variant: 'regular' }, shape: 'circle' })
+                : background('rgba(40,40,40,0.75)', shapes.circle()),
+            ]}
           />
         }
         modifiers={[
@@ -57,6 +70,7 @@ export function CameraMenu({
           isOn={featurePoints}
           onIsOnChange={onFeaturePointsChange}
         />
+        <Toggle label="Debug" systemImage="ladybug" isOn={debug} onIsOnChange={onDebugChange} />
       </Menu>
     </Host>
   );

@@ -2,37 +2,64 @@ import { useEvent } from 'expo';
 import { Image } from 'expo-image';
 import { router, useFocusEffect, useIsFocused } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { SymbolView, type SymbolViewProps } from 'expo-symbols';
-import { useCallback, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
-import Animated, { ZoomIn } from 'react-native-reanimated';
+import { SymbolView } from 'expo-symbols';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import {
+  ActivityIndicator,
+  PanResponder,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
+import Animated, {
+  Easing,
+  FadeIn,
+  FadeOut,
+  LinearTransition,
+  useAnimatedStyle,
+  withTiming,
+  ZoomIn,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import SplatCapture, {
   SplatCaptureView,
+  type CameraPosition,
   type CaptureStatus,
   type LiveStatus,
   type SavedCapture,
 } from '../../modules/splat-capture';
 
 import { CameraMenu } from '@/components/camera-menu';
-import { DetectionOverlay, labelColor, type Size } from '@/components/detection-overlay';
+import { CameraStatus, useCaption, type Indicator } from '@/components/camera-status';
+import { DetectionOverlay, type Size } from '@/components/detection-overlay';
+import { Glass } from '@/components/glass';
+import { LiveSplatView } from '@/components/live-splat-view';
+import { ModePicker } from '@/components/mode-picker';
 import { RoverBrainHud } from '@/components/rover-brain-hud';
-import { RoverSheet } from '@/components/rover-sheet';
+import { RoverRemote } from '@/components/rover-control';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useDebugSettings } from '@/hooks/use-debug-settings';
-import { useDetections, type Detection } from '@/hooks/use-detections';
+import { useDetections, type Detection, type Detections } from '@/hooks/use-detections';
 import { useRoverBrain } from '@/hooks/use-rover-brain';
 import { compact } from '@/lib/captures';
 import { useRover } from '@/lib/rover';
+import { liveEmbedUrl } from '@/lib/splat-preview';
 
 type Phase =
   | { kind: 'ready' }
-  | { kind: 'recording' }
+  /** `liveServerUrl`: the splat server it streams to, which rebuilds it live in 3D. */
+  | { kind: 'recording'; captureId: string; liveServerUrl?: string }
   | { kind: 'saving' }
   | { kind: 'failed'; message: string };
+
+/** `camera` records splat captures; `remote` drives the rover. The camera stays live in both. */
+type Mode = 'camera' | 'remote';
 
 const INITIAL_STATUS: CaptureStatus = {
   recording: false,
@@ -55,14 +82,50 @@ function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The live-reconstruction chip while recording: how the stream to the server is doing. */
-function describeLive(live: LiveStatus): { label: string; tone?: 'good' | 'warn' } {
-  if (live.state === 'open') {
-    const points = live.points ? ` · ${compact(live.points)} pts` : '';
-    return { label: `Live 3D · ${live.fused} fused${points}`, tone: live.fused > 0 ? 'good' : undefined };
+function describeTracking(status: CaptureStatus): Indicator {
+  const key = 'tracking';
+  if (status.error) return { key, icon: 'crosshairs-off', tone: 'warn', label: 'Tracking lost, restarting…' };
+  if (status.tracking === 'normal') return { key, icon: 'crosshairs-gps', label: 'Tracking' };
+  if (status.tracking === 'limited') {
+    const reason = TRACKING_HINTS[status.trackingReason ?? ''] ?? status.trackingReason ?? 'unknown';
+    return { key, icon: 'crosshairs-question', tone: 'warn', label: `Limited tracking: ${reason}` };
   }
-  if (live.state === 'connecting') return { label: 'Live 3D · connecting…' };
-  return { label: `Live 3D · ${live.error ?? live.state}`, tone: 'warn' };
+  return { key, icon: 'crosshairs', tone: 'dim', label: 'Starting camera…' };
+}
+
+/** While recording: how the stream to the server's live reconstruction is doing. */
+function describeLive(live: LiveStatus): Indicator {
+  const key = 'live';
+  if (live.state === 'open') {
+    const points = live.points ? ` · ${compact(live.points)} points` : '';
+    return {
+      key,
+      icon: 'cube-scan',
+      tone: live.fused > 0 ? 'good' : undefined,
+      label: `Live 3D: ${live.fused} keyframes fused${points}`,
+    };
+  }
+  if (live.state === 'connecting') return { key, icon: 'cube-outline', tone: 'dim', label: 'Live 3D: connecting…' };
+  return { key, icon: 'cube-off-outline', tone: 'warn', label: `Live 3D: ${live.error ?? live.state}` };
+}
+
+function describeDetections(detections: Detections): Indicator {
+  const key = 'detections';
+  if (detections.status) {
+    return {
+      key,
+      icon: detections.unavailable ? 'leaf-off' : 'leaf',
+      tone: detections.unavailable ? 'warn' : 'dim',
+      label: detections.status,
+    };
+  }
+  if (detections.error) return { key, icon: 'leaf-off', tone: 'warn', label: `Detection failed: ${detections.error}` };
+  const found = detections.result?.detections ?? [];
+  if (found.length === 0) return { key, icon: 'leaf', label: `${detections.model}: nothing in view` };
+  const summary = summarize(found)
+    .map(([label, { count, confidence }]) => `${count > 1 ? `${label} ×${count}` : label} ${Math.round(confidence * 100)}%`)
+    .join(', ');
+  return { key, icon: 'leaf', tone: 'good', text: String(found.length), label: `${detections.model}: ${summary}` };
 }
 
 function summarize(detections: Detection[]) {
@@ -80,17 +143,25 @@ function summarize(detections: Detection[]) {
 }
 
 /**
- * The main screen, since the phone rides on the rover: the camera, with live object detection
- * drawn over it, recording splat captures, and the rover's controls in a sheet.
+ * The main screen, since the phone rides on the rover, laid out like the Camera app: the
+ * viewfinder with live object detection drawn over it, and below it the gallery, the modes
+ * (recording splat captures, or driving the rover) and the camera flip.
  */
 export default function CameraScreen() {
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();
   const [capabilities] = useState(() => SplatCapture.getCapabilities());
   const [phase, setPhase] = useState<Phase>({ kind: 'ready' });
+  const [mode, setMode] = useState<Mode>('camera');
+  const [camera, setCamera] = useState<CameraPosition>('back');
   const [detection, setDetection] = useState(true);
   const [featurePoints, setFeaturePoints] = useState(true);
-  const [roverOpen, setRoverOpen] = useState(false);
+  /** Record with LiDAR depth, on phones that have it; toggled like the Camera app's flash. */
+  const [lidarOn, setLidarOn] = useState(true);
+  /** Shows the detector's timing over the viewfinder. */
+  const [debugOverlay, setDebugOverlay] = useState(false);
+  /** The live 3D view fills the viewfinder and the camera floats, instead of the other way round. */
+  const [swapped, setSwapped] = useState(false);
   /** The newest capture, for the gallery button; `fresh` once this screen has just saved it. */
   const [latest, setLatest] = useState<{ capture: SavedCapture; fresh: boolean } | null>(null);
   const [viewSize, setViewSize] = useState<Size>({ width: 0, height: 0 });
@@ -98,8 +169,25 @@ export default function CameraScreen() {
   const detections = useDetections(detection && capabilities.arkit);
   const rover = useRover();
   // Places leaves in the world, scans LiDAR for obstacles, and runs the drive-to-leaf autopilot.
-  const brain = useRoverBrain(detections.result, detection && capabilities.arkit && focused);
+  // The front camera can't place anything in the world.
+  const brain = useRoverBrain(detections.result, detection && capabilities.arkit && focused && camera === 'back');
+  const { stopAutopilot } = brain;
   const debug = useDebugSettings();
+  const [caption, showCaption] = useCaption();
+  // Like the Camera app, a sideways swipe across the viewfinder moves to the next or previous mode.
+  const [swipe] = useState(() =>
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, { dx, dy }) => Math.abs(dx) > 24 && Math.abs(dx) > 2 * Math.abs(dy),
+      onPanResponderRelease: (_, { dx }) => {
+        if (Math.abs(dx) > 48) setMode(dx < 0 ? 'remote' : 'camera');
+      },
+    }),
+  );
+
+  // Driving by hand takes over from the autopilot.
+  useEffect(() => {
+    if (mode === 'remote') stopAutopilot();
+  }, [mode, stopAutopilot]);
 
   // Re-read on every return, since the gallery can delete the newest capture.
   useFocusEffect(
@@ -116,10 +204,11 @@ export default function CameraScreen() {
 
   async function startRecording() {
     try {
-      // With Live 3D on, the server rebuilds the scene as it records (open <server>/live on the Mac).
-      const live = debug.splatPreview && debug.liveStream;
-      await SplatCapture.startCapture({ liveServerUrl: live ? debug.serverUrl : undefined });
-      setPhase({ kind: 'recording' });
+      // With Live 3D on, the server rebuilds the scene as it records, shown here and at <server>/live.
+      const liveServerUrl = debug.splatPreview && debug.liveStream ? debug.serverUrl : undefined;
+      const { captureId } = await SplatCapture.startCapture({ liveServerUrl, forceFeaturePoints: !lidarOn });
+      setSwapped(false);
+      setPhase({ kind: 'recording', captureId, liveServerUrl });
     } catch (error) {
       setPhase({ kind: 'failed', message: message(error) });
     }
@@ -148,140 +237,251 @@ export default function CameraScreen() {
     );
   }
 
-  const lidar = status.mode === 'lidar';
-  const trackingLabel = status.error
-    ? 'Tracking lost, restarting…'
-    : status.tracking === 'normal'
-      ? 'Tracking'
-      : status.tracking === 'limited'
-        ? `Limited: ${TRACKING_HINTS[status.trackingReason ?? ''] ?? status.trackingReason ?? 'unknown'}`
-        : 'Starting camera…';
-  const busy = phase.kind === 'recording' || phase.kind === 'saving';
+  const front = camera === 'front';
+  const recording = phase.kind === 'recording';
+  // A recording keeps the mode it started with.
+  const lidar = recording ? status.mode === 'lidar' : capabilities.lidar && lidarOn;
+  const tracking = describeTracking(status);
+
+  function toggleLidar() {
+    if (!capabilities.lidar) {
+      showCaption('LiDAR needs a phone with a LiDAR scanner, like an iPhone Pro');
+    } else if (recording) {
+      showCaption(`This recording uses ${lidar ? 'LiDAR' : 'feature points'}. Stop it to switch.`);
+    } else {
+      setLidarOn(!lidarOn);
+      showCaption(lidarOn ? 'LiDAR off' : 'LiDAR on');
+    }
+  }
+
+  const indicators: Indicator[] = [];
+  if (recording) {
+    indicators.push({
+      key: 'frames',
+      icon: 'camera-burst',
+      tone: status.full ? 'warn' : undefined,
+      text: String(status.frames),
+      label: `${status.frames} frames, ${compact(status.points)} points${status.full ? ': frame budget reached' : ''}`,
+    });
+  }
+  if (front) {
+    indicators.push({
+      key: 'camera',
+      icon: 'video-off',
+      tone: 'dim',
+      label: 'Front camera: it previews and detects, but only the back camera records',
+    });
+  } else {
+    indicators.push(
+      {
+        key: 'lidar',
+        icon: lidar ? 'blur' : 'blur-off',
+        tone: lidar ? 'on' : capabilities.lidar ? undefined : 'dim',
+        label: !capabilities.lidar
+          ? "No LiDAR on this phone: ARKit's feature points seed the splat"
+          : lidar
+            ? 'LiDAR on: its depth seeds the splat'
+            : "LiDAR off: ARKit's feature points seed the splat",
+        onPress: toggleLidar,
+      },
+      tracking,
+    );
+  }
+  if (recording && status.live) indicators.push(describeLive(status.live));
+  if (detection) indicators.push(describeDetections(detections));
+  const busy = recording || phase.kind === 'saving';
   const result = detections.result;
+  const liveUrl = recording && phase.liveServerUrl ? liveEmbedUrl(phase.liveServerUrl, phase.captureId) : null;
+  const liveMain = liveUrl !== null && swapped;
+  const barHeight = BAR_PADDING + BAR_CONTENT + Math.max(insets.bottom, Spacing.three);
+
+  const options = (
+    <CameraMenu
+      detection={detection}
+      onDetectionChange={setDetection}
+      featurePoints={featurePoints}
+      onFeaturePointsChange={setFeaturePoints}
+      debug={debugOverlay}
+      onDebugChange={setDebugOverlay}
+      detectionInfo={detections.status ?? detections.model}
+    />
+  );
 
   return (
-    <View
-      style={styles.container}
-      onLayout={(event) => {
-        const { width, height } = event.nativeEvent.layout;
-        setViewSize({ width, height });
-      }}>
+    <View style={styles.container}>
       {focused && <StatusBar style="light" />}
 
-      {/* Pauses itself while the gallery covers it, unless a recording is in progress. */}
-      <SplatCaptureView style={StyleSheet.absoluteFill} showFeaturePoints={featurePoints && !lidar} />
-
-      {result && (
-        <DetectionOverlay
-          detections={result.detections}
-          inputSize={result.frameSize}
-          frameSize={result.frameSize}
-          viewSize={viewSize}
-          rotated180={false}
-          captions={brain.captionsFor === result ? brain.captions : undefined}
-        />
-      )}
-
-      <View style={[styles.top, { top: insets.top + Spacing.two }]}>
-        <View style={styles.row}>
-          <CameraMenu
-            detection={detection}
-            onDetectionChange={setDetection}
-            featurePoints={featurePoints}
-            onFeaturePointsChange={setFeaturePoints}
-            detectionInfo={detections.status ?? detections.model}
-          />
-          <View style={styles.chips}>
-            {phase.kind === 'recording' ? (
-              <Chip
-                tone="recording"
-                label={`REC ${formatSeconds(status.elapsed)} · ${status.frames} frames · ${compact(status.points)} points`}
+      <View
+        style={[styles.viewfinder, { top: insets.top, bottom: barHeight }]}
+        onLayout={(event) => {
+          const { width, height } = event.nativeEvent.layout;
+          setViewSize({ width, height });
+        }}
+        // Swipes would fight the live 3D view's orbit drags while it fills the viewfinder.
+        {...(liveMain ? undefined : swipe.panHandlers)}>
+        {/*
+          While a recording streams to the server, its live 3D reconstruction floats top left, and
+          tapping it swaps it with the camera, like a FaceTime call.
+          Both views keep their place in the tree as they swap, so neither the AR session nor the
+          3D page restarts.
+        */}
+        <View style={StyleSheet.absoluteFill}>
+          <Animated.View layout={SWAP} style={liveMain ? styles.pip : StyleSheet.absoluteFill}>
+            {/* Pauses itself while the gallery covers it, unless a recording is in progress. */}
+            <SplatCaptureView
+              style={StyleSheet.absoluteFill}
+              camera={camera}
+              showFeaturePoints={featurePoints && !lidar}
+            />
+            {result && !liveMain && (
+              <DetectionOverlay
+                detections={result.detections}
+                inputSize={result.frameSize}
+                frameSize={result.frameSize}
+                viewSize={viewSize}
+                rotated180={false}
+                captions={brain.captionsFor === result ? brain.captions : undefined}
               />
-            ) : (
-              <Chip label={lidar ? 'LiDAR depth' : 'No LiDAR · feature points'} />
             )}
-            <Chip label={trackingLabel} tone={status.tracking === 'normal' ? 'good' : 'warn'} />
-            {phase.kind === 'recording' && status.live && <Chip {...describeLive(status.live)} />}
-          </View>
+            {liveMain && <SwapButton label="Show the camera" onPress={() => setSwapped(false)} />}
+          </Animated.View>
+          {liveUrl && (
+            <Animated.View
+              layout={SWAP}
+              entering={POP}
+              style={liveMain ? StyleSheet.absoluteFill : styles.pip}>
+              <LiveSplatView url={liveUrl} interactive={liveMain} />
+              {!liveMain && <SwapButton label="Show live 3D" onPress={() => setSwapped(true)} />}
+            </Animated.View>
+          )}
         </View>
 
-        {detection && (
-          <View style={styles.chips}>
-            {detections.status && <Chip label={detections.status} />}
-            {detections.error && <Chip label={`Detection failed: ${detections.error}`} tone="warn" />}
-            {result &&
-              summarize(result.detections).map(([label, { count, confidence }]) => (
-                <Chip
-                  key={label}
-                  label={count > 1 ? `${label} ×${count}` : label}
-                  detail={`${Math.round(confidence * 100)}%`}
-                  borderColor={labelColor(label)}
-                />
-              ))}
-          </View>
-        )}
-      </View>
-
-      <View style={[styles.bottom, { paddingBottom: insets.bottom + Spacing.three }]}>
-        {phase.kind === 'recording' && (status.full || status.frozen) && (
-          <View style={styles.panel}>
-            {status.full && <Light>Frame budget reached. Tap stop to save.</Light>}
-            {status.frozen && (
-              <Light>Tracking was lost, so recording paused here. Tap stop to save what was captured.</Light>
-            )}
-          </View>
-        )}
-
-        {phase.kind === 'saving' && (
-          <View style={styles.panel}>
-            <Busy label="Saving capture…" />
-          </View>
-        )}
-
-        {phase.kind === 'failed' && (
-          <View style={styles.panel}>
-            <Light style={styles.error}>{phase.message}</Light>
-            <Button label="Dismiss" secondary onPress={() => setPhase({ kind: 'ready' })} />
-          </View>
-        )}
-
-        {detection && (
-          <RoverBrainHud brain={brain} canDrive={rover.connection.state === 'connected'} />
-        )}
-
-        <View style={styles.controls}>
-          <GalleryButton
-            capture={latest?.capture}
-            pop={latest?.fresh}
-            disabled={busy}
-            onPress={() => router.push('/captures')}
+        {/* Its captions stop short of the floating view. */}
+        <View style={[styles.top, styles.passThrough, liveUrl !== null && styles.topBesidePip]}>
+          <CameraStatus
+            indicators={indicators}
+            // Tracking matters most while recording, so only then does it say what's wrong.
+            hint={recording && !front && tracking.tone === 'warn' ? tracking.label : undefined}
+            caption={caption}
+            onPressIndicator={(indicator) => showCaption(indicator.label)}
           />
-          <RecordButton
-            recording={phase.kind === 'recording'}
-            saving={phase.kind === 'saving'}
-            onPress={phase.kind === 'recording' ? stopRecording : startRecording}
-          />
-          <RoundButton
-            icon="car.fill"
-            label="Rover controls"
-            badge={rover.connection.state === 'connected'}
-            onPress={() => {
-              // Manual driving takes over from the autopilot.
-              brain.stopAutopilot();
-              setRoverOpen(true);
-            }}
-          />
+        </View>
+
+        {debugOverlay && (
+          <ThemedText type="code" style={[styles.debug, liveUrl !== null && styles.debugUnderPip]}>
+            {result ? `${Math.round(result.latencyMs)} ms` : '– ms'}
+          </ThemedText>
+        )}
+
+        <View style={[styles.dock, styles.passThrough]}>
+          {recording && (status.full || status.frozen) && (
+            <View style={styles.panel}>
+              {status.full && <Light>Frame budget reached. Tap stop to save.</Light>}
+              {status.frozen && (
+                <Light>Tracking was lost, so recording paused here. Tap stop to save what was captured.</Light>
+              )}
+            </View>
+          )}
+
+          {phase.kind === 'saving' && (
+            <View style={styles.panel}>
+              <Busy label="Saving capture…" />
+            </View>
+          )}
+
+          {phase.kind === 'failed' && (
+            <View style={styles.panel}>
+              <Light style={styles.error}>{phase.message}</Light>
+              <Button label="Dismiss" secondary onPress={() => setPhase({ kind: 'ready' })} />
+            </View>
+          )}
+
+          {mode === 'camera' && detection && !front && (
+            <RoverBrainHud brain={brain} canDrive={rover.connection.state === 'connected'} />
+          )}
+
+          {mode === 'camera' ? (
+            <View style={[styles.controls, styles.passThrough]}>
+              {/* Balances the options, so the record button stays centred. */}
+              <View style={styles.side} />
+              <RecordButton
+                recording={recording}
+                saving={phase.kind === 'saving'}
+                dimmed={front && !recording}
+                onPress={
+                  recording
+                    ? stopRecording
+                    : front
+                      ? () => showCaption('Only the back camera records. Flip to record.')
+                      : startRecording
+                }
+              />
+              <View style={[styles.side, styles.passThrough]}>{options}</View>
+            </View>
+          ) : (
+            <RoverRemote right={options} />
+          )}
         </View>
       </View>
 
-      {roverOpen && <RoverSheet onClose={() => setRoverOpen(false)} />}
+      {/* Like the Camera app's, it clears to black while recording, leaving only the time. */}
+      <View style={[styles.bar, { height: barHeight }]}>
+        <Fade hidden={recording} style={styles.barRow}>
+          <View style={styles.side}>
+            <GalleryButton
+              capture={latest?.capture}
+              pop={latest?.fresh}
+              disabled={busy}
+              onPress={() => router.push('/captures')}
+            />
+          </View>
+          <ModePicker
+            modes={[
+              { value: 'camera', label: 'Camera' },
+              { value: 'remote', label: 'Remote', badge: rover.connection.state === 'connected' },
+            ]}
+            value={mode}
+            onChange={setMode}
+          />
+          <View style={styles.side}>
+            <FlipButton
+              front={front}
+              // Only the back camera records, so it can't change mid-recording.
+              disabled={!capabilities.frontCamera || busy}
+              onPress={() => setCamera(front ? 'back' : 'front')}
+            />
+          </View>
+        </Fade>
+        {recording && (
+          <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(200)} style={styles.timer}>
+            <View style={styles.timerPill}>
+              <Text style={styles.timerText}>{formatSeconds(status.elapsed)}</Text>
+            </View>
+          </Animated.View>
+        )}
+      </View>
     </View>
   );
 }
 
+/** Fades out while `hidden`, staying mounted, and meanwhile lets taps and VoiceOver past it. */
+function Fade({ hidden, style, children }: { hidden: boolean; style?: StyleProp<ViewStyle>; children: ReactNode }) {
+  const fade = useAnimatedStyle(() => ({ opacity: withTiming(hidden ? 0 : 1, { duration: 200 }) }));
+
+  return (
+    <Animated.View
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+      style={[style, fade, hidden && styles.inert]}>
+      {children}
+    </Animated.View>
+  );
+}
+
+/** Like the Camera app's recording time, e.g. 00:42. */
 function formatSeconds(seconds: number) {
   const s = Math.floor(seconds);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 
 function Light({ children, style }: { children: ReactNode; style?: object }) {
@@ -292,35 +492,15 @@ function Light({ children, style }: { children: ReactNode; style?: object }) {
   );
 }
 
-function Chip({
-  label,
-  detail,
-  tone,
-  borderColor,
-}: {
-  label: string;
-  detail?: string;
-  tone?: 'good' | 'warn' | 'recording';
-  borderColor?: string;
-}) {
+/** Covers the floating view, which swaps with the main one when tapped. */
+function SwapButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
-    <View
-      style={[
-        styles.chip,
-        tone === 'good' && styles.chipGood,
-        tone === 'warn' && styles.chipWarn,
-        tone === 'recording' && styles.chipRecording,
-        borderColor != null && [styles.chipOutlined, { borderColor }],
-      ]}>
-      <ThemedText type="smallBold" style={[styles.light, styles.stats]}>
-        {label}
-      </ThemedText>
-      {detail && (
-        <ThemedText type="code" style={styles.lightSecondary}>
-          {detail}
-        </ThemedText>
-      )}
-    </View>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={({ pressed }) => [StyleSheet.absoluteFill, pressed && styles.swapPressed]}
+    />
   );
 }
 
@@ -333,54 +513,66 @@ function Busy({ label }: { label: string }) {
   );
 }
 
+/**
+ * The Camera app's video shutter: a red dot in a glass ring, which shrinks to a square while
+ * recording. `dimmed` while it can't record, when it still takes taps, to say why.
+ */
 function RecordButton({
   recording,
   saving,
+  dimmed,
   onPress,
 }: {
   recording: boolean;
   saving: boolean;
+  dimmed?: boolean;
   onPress: () => void;
 }) {
+  const dot = useAnimatedStyle(() => {
+    const size = recording ? RECORD_STOP_SIZE : RECORD_DOT_SIZE;
+    return {
+      width: withTiming(size),
+      height: withTiming(size),
+      borderRadius: withTiming(recording ? Spacing.two : size / 2),
+    };
+  });
+
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={recording ? 'Stop recording' : 'Start recording'}
+      accessibilityState={{ disabled: saving || dimmed }}
       disabled={saving}
       onPress={onPress}
-      style={({ pressed }) => [styles.record, pressed && styles.pressed]}>
+      style={({ pressed }) => [styles.record, pressed && styles.recordPressed]}>
+      <Glass colorScheme="light" style={[StyleSheet.absoluteFill, styles.recordRing]} />
       {saving ? (
         <ActivityIndicator color="#fff" />
       ) : (
-        <View style={recording ? styles.recordStop : styles.recordDot} />
+        <Animated.View style={[styles.recordDot, dimmed && styles.disabled, dot]} />
       )}
     </Pressable>
   );
 }
 
-function RoundButton({
-  icon,
-  label,
-  onPress,
-  disabled,
-  badge,
-}: {
-  icon: SymbolViewProps['name'];
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-  /** Draws a green dot, e.g. while the rover is connected. */
-  badge?: boolean;
-}) {
+function FlipButton({ front, disabled, onPress }: { front: boolean; disabled: boolean; onPress: () => void }) {
+  // Half a turn per flip, like the Camera app's.
+  const icon = useAnimatedStyle(() => ({
+    transform: [{ rotate: withTiming(front ? '180deg' : '0deg', { duration: 350 }) }],
+  }));
+
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={front ? 'Switch to the back camera' : 'Switch to the front camera'}
+      accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [styles.round, (pressed || disabled) && styles.pressed]}>
-      <SymbolView name={icon} size={22} tintColor="#fff" />
-      {badge && <View style={styles.badge} />}
+      <Glass style={[StyleSheet.absoluteFill, styles.roundShape]} />
+      <Animated.View style={icon}>
+        <SymbolView name="arrow.triangle.2.circlepath" size={22} weight="medium" tintColor="#fff" />
+      </Animated.View>
     </Pressable>
   );
 }
@@ -400,9 +592,6 @@ function GalleryButton({
   onPress: () => void;
   disabled?: boolean;
 }) {
-  if (!capture?.thumbnailUri) {
-    return <RoundButton icon="photo.on.rectangle" label="Gallery" disabled={disabled} onPress={onPress} />;
-  }
   return (
     <Pressable
       accessibilityRole="button"
@@ -410,13 +599,20 @@ function GalleryButton({
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => (pressed || disabled) && styles.pressed}>
-      {/* Keyed by capture, so a newly saved one mounts fresh and plays the pop. */}
-      <Animated.View
-        key={capture.captureId}
-        entering={pop ? ZoomIn.springify().damping(14) : undefined}
-        style={styles.thumbnail}>
-        <Image source={capture.thumbnailUri} style={StyleSheet.absoluteFill} contentFit="cover" />
-      </Animated.View>
+      {capture?.thumbnailUri ? (
+        // Keyed by capture, so a newly saved one mounts fresh and plays the pop.
+        <Animated.View
+          key={capture.captureId}
+          entering={pop ? POP : undefined}
+          style={styles.thumbnail}>
+          <Image source={capture.thumbnailUri} style={StyleSheet.absoluteFill} contentFit="cover" />
+        </Animated.View>
+      ) : (
+        <View style={styles.thumbnail}>
+          <Glass style={[StyleSheet.absoluteFill, styles.thumbnailShape]} />
+          <SymbolView name="photo.on.rectangle" size={20} tintColor="#fff" />
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -442,7 +638,22 @@ function Button({
   );
 }
 
-const ROUND_SIZE = 52;
+const ROUND_SIZE = 48;
+const THUMBNAIL_SIZE = 44;
+const RECORD_SIZE = 80;
+const RECORD_DOT_SIZE = 64;
+const RECORD_STOP_SIZE = 30;
+/** The room either side of the record button and of the modes, so the columns line up. */
+const SIDE_WIDTH = 64;
+const BAR_PADDING = Spacing.three;
+/** The mode capsule's height. */
+const BAR_CONTENT = 48;
+/** The floating view: 3:4, like the camera frames. */
+const PIP_WIDTH = 126;
+const PIP_HEIGHT = 168;
+// Eased, not sprung: springs overshoot and bounce.
+const SWAP = LinearTransition.duration(260).easing(Easing.out(Easing.cubic));
+const POP = ZoomIn.duration(250).easing(Easing.out(Easing.cubic));
 
 const styles = StyleSheet.create({
   container: {
@@ -454,51 +665,60 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     gap: Spacing.three,
   },
+  viewfinder: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    overflow: 'hidden',
+  },
   top: {
     position: 'absolute',
+    top: Spacing.three,
     left: Spacing.three,
     right: Spacing.three,
-    gap: Spacing.two,
   },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
+  topBesidePip: {
+    left: Spacing.three + PIP_WIDTH + Spacing.two,
   },
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: Spacing.two,
-    flexShrink: 1,
+  passThrough: {
+    pointerEvents: 'box-none',
   },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.one,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.one,
-    borderRadius: 999,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+  /** Top left, where the floating view goes while recording. */
+  debug: {
+    position: 'absolute',
+    top: Spacing.three,
+    left: Spacing.three,
+    color: '#fff',
+    fontSize: 13,
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowRadius: 3,
+    pointerEvents: 'none',
   },
-  chipOutlined: {
-    paddingHorizontal: Spacing.two + Spacing.half,
-    borderWidth: 1.5,
+  debugUnderPip: {
+    top: Spacing.three + PIP_HEIGHT + Spacing.two,
   },
-  chipGood: {
-    backgroundColor: 'rgba(28,120,64,0.8)',
+  pip: {
+    position: 'absolute',
+    top: Spacing.three,
+    left: Spacing.three,
+    width: PIP_WIDTH,
+    height: PIP_HEIGHT,
+    // Above the main view whichever one it is (they swap order).
+    zIndex: 1,
+    borderRadius: Spacing.three,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.9)',
+    overflow: 'hidden',
+    backgroundColor: '#000',
   },
-  chipWarn: {
-    backgroundColor: 'rgba(170,110,0,0.85)',
+  swapPressed: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
   },
-  chipRecording: {
-    backgroundColor: 'rgba(229,53,43,0.85)',
-  },
-  bottom: {
+  dock: {
     position: 'absolute',
     left: Spacing.three,
     right: Spacing.three,
-    bottom: 0,
+    bottom: Spacing.three,
     gap: Spacing.three,
   },
   panel: {
@@ -512,17 +732,52 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: Spacing.four,
+  },
+  side: {
+    width: SIDE_WIDTH,
+    alignItems: 'center',
+  },
+  bar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingTop: BAR_PADDING,
+    paddingHorizontal: Spacing.three,
+  },
+  barRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  inert: {
+    pointerEvents: 'none',
+  },
+  /** Where the modes were, like the Camera app's recording time. */
+  timer: {
+    position: 'absolute',
+    top: BAR_PADDING,
+    left: 0,
+    right: 0,
+    height: BAR_CONTENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timerPill: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.half,
+    borderRadius: Spacing.one + Spacing.half,
+    backgroundColor: '#FF3B30',
+  },
+  timerText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: 600,
+    fontVariant: ['tabular-nums'],
   },
   light: {
     color: '#fff',
     textAlign: 'center',
-  },
-  lightSecondary: {
-    color: 'rgba(255,255,255,0.7)',
-  },
-  stats: {
-    fontVariant: ['tabular-nums'],
   },
   error: {
     color: '#ffb4a8',
@@ -538,51 +793,43 @@ const styles = StyleSheet.create({
   round: {
     width: ROUND_SIZE,
     height: ROUND_SIZE,
-    borderRadius: ROUND_SIZE / 2,
-    backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  roundShape: {
+    borderRadius: ROUND_SIZE / 2,
   },
   thumbnail: {
-    width: ROUND_SIZE,
-    height: ROUND_SIZE,
+    width: THUMBNAIL_SIZE,
+    height: THUMBNAIL_SIZE,
+    // Centred on the capsule beside it.
+    marginTop: (BAR_CONTENT - THUMBNAIL_SIZE) / 2,
     borderRadius: Spacing.two + Spacing.half,
-    borderWidth: 2,
-    borderColor: '#fff',
     overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#000',
   },
-  badge: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#000',
-    backgroundColor: '#30D158',
+  thumbnailShape: {
+    borderRadius: Spacing.two + Spacing.half,
   },
   record: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 4,
-    borderColor: '#fff',
+    width: RECORD_SIZE,
+    height: RECORD_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  recordDot: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: '#e5352b',
+  recordRing: {
+    borderRadius: RECORD_SIZE / 2,
   },
-  recordStop: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
-    backgroundColor: '#e5352b',
+  recordDot: {
+    backgroundColor: '#FF3B30',
+  },
+  recordPressed: {
+    transform: [{ scale: 0.94 }],
+  },
+  disabled: {
+    opacity: 0.35,
   },
   button: {
     paddingHorizontal: Spacing.four,
