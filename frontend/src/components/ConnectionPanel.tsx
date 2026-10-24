@@ -36,7 +36,7 @@ export function ConnectionPanel({
 
   const { connection, lastMessageAt, lastError } = snapshot
   const connected = connection === 'connected'
-  const ageMs = lastMessageAt === null ? null : now - lastMessageAt
+  const ageMs = lastMessageAt === null ? null : Math.max(0, now - lastMessageAt)
   const stale = mode === 'live' && connected && ageMs !== null && ageMs > STALE_AFTER_MS
 
   return (
@@ -83,14 +83,19 @@ export function ConnectionPanel({
           />
           {connected || connection === 'connecting' ? (
             <button
+              key="disconnect"
               type="button"
-              onClick={onDisconnect}
+              onClick={(e) => {
+                e.preventDefault()
+                onDisconnect()
+              }}
               className="rounded-lg bg-zinc-700 px-3 py-2 text-sm font-semibold hover:bg-zinc-600"
             >
               Disconnect
             </button>
           ) : (
             <button
+              key="connect"
               type="submit"
               disabled={draftUrl.trim() === ''}
               className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-semibold hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"

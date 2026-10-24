@@ -34,10 +34,6 @@ export function useRover() {
   const [client, setClient] = useState<RoverClient>(() => new SimulatedClient())
   const clientRef = useRef(client)
 
-  const subscribe = useCallback((listener: () => void) => client.subscribe(listener), [client])
-  const getSnapshot = useCallback(() => client.getSnapshot(), [client])
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot)
-
   const heldRef = useRef<Direction | null>(null)
   const repeatTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const [held, setHeld] = useState<Direction | null>(null)
@@ -50,6 +46,19 @@ export function useRover() {
     heldRef.current = null
     setHeld(null)
   }, [])
+
+  // Any drop out of `connected` kills the held direction so a later reconnect
+  // can never resume motion without a fresh press.
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      client.subscribe(() => {
+        if (client.getSnapshot().connection !== 'connected') clearRepeat()
+        listener()
+      }),
+    [client, clearRepeat],
+  )
+  const getSnapshot = useCallback(() => client.getSnapshot(), [client])
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot)
 
   /** Hard stop: clears any held direction and always sends `stop`. */
   const stop = useCallback(() => {
@@ -127,17 +136,13 @@ export function useRover() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat || isTextInput(e.target)) return
-      if (STOP_KEYS.has(e.key)) {
-        e.preventDefault()
-        stop()
-        return
-      }
+      if (isTextInput(e.target)) return
       const direction = KEY_TO_DIRECTION[e.key]
-      if (direction) {
-        e.preventDefault()
-        press(direction)
-      }
+      if (!direction && !STOP_KEYS.has(e.key)) return
+      e.preventDefault()
+      if (e.repeat) return
+      if (direction) press(direction)
+      else stop()
     }
     const onKeyUp = (e: KeyboardEvent) => {
       const direction = KEY_TO_DIRECTION[e.key]
