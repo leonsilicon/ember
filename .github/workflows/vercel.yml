@@ -1,0 +1,86 @@
+# Deploys the splat server (the Next.js app) to Vercel from GitHub Actions: every push to main goes to production,
+# and a pull request from a branch in this repo gets a preview. The Vercel project isn't connected to GitHub through
+# Vercel's own integration (its GitHub App would have to be installed on the SOON-2026 organization), so the Vercel CLI
+# builds the app here and uploads the result, which also means a build runs with the same Bun as the repo.
+#
+# Settings come from the Vercel project (improvelabs/soon2026: root directory, install command, env vars), pulled
+# with `vercel pull`; the CLI runs from the repo root and respects the project's root directory. Needs VERCEL_TOKEN:
+# a Vercel account token of Leon's (vercel.com/account/tokens). The project and team ids aren't secret.
+name: Vercel
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One production deploy at a time, newest push wins; previews are per pull request.
+concurrency:
+  group: vercel-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  deploy:
+    name: ${{ github.event_name == 'pull_request' && 'Preview' || 'Production' }}
+    # Only this repo holds the token; a mirror or a fork can't deploy.
+    if: >-
+      github.repository == 'SOON-2026/soon2026' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_ORG_ID: team_CLXL7Uovrp5rDNAfasIFgz6P
+      VERCEL_PROJECT_ID: prj_FpI4ssXl41I3tSAquktWkhsLJrJh
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      ENVIRONMENT: ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
+    steps:
+      # Until the token is added, every run says so instead of failing.
+      - name: Check for the token
+        id: token
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::warning::VERCEL_TOKEN is not set, so nothing is deployed. Create a token at vercel.com/account/tokens and add it as a repository secret."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.token.outputs.ready == 'true'
+        uses: actions/checkout@v7
+
+      - if: steps.token.outputs.ready == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      # The Vercel CLI and `next build` run on Node.
+      - if: steps.token.outputs.ready == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        if: steps.token.outputs.ready == 'true'
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Pull the project's settings and environment
+        if: steps.token.outputs.ready == 'true'
+        run: bunx vercel pull --yes --environment="$ENVIRONMENT" --token="$VERCEL_TOKEN"
+
+      - name: Build
+        if: steps.token.outputs.ready == 'true'
+        run: bunx vercel build ${{ env.ENVIRONMENT == 'production' && '--prod' || '' }} --token="$VERCEL_TOKEN"
+
+      - name: Deploy
+        if: steps.token.outputs.ready == 'true'
+        id: deploy
+        run: |
+          url=$(bunx vercel deploy --prebuilt ${{ env.ENVIRONMENT == 'production' && '--prod' || '' }} --token="$VERCEL_TOKEN")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: steps.token.outputs.ready == 'true'
+        run: echo "Deployed \`${GITHUB_SHA::7}\` to the $ENVIRONMENT environment: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
