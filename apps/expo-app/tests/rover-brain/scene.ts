@@ -1,6 +1,6 @@
 /** A synthetic ARKit camera over flat ground, rendering LiDAR depth and detection boxes. */
 
-import { cameraPosition, rotate, unproject, type Intrinsics, type Pose, type Vec3 } from '../../src/lib/rover-brain/geometry';
+import { cameraPosition, makePose, rotate, unproject, type Intrinsics, type Pose, type Vec3 } from '../../src/lib/rover-brain/geometry';
 import type { CameraSnapshot } from '../../src/lib/rover-brain/perceive';
 
 /** iPhone-like sensor image (landscape) and its 256×192 depth map. */
@@ -10,34 +10,13 @@ export const DEPTH_H = 192;
 /** The upright detection frame: the sensor image turned a quarter turn clockwise, longer side 768. */
 export const FRAME = { width: 576, height: 768 };
 
-const deg = (d: number) => (d * Math.PI) / 180;
-
 /**
  * Camera-to-world pose, column-major: at `position`, looking `pitchDeg` below horizontal, turned
  * `yawDeg` to the right (clockwise from above) from world −z. The phone is held in landscape for
  * ARKit's camera axes, i.e. the sensor image's x axis is horizontal.
  */
 export function pose(position: Vec3 = [0, 0.3, 0], pitchDeg = 20, yawDeg = 0): number[] {
-  const p = deg(pitchDeg);
-  const y = deg(-yawDeg);
-  // Rx(-p): pitch down. Ry(y): yaw (negative = clockwise seen from above).
-  const rx = [
-    [1, 0, 0],
-    [0, Math.cos(-p), -Math.sin(-p)],
-    [0, Math.sin(-p), Math.cos(-p)],
-  ];
-  const ry = [
-    [Math.cos(y), 0, Math.sin(y)],
-    [0, 1, 0],
-    [-Math.sin(y), 0, Math.cos(y)],
-  ];
-  const r = ry.map((row) => [0, 1, 2].map((j) => row[0] * rx[0][j] + row[1] * rx[1][j] + row[2] * rx[2][j]));
-  return [
-    r[0][0], r[1][0], r[2][0], 0,
-    r[0][1], r[1][1], r[2][1], 0,
-    r[0][2], r[1][2], r[2][2], 0,
-    position[0], position[1], position[2], 1,
-  ];
+  return makePose(position, pitchDeg, yawDeg);
 }
 
 export type Wall = { center: Vec3; halfWidth: number; height: number };

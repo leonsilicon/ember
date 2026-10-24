@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { headingFromPose } from '../../src/lib/rover-brain/geometry';
-import { corridorAt, corridors, DEFAULT_ROVER, inView, ObstacleMemory, scanDepth } from '../../src/lib/rover-brain/obstacles';
+import { corridorAt, corridors, DEFAULT_OBSTACLE_MEMORY, DEFAULT_ROVER, inView, ObstacleMemory, scanDepth } from '../../src/lib/rover-brain/obstacles';
 import { pose, renderDepth, snapshot } from './scene';
 
 describe('obstacles', () => {
@@ -86,7 +86,7 @@ describe('ObstacleMemory', () => {
     // The obstacle moved away: the next scan of the same view is clear.
     memory.add(scanDepth(snapshot(p, renderDepth(p)))!, 200);
     expect(corridorAt(corridors(memory.scan(200), headingFromPose(p)!), 0)!.blockedBy).toBeNull();
-    expect(memory.scan(10_000)!.points.length).toBe(0);
+    expect(memory.scan(200 + DEFAULT_OBSTACLE_MEMORY.maxAgeMs + 1)!.points.length).toBe(0);
     expect(memory.ageMs(1200)).toBe(1000);
   });
 

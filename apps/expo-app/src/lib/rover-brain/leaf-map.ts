@@ -6,6 +6,11 @@
  * of the same leaf, and the rover drives to that fixed point using its pose, not to a box in the
  * latest frame. A leaf is `confirmed` once it has been seen a few times, which filters one-off
  * false detections; unconfirmed ones are forgotten if they aren't seen again soon.
+ *
+ * A scooped leaf is `collected`, but the scoop can miss. The rover can't see under itself, so a
+ * miss shows up later: the same leaf seen again on the ground once the rover has moved on. That
+ * puts it back to `confirmed` for another try, or `failed` after `maxAttempts`, so the rover
+ * doesn't push at a stuck leaf forever.
  */
 
 import { sub } from './geometry';
@@ -19,7 +24,7 @@ export type LeafObservation = {
   source: 'lidar' | 'floor';
 };
 
-export type LeafState = 'tentative' | 'confirmed' | 'collected';
+export type LeafState = 'tentative' | 'confirmed' | 'collected' | 'failed';
 
 export type TrackedLeaf = {
   id: number;
@@ -32,6 +37,12 @@ export type TrackedLeaf = {
   source: 'lidar' | 'floor';
   firstSeenMs: number;
   lastSeenMs: number;
+  /** Times the rover has scooped at it. */
+  attempts: number;
+  /** When it was last marked collected. */
+  collectedAtMs?: number;
+  /** Sightings since then, which mean the scoop missed it. */
+  missHits: number;
 };
 
 export type LeafMapOptions = {
@@ -42,6 +53,10 @@ export type LeafMapOptions = {
   /** Unconfirmed leaves not seen again within this are dropped. */
   forgetTentativeMs: number;
   maxLeaves: number;
+  /** Sightings of a collected leaf this soon after don't count as a miss (the frame was older). */
+  missGraceMs: number;
+  /** Scoops at one leaf before giving up on it. */
+  maxAttempts: number;
 };
 
 export const DEFAULT_LEAF_MAP: LeafMapOptions = {
@@ -49,6 +64,8 @@ export const DEFAULT_LEAF_MAP: LeafMapOptions = {
   confirmHits: 3,
   forgetTentativeMs: 4000,
   maxLeaves: 300,
+  missGraceMs: 2000,
+  maxAttempts: 3,
 };
 
 const horizontalDistance = (a: Vec3, b: Vec3) => {
@@ -78,6 +95,12 @@ export class LeafMap {
         match.score = Math.max(match.score, obs.score);
         match.lastSeenMs = nowMs;
         if (match.state === 'tentative' && match.hits >= this.options.confirmHits) match.state = 'confirmed';
+        if (match.state === 'collected' && nowMs - (match.collectedAtMs ?? 0) > this.options.missGraceMs) {
+          match.missHits += 1;
+          if (match.missHits >= this.options.confirmHits) {
+            match.state = match.attempts >= this.options.maxAttempts ? 'failed' : 'confirmed';
+          }
+        }
         return match.id;
       }
       const leaf: TrackedLeaf = {
@@ -90,6 +113,8 @@ export class LeafMap {
         source: obs.source,
         firstSeenMs: nowMs,
         lastSeenMs: nowMs,
+        attempts: 0,
+        missHits: 0,
       };
       this.leaves.push(leaf);
       return leaf.id;
@@ -98,10 +123,20 @@ export class LeafMap {
     return ids;
   }
 
-  /** Marks a leaf picked up, so the rover doesn't go back for it. */
-  markCollected(id: number) {
+  /** Marks a leaf scooped up, so the rover doesn't go back for it unless it's seen again. */
+  markCollected(id: number, nowMs: number) {
     const leaf = this.leaves.find((l) => l.id === id);
-    if (leaf) leaf.state = 'collected';
+    if (!leaf) return;
+    leaf.state = 'collected';
+    leaf.attempts += 1;
+    leaf.collectedAtMs = nowMs;
+    leaf.missHits = 0;
+  }
+
+  /** Gives up on a leaf, e.g. one the rover can't get its scoop to. */
+  markFailed(id: number) {
+    const leaf = this.leaves.find((l) => l.id === id);
+    if (leaf) leaf.state = 'failed';
   }
 
   get(id: number): TrackedLeaf | undefined {
@@ -136,8 +171,8 @@ export class LeafMap {
       (l) => l.state !== 'tentative' || nowMs - l.lastSeenMs <= this.options.forgetTentativeMs,
     );
     if (this.leaves.length > this.options.maxLeaves) {
-      // Drop the oldest unconfirmed ones first, then the oldest collected ones.
-      const rank = (l: TrackedLeaf) => (l.state === 'tentative' ? 0 : l.state === 'collected' ? 1 : 2);
+      // Drop the oldest unconfirmed ones first, then the oldest finished ones.
+      const rank = (l: TrackedLeaf) => (l.state === 'tentative' ? 0 : l.state === 'confirmed' ? 2 : 1);
       this.leaves.sort((a, b) => rank(a) - rank(b) || a.lastSeenMs - b.lastSeenMs);
       this.leaves = this.leaves.slice(this.leaves.length - this.options.maxLeaves);
     }

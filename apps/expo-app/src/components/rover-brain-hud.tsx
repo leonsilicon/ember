@@ -10,13 +10,23 @@ const BAR_HEIGHT = 36;
 
 /**
  * What the rover's brain sees: a fan of steering corridors (bar height = how far it can drive
- * that way; red = blocked), the nearest leaf, and the autopilot with its start/stop button.
+ * that way; red = blocked), the nearest leaf, the pile, and the autopilot with its start/stop
+ * button. "Set pile" puts the pile 1 m in front of the rover.
  */
 export function RoverBrainHud({ brain, canDrive }: { brain: RoverBrain; canDrive: boolean }) {
   const nearest = brain.leaves.find((l) => l.state === 'confirmed') ?? brain.leaves[0];
   const confirmed = brain.leaves.filter((l) => l.state === 'confirmed').length;
-  const ready = canDrive && brain.hasDepth && brain.tracking;
-  const why = !canDrive ? 'Connect the rover' : !brain.tracking ? 'Waiting for tracking' : !brain.hasDepth ? 'Needs LiDAR depth' : '';
+  const ready = canDrive && brain.hasDepth && brain.tracking && brain.pile != null;
+  const why = !canDrive
+    ? 'Connect the rover'
+    : !brain.tracking
+      ? 'Waiting for tracking'
+      : !brain.hasDepth
+        ? 'Needs LiDAR depth'
+        : !brain.pile
+          ? 'Set a pile first'
+          : '';
+  const pileText = brain.pile?.rover ? `Pile ${caption(brain.pile.rover)}` : 'No pile';
 
   return (
     <View style={styles.panel}>
@@ -40,7 +50,11 @@ export function RoverBrainHud({ brain, canDrive }: { brain: RoverBrain; canDrive
             {nearest ? `Leaf ${caption(nearest.rover)}${nearest.state === 'tentative' ? ' (checking)' : ''}` : 'No leaves yet'}
           </ThemedText>
           <ThemedText type="small" style={styles.secondary} numberOfLines={1}>
-            {confirmed} found · {brain.collected} collected{brain.hasDepth ? '' : ' · no depth'}
+            {confirmed} found · {brain.collected} scooped · {brain.dumped} dumped{brain.hasDepth ? '' : ' · no depth'}
+          </ThemedText>
+          <ThemedText type="small" style={styles.secondary} numberOfLines={1}>
+            {pileText}
+            {brain.load > 0 ? ` · ${brain.load} in the scoop` : ''}
           </ThemedText>
           {brain.autopilot.on && brain.autopilot.message !== '' && (
             <ThemedText type="small" style={styles.light} numberOfLines={1}>
@@ -59,17 +73,33 @@ export function RoverBrainHud({ brain, canDrive }: { brain: RoverBrain; canDrive
             </ThemedText>
           </Pressable>
         ) : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Start autopilot"
-            accessibilityHint={why || undefined}
-            disabled={!ready}
-            onPress={brain.startAutopilot}
-            style={({ pressed }) => [styles.button, (pressed || !ready) && styles.pressed]}>
-            <ThemedText type="smallBold" style={styles.dark}>
-              Auto
-            </ThemedText>
-          </Pressable>
+          <>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Set the pile 1 metre ahead"
+              disabled={!brain.tracking}
+              onPress={brain.setPileAhead}
+              style={({ pressed }) => [
+                styles.button,
+                styles.secondaryButton,
+                (pressed || !brain.tracking) && styles.pressed,
+              ]}>
+              <ThemedText type="smallBold" style={styles.light}>
+                {brain.pile ? 'Move pile' : 'Set pile'}
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Start autopilot"
+              accessibilityHint={why || undefined}
+              disabled={!ready}
+              onPress={brain.startAutopilot}
+              style={({ pressed }) => [styles.button, (pressed || !ready) && styles.pressed]}>
+              <ThemedText type="smallBold" style={styles.dark}>
+                Auto
+              </ThemedText>
+            </Pressable>
+          </>
         )}
       </View>
       {!brain.autopilot.on && why !== '' && (
@@ -123,6 +153,9 @@ const styles = StyleSheet.create({
   },
   stop: {
     backgroundColor: '#e5352b',
+  },
+  secondaryButton: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
   },
   pressed: {
     opacity: 0.5,
