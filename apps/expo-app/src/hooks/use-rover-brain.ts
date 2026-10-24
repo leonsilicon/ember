@@ -5,20 +5,18 @@ import SplatCapture from '../../modules/splat-capture';
 import type { DetectionResult } from '@/hooks/use-detections';
 import { drive, stop, useRover } from '@/lib/rover';
 import {
-  corridors as corridorsFrom,
+  Brain,
+  DEFAULT_PILE_RADIUS_M,
   DEFAULT_ROVER,
   headingFromPose,
-  initialAutopilotState,
+  inPile,
   isPose,
-  LeafMap,
   locateDetections,
-  ObstacleMemory,
   scanDepth,
-  stepAutopilot,
   toRover,
-  type AutopilotState,
   type Corridor,
   type Heading,
+  type Pile,
   type RejectedDetection,
   type RoverPoint,
   type TrackedLeaf,
@@ -26,6 +24,8 @@ import {
 
 /** How often the steering loop reads the camera pose and LiDAR depth. */
 const TICK_MS = 200;
+/** "Set pile" puts the pile this far in front of the rover. */
+const PILE_AHEAD_M = 1;
 
 export type BrainLeaf = TrackedLeaf & {
   /** Where it is from the rover now (it moves as the rover does). */
@@ -33,9 +33,14 @@ export type BrainLeaf = TrackedLeaf & {
 };
 
 export type RoverBrain = {
-  /** Tracked leaves, nearest first, without collected ones. */
+  /** Tracked leaves, nearest first, without collected, failed or piled ones. */
   leaves: BrainLeaf[];
   collected: number;
+  /** Where the leaves go, and where it is from the rover now. */
+  pile: (Pile & { rover?: RoverPoint }) | null;
+  /** Scoop loads carried, and tipped onto the pile so far. */
+  load: number;
+  dumped: number;
   /**
    * Per detection of `captionsFor`: why LiDAR ruled it out, "~1.2 m · 15° R" for a leaf placed
    * without LiDAR (on the floor plane), or undefined. A LiDAR-placed leaf's box already shows its
@@ -51,6 +56,8 @@ export type RoverBrain = {
   autopilot: { on: boolean; message: string };
   startAutopilot: () => void;
   stopAutopilot: () => void;
+  /** Puts the pile on the ground PILE_AHEAD_M in front of the rover. */
+  setPileAhead: () => void;
   /** Forget every leaf (e.g. after moving the rover by hand). */
   reset: () => void;
 };
@@ -80,23 +87,27 @@ function rejectionCaption(r: RejectedDetection): string | undefined {
 /**
  * The rover's brain on the phone: places each leaf detection in the AR world, keeps a map of
  * them, scans LiDAR depth for where it can't drive, and, with the autopilot on, drives the rover
- * to leaves over Bluetooth. Pure logic lives in src/lib/rover-brain.
+ * over Bluetooth to scoop leaves up and take them to the pile. Pure logic lives in
+ * src/lib/rover-brain (`Brain`, which the simulator runs too).
  */
 export function useRoverBrain(result: DetectionResult | undefined, enabled: boolean): RoverBrain {
   const rover = useRover();
   const connected = rover.connection.state === 'connected';
-  const map = useRef(new LeafMap());
-  // Recent LiDAR points, so obstacles stay known after they leave the camera's narrow view.
-  const memory = useRef(new ObstacleMemory());
+  // Leaf map, recent LiDAR points (so obstacles stay known after they leave the camera's narrow
+  // view), pile and autopilot.
+  const brain = useRef(new Brain());
   const heading = useRef<Heading | null>(null);
-  // Reset with the real time whenever the autopilot starts.
-  const autopilotState = useRef<AutopilotState>(initialAutopilotState(0));
   const [autopilotOn, setAutopilotOn] = useState(false);
   /** What the steering loop obeys; a ref so toggling the autopilot doesn't restart the loop. */
   const autopilotOnRef = useRef(false);
-  const [view, setView] = useState<Omit<RoverBrain, 'startAutopilot' | 'stopAutopilot' | 'reset' | 'autopilot'> & { message: string }>({
+  const [view, setView] = useState<
+    Omit<RoverBrain, 'startAutopilot' | 'stopAutopilot' | 'setPileAhead' | 'reset' | 'autopilot'> & { message: string }
+  >({
     leaves: [],
     collected: 0,
+    pile: null,
+    load: 0,
+    dumped: 0,
     captions: [],
     corridors: [],
     hasDepth: false,
@@ -106,10 +117,11 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
 
   const publish = useCallback((patch: Partial<typeof view>) => {
     const h = heading.current;
-    const all = map.current.snapshot();
+    const current = brain.current;
+    const all = current.leaves.snapshot();
     const leaves = h
       ? all
-          .filter((l) => l.state !== 'collected')
+          .filter((l) => (l.state === 'confirmed' || l.state === 'tentative') && !inPile(l.world, current.pile))
           .map((l) => ({ ...l, rover: toRover(l.world, h) }))
           .sort((a, b) => a.rover.distance - b.rover.distance)
       : [];
@@ -118,6 +130,9 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
       ...patch,
       leaves,
       collected: all.filter((l) => l.state === 'collected').length,
+      pile: current.pile && { ...current.pile, rover: h ? toRover(current.pile.center, h) : undefined },
+      load: current.autopilot.load,
+      dumped: current.dumped,
     }));
   }, []);
 
@@ -129,13 +144,14 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
       publish({ captions: [], captionsFor: result });
       return;
     }
-    const floorY = memory.current.floorY ?? (headingFromPose(camera.pose)?.origin[1] ?? 0) - DEFAULT_ROVER.cameraHeightM;
+    const frameHeading = headingFromPose(camera.pose);
+    const floorY = brain.current.obstacles.floorY ?? (frameHeading?.origin[1] ?? 0) - DEFAULT_ROVER.cameraHeightM;
     // A coasting box is where the detector last saw the leaf, which may not be where this frame's
     // camera and depth would put it, so only this frame's sightings are placed in the world.
     const seen = result.detections.map((d, index) => ({ d, index })).filter(({ d }) => !d.coasting);
     // LiDAR checks each box (on the ground? leaf-sized?) before it reaches the leaf map.
     const { leaves: located, rejected } = locateDetections(seen.map(({ d }) => d), result.frameSize, camera, floorY);
-    map.current.observe(located, Date.now());
+    brain.current.observe(located, frameHeading, Date.now());
     const captions: (string | undefined)[] = result.detections.map(() => undefined);
     for (const leaf of located) {
       if (leaf.source === 'floor') captions[seen[leaf.index].index] = `~${caption(leaf.rover)}`;
@@ -158,25 +174,21 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
           heading.current = tracking && camera ? headingFromPose(camera.pose) : null;
           const now = Date.now();
           const fresh = camera ? scanDepth(camera) : null;
-          if (fresh) memory.current.add(fresh, now);
-          const lanes = heading.current ? corridorsFrom(memory.current.scan(now), heading.current) : [];
-          const scanAgeMs = memory.current.ageMs(now);
-
-          let message = '';
-          if (autopilotOnRef.current) {
-            const step = stepAutopilot(autopilotState.current, {
-              nowMs: Date.now(),
-              heading: heading.current,
-              leaves: map.current.snapshot(),
-              corridors: lanes,
-              scanAgeMs,
-            });
-            autopilotState.current = step.state;
-            if (step.collectedId != null) map.current.markCollected(step.collectedId);
-            drive(step.left, step.right);
-            message = step.message;
+          if (fresh) brain.current.addScan(fresh, now);
+          // The brain's autopilot follows the switch; starting it afresh each time it's turned on.
+          if (autopilotOnRef.current !== brain.current.running) {
+            if (autopilotOnRef.current) brain.current.start(now);
+            else brain.current.stop();
           }
-          publish({ corridors: lanes, hasDepth: fresh != null, tracking, message });
+          const tick = brain.current.tick(now, heading.current);
+          // The firmware has no scoop yet; tick.step.scoop ('up' | 'down' | 'dump') is what it would get.
+          if (tick.step) drive(tick.step.left, tick.step.right);
+          publish({
+            corridors: tick.corridors,
+            hasDepth: fresh != null,
+            tracking,
+            message: tick.step?.message ?? '',
+          });
         } catch {
           // The camera isn't running yet (or was paused); the autopilot must not keep driving.
           if (autopilotOnRef.current) stop();
@@ -205,18 +217,27 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
 
   const stopAutopilot = useCallback(() => {
     autopilotOnRef.current = false;
+    brain.current.stop();
     setAutopilotOn(false);
     stop();
     publish({ message: '' });
   }, [publish]);
 
-  const startAutopilot = useCallback(() => {
-    autopilotState.current = initialAutopilotState(Date.now());
-    setAutopilotOn(true);
-  }, []);
+  const startAutopilot = useCallback(() => setAutopilotOn(true), []);
+
+  const setPileAhead = useCallback(() => {
+    const h = heading.current;
+    if (!h) return;
+    const floorY = brain.current.obstacles.floorY ?? h.origin[1] - DEFAULT_ROVER.cameraHeightM;
+    brain.current.setPile({
+      center: [h.origin[0] + h.forward[0] * PILE_AHEAD_M, floorY, h.origin[2] + h.forward[2] * PILE_AHEAD_M],
+      radiusM: DEFAULT_PILE_RADIUS_M,
+    });
+    publish({});
+  }, [publish]);
 
   const reset = useCallback(() => {
-    map.current.clear();
+    brain.current.reset();
     publish({ captions: [], captionsFor: undefined });
   }, [publish]);
 
@@ -237,6 +258,7 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
     autopilot: { on: autopilotOn && enabled && connected, message },
     startAutopilot,
     stopAutopilot,
+    setPileAhead,
     reset,
   };
 }

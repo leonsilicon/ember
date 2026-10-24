@@ -20,11 +20,14 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
 | `packages/owlvit` | Builds the on-device OWL-ViT leaf detector the app embeds. |
 | `packages/dev` | The `vpx _dev` and `vpx _ios` scripts. |
 | `.github/workflows/testflight.yml` | Ships every push to `main` to TestFlight from a self-hosted Mac; see "TestFlight" in [`apps/expo-app/AGENTS.md`](apps/expo-app/AGENTS.md). |
+| `frontend` | Parth's laptop web app (React + Vite + TS + Tailwind): rover remote control, splat viewer, and the wildfire hazard map at `#/wildfire`. |
+| `firmware/rover_ws` | ESP32 Arduino sketch: Wi-Fi access point + WebSocket command endpoint for the web app. |
+| `data/wildfire` | Ontario wildfire hazard pipeline that feeds the web app's map. |
 | `backend` | Python on the Mac: the same leaf detector and depth logic as the app, for testing with a webcam, photo or RealSense, plus an HTTP perception service. See [`backend/README.md`](backend/README.md). |
 
 ---
 
-## How the rover finds and drives to dry leaves
+## How the rover finds dry leaves and piles them up
 
 ```
  camera frame ──► OWL-ViT ("dry brown leaf", ...) ──► boxes
@@ -36,15 +39,18 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
                                                         │  merged with earlier sightings
                                                         ▼
                                    LEAF MAP: tentative → confirmed (seen 3×) → collected
+                                                        │         (seen again later = missed: retry, ≤3×)
                                                         │
- LiDAR depth (5 Hz) ──► world points ──► floor fit ──► obstacle memory (last 4 s)
+ LiDAR depth (5 Hz) ──► world points ──► floor fit ──► obstacle memory (last 10 s)
                                                         │  corridors: how far the rover can drive
                                                         │  along each of 13 bearings (−45°…+45°)
                                                         ▼
-                     AUTOPILOT: search ─► approach nearest reachable leaf ─► collect ─► repeat
+   AUTOPILOT: search ─► approach ─► line up ─► scoop ─► lift ─► to the pile ─► dump ─► back off ─┐
+                 ▲                                                                              │
+                 └──────────────────────────────────────────────────────────────────────────────┘
                                                         │
                                                         ▼
-                                        drive(left, right) ──Bluetooth──► ESP32 motors
+                         drive(left, right) + scoop up/down/dump ──Bluetooth──► ESP32
 ```
 
 **Why this design.** The obvious approach, steering towards whichever box is in the current frame,
@@ -61,16 +67,80 @@ driving are decoupled:
    a fence, furniture), more than 1.5 m across (a hillside rather than a pile), under 2 cm, or more
    than 8 m away. Rejected boxes show the reason, e.g. `✕ 0.6 m off the ground`.
 3. **Remember.** Sightings within 25 cm are the same leaf. A leaf is only *confirmed* after three
-   sightings, which filters out one-off false detections. Collected leaves are never revisited.
+   sightings, which filters out one-off false detections. A scooped leaf seen on the ground again
+   later was missed, so it's retried, up to 3 times.
 4. **Drive on pose, not on pixels.** The autopilot steers to the leaf's *world* position using the
    phone's live AR pose, polled 5 times a second independently of detection. It reaches the leaf
    even after the leaf has left the frame.
 5. **Never into an obstacle.** LiDAR points are classified by height above the fitted floor:
    higher than 8 cm (and below 60 cm, so branches overhead don't count) is an **obstacle**, and
    more than 10 cm below the floor is a **drop**. For 13 steering bearings, a rover-wide strip says
-   how far it is clear. The phone only sees about 50° side to side, so points from the last 4 s
+   how far it is clear. The phone only sees about 50° side to side, so points from the last 10 s
    are remembered in world coordinates. A rock the rover just turned away from stays blocked, while
-   whatever the camera sees now always replaces what it remembered there.
+   whatever the camera sees now always replaces what it remembered there. Something remembered
+   right beside the body blocks steering towards that side.
+6. **Scoop, then pile.** See below.
+
+### Scooping and the pile
+
+You set the pile with **Set pile** in the HUD: it goes on the ground 1 m in front of the rover,
+and everything within 1 m of it counts as piled (the rover never picks those up). Then **Auto**:
+
+1. **Choose a leaf**: the nearest confirmed one, plus half its distance from the pile (so it
+   clears outwards from the pile), plus 2 m if something is in the way. It sticks with its choice
+   unless another is clearly better.
+2. **Approach** to 50 cm. If the way is blocked, it **detours**: it holds the world direction of the
+   open corridor nearest the goal for 3 s, then tries straight again. Boxed in, it backs up first.
+   A leaf it can't reach in 90 s is given up on.
+3. **Line up**, stopped at 50 cm, where the leaf is still in view (closer in, it's below the
+   camera): turn slowly until it's within 5° of dead ahead, then hold still 0.8 s so close-up
+   sightings correct its position. If it isn't seen again, it's gone.
+4. **Scoop**: lower the scoop, drive straight until the lip (15 cm ahead of the camera) is 10 cm
+   past the leaf, lift. That last stretch is blind and steered on the AR pose. Every leaf the
+   lip passed over counts as scooped.
+5. **To the pile** once the scoop holds `capacity` loads (default 1), detouring the same way.
+   Dump at 60 cm from its centre, facing it, or wherever the grown pile blocks the way first.
+   Then back up 35 cm and search again.
+
+The scoop position (`up` / `down` / `dump`) is part of every autopilot step, but the firmware has
+no scoop yet, so the app only sends the wheel speeds for now.
+
+### Simulator (for the web app)
+
+`src/lib/rover-brain/sim.ts` runs the same `Brain` the phone runs against a virtual world: flat
+ground, leaves, cylinders for trunks and rocks, optional static scene points (a downsampled
+splat), and a pile. It simulates the camera (54° × 69° view, detections less likely and noisier
+further away, optional false detections), the LiDAR, differential drive turning about the axle,
+and the scoop. The brain only gets those sightings and scans, never the true positions. It's pure
+TypeScript, so a web app can import it directly:
+
+```ts
+import { RoverSim } from '<repo>/apps/expo-app/src/lib/rover-brain';
+
+const sim = new RoverSim({
+  leaves: [[0.5, -2], [-1, -1.5]],                                // [x, z] metres, floor at y = 0
+  obstacles: [{ center: [0, -1.6], radiusM: 0.25, heightM: 1 }],
+  pile: { center: [0, 0, 1], radiusM: 1 },
+  // points: splatCentres,                                         // seen by the simulated LiDAR
+}, { seed: 1 });
+sim.start();
+// Each animation frame (one step = 200 ms of rover time):
+const frame = sim.step();
+// frame.rover.pose: the phone's camera-to-world matrix (column-major), for a camera or a rover model
+// frame.leaves: the truth (ground / scoop / pile); frame.tracked: what the brain believes
+// frame.tick.step: mode, message, wheel speeds, scoop; frame.tick.corridors; frame.stats
+```
+
+World axes are ARKit's (metres, +y up, yaw 0 facing −z, + clockwise from above), so a splat
+captured with the app's splat capture lines up once its floor is at y = 0. `SimOptions` sets the
+sensor and scoop odds; `Brain` options (autopilot, leaf map, obstacle memory) are the phone's.
+
+`tests/rover-brain/sim.test.ts` runs whole jobs: an open patch, leaves behind a trunk, a
+cluttered yard, false detections with a scoop that misses 30% of the time, a pile it must leave
+alone, a leaf that never comes up, and a bigger scoop. With the default sensors, 20 seeds per
+world (open patch, trunk, yard) all end with every leaf in the pile and no collisions, in 3 to
+6 minutes of rover time. With false detections, double the position noise and a 70% scoop,
+16–18 of 20 runs per world clear everything within 20 minutes, also without collisions.
 
 **Safety.** The autopilot stops when:
 - AR tracking isn't normal;
@@ -162,23 +232,27 @@ much easier.
 |---|---|
 | `perceive.ts` | `locateDetections(detections, frameSize, camera, floorY)` → `{ leaves, rejected }`: each leaf's world point, distance, bearing, height above the floor and size; rejected boxes with the reason |
 | | `lidarDistances(detections, frameSize, camera)` → each box's straight-line LiDAR distance from the phone (null without a reading; undefined without depth). `useDetections` returns it with every result as `distances` |
-| `leaf-map.ts` | `LeafMap.observe(...)`, `.snapshot()`, `.markCollected(id)` |
+| `leaf-map.ts` | `LeafMap.observe(...)`, `.snapshot()`, `.markCollected(id, now)`, `.markFailed(id)` |
 | `obstacles.ts` | `scanDepth(camera)` → world points + floor; `ObstacleMemory` keeps the last few seconds; `corridors(scan, heading)` → clearance per bearing |
-| `autopilot.ts` | `stepAutopilot(state, input)` → `{ left, right, message, collectedId }` for `drive()` |
+| `autopilot.ts` | `stepAutopilot(state, input)` → `{ left, right, scoop, message, collectedIds, ... }` for `drive()` |
+| `brain.ts` | `Brain`: leaf map, obstacle memory, pile and autopilot together. `.observe(...)`, `.addScan(...)`, `.tick(now, heading)` |
+| `sim.ts` | `RoverSim`: the brain in a virtual world (see Simulator above) |
 | `geometry.ts` | pose maths, `headingFromPose`, `toRover`, upright↔sensor pixel mapping |
 
 **React:**
 - `src/hooks/use-rover-brain.ts` wires it together. The camera screen uses it for distance
   captions and the HUD.
 - `src/components/rover-brain-hud.tsx` is the HUD with the **Auto**/**STOP** button.
-- The pick-up moment is the `collecting` state in `autopilot.ts`, where the rover holds still for
-  2.5 s. That's where the arm command goes once the arm exists.
+- The scoop command is `step.scoop` in the steering loop of `use-rover-brain.ts`. That's where it
+  goes to the firmware once the scoop is wired up.
 
 **Tuning:**
 - `DEFAULT_ROVER` (width, step height, drop depth, camera height) and `DEFAULT_OBSTACLE_MEMORY`
   in `obstacles.ts`;
 - `DEFAULT_LEAF_CHECK` (height off the ground, size, range) in `perceive.ts`;
-- `DEFAULT_AUTOPILOT` (arrival distance, speeds, stop distance) in `autopilot.ts`.
+- `DEFAULT_AUTOPILOT` (line-up distance, scoop geometry and timings, capacity, dump distance,
+  speeds, stop distance) in `autopilot.ts`. Set `scoopLipM` and `scoopWidthM` to the real scoop.
+  Then try changes in the simulator first (`bun run test:brain`).
 
 **Mac service:** `python -m rover_vision serve` (in `backend/`) accepts the app's existing
 live-keyframe message. Post a frame, optionally with the phone's leaf boxes, to `/v1/perceive` and

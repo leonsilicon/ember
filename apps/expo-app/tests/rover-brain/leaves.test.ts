@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { LeafMap } from '../../src/lib/rover-brain/leaf-map';
+import { DEFAULT_LEAF_MAP, LeafMap } from '../../src/lib/rover-brain/leaf-map';
 import { decodeDepth, uprightToSensor } from '../../src/lib/rover-brain/geometry';
 import { boxDepth, lidarDistances, locateDetections } from '../../src/lib/rover-brain/perceive';
 import { boxAt, FRAME, K, pose, renderDepth, snapshot, toFrame } from './scene';
@@ -139,13 +139,25 @@ describe('LeafMap', () => {
     expect(leaves[0].state).toBe('confirmed');
   });
 
-  test('collected leaves stay collected when seen again', () => {
+  test('collected leaves stay collected when seen again right away', () => {
     const map = new LeafMap();
     const [id] = map.observe([obs(0, -1)], 0);
-    map.markCollected(id);
-    map.observe([obs(0.01, -1)], 100);
+    map.markCollected(id, 0);
+    for (let t = 1; t <= 5; t++) map.observe([obs(0.01, -1)], t * 100);
     expect(map.snapshot().length).toBe(1);
     expect(map.get(id)!.state).toBe('collected');
+  });
+
+  test('a collected leaf seen again later was missed: retried, then given up on', () => {
+    const map = new LeafMap({ ...DEFAULT_LEAF_MAP, confirmHits: 1, maxAttempts: 2 });
+    const [id] = map.observe([obs(0, -1)], 0);
+    map.markCollected(id, 0);
+    map.observe([obs(0.01, -1)], DEFAULT_LEAF_MAP.missGraceMs + 100);
+    expect(map.get(id)!.state).toBe('confirmed');
+    map.markCollected(id, 10_000);
+    map.observe([obs(0.01, -1)], 10_000 + DEFAULT_LEAF_MAP.missGraceMs + 100);
+    expect(map.get(id)!.state).toBe('failed');
+    expect(map.get(id)!.attempts).toBe(2);
   });
 
   test('floor guesses never move a LiDAR-placed leaf', () => {

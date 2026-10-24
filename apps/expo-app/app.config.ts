@@ -42,13 +42,24 @@ function appVariant(): AppVariant {
   return value;
 }
 
+/**
+ * Local signing with another Apple team, e.g. a teammate's free personal team, which can't sign with
+ * app.json's team or its bundle identifiers: set both before `expo prebuild` / `expo run:ios`. Unset (CI,
+ * TestFlight, `vpx _ios` on the team's Macs), nothing changes.
+ */
+function signingOverride(): { appleTeamId?: string; bundleIdentifier?: string } {
+  const appleTeamId = process.env.SOON2026_APPLE_TEAM_ID || undefined;
+  const bundleIdentifier = process.env.SOON2026_BUNDLE_ID || undefined;
+  return { ...(appleTeamId && { appleTeamId }), ...(bundleIdentifier && { bundleIdentifier }) };
+}
+
 export default ({ config }: ConfigContext): ExpoConfig => {
   const { bundleIdentifier, ...identity } = APP_VARIANTS[appVariant()];
   return {
     ...config,
     ...identity,
     owner: 'improvelabs',
-    ios: { ...config.ios, bundleIdentifier },
+    ios: { ...config.ios, bundleIdentifier, ...signingOverride() },
     extra: { ...config.extra, eas: { projectId: EAS_PROJECT_ID } },
   };
 };

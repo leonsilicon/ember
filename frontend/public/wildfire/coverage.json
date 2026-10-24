@@ -1,0 +1,93 @@
+{
+  "area_name": "Huntsville / Lake of Bays, Ontario",
+  "bbox": [
+    -79.35,
+    45.2,
+    -78.95,
+    45.45
+  ],
+  "coverage": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          -78.95,
+          45.2
+        ],
+        [
+          -78.95,
+          45.45
+        ],
+        [
+          -79.35,
+          45.45
+        ],
+        [
+          -79.35,
+          45.2
+        ],
+        [
+          -78.95,
+          45.2
+        ]
+      ]
+    ]
+  },
+  "screening_distance_m": 30,
+  "source": {
+    "name": "Ontario MNRF \u2014 Potential Hazardous Forest Types for Wildland Fire",
+    "short": "Ontario MNRF, 2025-03-14",
+    "date": "2025-03-14",
+    "resolution_m": 30,
+    "url": "https://geohub.lio.gov.on.ca/documents/f52f092ee6744e0687ead57f78b5d88a/about",
+    "licence": "Open Government Licence \u2013 Ontario",
+    "codes_reference": "https://cwfis.cfs.nrcan.gc.ca/downloads/fuels/development/Canadian_Forest_FBP_Fuel_Types/FBPfueltypes_sample_colour_classification.xlsx"
+  },
+  "buildings_source": "Overture Maps buildings (OSM + Microsoft ML + Google + Esri), ODbL/CDLA",
+  "stats": {
+    "total": 16013,
+    "hazard_overlap": 3058,
+    "hazard_within_30m": 7732,
+    "needs_evaluation": 1220,
+    "incomplete": 23,
+    "scan_priority_60": 4180
+  },
+  "hazard_features": 147694,
+  "tiles": {
+    "buildings": "buildings.pmtiles",
+    "hazard": "hazard.pmtiles",
+    "leafoff": "leafoff.pmtiles"
+  },
+  "leafoff": {
+    "leaf_on": {
+      "id": "S2C_MSIL2A_20260922T161001_R140_T17TPL_20260922T194612",
+      "date": "2026-09-22",
+      "cloud_cover": 9.3e-05
+    },
+    "leaf_off": {
+      "id": "S2B_MSIL2A_20261017T161249_R140_T17TPL_20261017T195142",
+      "date": "2026-10-17",
+      "cloud_cover": 3.681026
+    },
+    "source": "Copernicus Sentinel-2 L2A via Microsoft Planetary Computer",
+    "valid_fraction": 0.9994390324512762,
+    "drop_p50": 0.19603312015533447,
+    "drop_p90": 0.30627596378326416,
+    "classes": [
+      {
+        "min_drop": 0.25,
+        "drop_class": 1
+      },
+      {
+        "min_drop": 0.32,
+        "drop_class": 2
+      },
+      {
+        "min_drop": 0.4,
+        "drop_class": 3
+      }
+    ],
+    "full_drop": 0.35
+  },
+  "scan_priority": "static 0-100 = hazard (overlap 1.0; within 30 m 0.55-1.0 by distance; else 0.1) x litter (0.5 + 0.5 x leaf-off/0.35); the UI multiplies by live CWFIS fine-fuel dryness"
+}

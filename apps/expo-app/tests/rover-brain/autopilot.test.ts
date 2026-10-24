@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 
-import { DEFAULT_AUTOPILOT, initialAutopilotState, stepAutopilot } from '../../src/lib/rover-brain/autopilot';
-import { headingFromPose, type Vec3 } from '../../src/lib/rover-brain/geometry';
+import {
+  chooseTarget,
+  DEFAULT_AUTOPILOT,
+  initialAutopilotState,
+  stepAutopilot,
+  sweptLeaves,
+  type AutopilotState,
+  type Pile,
+} from '../../src/lib/rover-brain/autopilot';
+import { angleDiffDeg, headingFromPose, type Vec3 } from '../../src/lib/rover-brain/geometry';
 import type { TrackedLeaf } from '../../src/lib/rover-brain/leaf-map';
 import { CORRIDOR_BEARINGS, type Corridor } from '../../src/lib/rover-brain/obstacles';
 import { pose } from './scene';
@@ -11,11 +19,23 @@ const blockedAt = (bearings: number[], clearanceM: number): Corridor[] =>
   clear.map((c) => (bearings.includes(c.bearingDeg) ? { ...c, clearanceM, blockedBy: 'obstacle' } : c));
 
 function leaf(id: number, world: Vec3, state: TrackedLeaf['state'] = 'confirmed', lastSeenMs = 0): TrackedLeaf {
-  return { id, world, label: 'dry leaf', score: 0.3, hits: 3, state, source: 'lidar', firstSeenMs: 0, lastSeenMs };
+  return { id, world, label: 'dry leaf', score: 0.3, hits: 3, state, source: 'lidar', firstSeenMs: 0, lastSeenMs, attempts: 0, missHits: 0 };
 }
 
+const pile: Pile = { center: [0, 0, 2], radiusM: 1 };
+
 const heading = headingFromPose(pose([0, 0.3, 0], 20, 0))!;
-const input = (leaves: TrackedLeaf[], corridors = clear, nowMs = 1000) => ({ nowMs, heading, leaves, corridors, scanAgeMs: 100 });
+const input = (leaves: TrackedLeaf[], corridors = clear, nowMs = 1000, p: Pile | null = pile) => ({
+  nowMs,
+  heading,
+  leaves,
+  corridors,
+  scanAgeMs: 100,
+  pile: p,
+});
+const cfg = DEFAULT_AUTOPILOT;
+/** The rover at `position` facing `yawDeg`. */
+const at = (position: Vec3, yawDeg = 0) => headingFromPose(pose(position, 20, yawDeg))!;
 
 describe('autopilot', () => {
   test('drives forward towards a leaf ahead, steering slightly right for one a bit right', () => {
@@ -33,15 +53,136 @@ describe('autopilot', () => {
     expect(step.right).toBe(-step.left);
   });
 
-  test('stops to collect within reach, then reports the leaf collected', () => {
-    let step = stepAutopilot(initialAutopilotState(0), input([leaf(1, [0, 0, -0.2])], clear, 1000));
-    expect(step.state.mode).toBe('collecting');
+  test('stops short of the leaf to line up, scoop up', () => {
+    const step = stepAutopilot(initialAutopilotState(0), input([leaf(1, [0, 0, -0.45])]));
+    expect(step.state.mode).toBe('aligning');
+    expect([step.left, step.right, step.scoop]).toEqual([0, 0, 'up']);
+  });
+
+  test('lines up by turning slowly, then waits for a close-up sighting before scooping', () => {
+    const aligning: AutopilotState = { ...initialAutopilotState(0), mode: 'aligning', targetId: 1 };
+    // 10° right: turn right, slowly.
+    let step = stepAutopilot(aligning, input([leaf(1, [0.08, 0, -0.45], 'confirmed', 900)]));
+    expect(step.left).toBeGreaterThanOrEqual(cfg.minAlignTurnSpeed);
+    expect(step.left).toBeLessThan(cfg.alignTurnSpeed);
+    expect(step.right).toBe(-step.left);
+    // Dead ahead: hold still for settleMs.
+    step = stepAutopilot(aligning, input([leaf(1, [0, 0, -0.45], 'confirmed', 900)], clear, 1000));
+    expect(step.state.alignedAtMs).toBe(1000);
     expect([step.left, step.right]).toEqual([0, 0]);
-    step = stepAutopilot(step.state, input([leaf(1, [0, 0, -0.2])], clear, 1000 + DEFAULT_AUTOPILOT.collectMs - 1));
-    expect(step.collectedId).toBeUndefined();
-    step = stepAutopilot(step.state, input([leaf(1, [0, 0, -0.2])], clear, 1000 + DEFAULT_AUTOPILOT.collectMs + 1));
-    expect(step.collectedId).toBe(1);
+    // Seen again since: scoop.
+    step = stepAutopilot(step.state, input([leaf(1, [0, 0, -0.45], 'confirmed', 1500)], clear, 1000 + cfg.settleMs));
+    expect(step.state.mode).toBe('scooping');
+    expect(step.scoop).toBe('down');
+  });
+
+  test("reports a leaf missing when it isn't seen again close up", () => {
+    const aligning: AutopilotState = { ...initialAutopilotState(0), mode: 'aligning', targetId: 1, alignedAtMs: 1000 };
+    const stale = [leaf(1, [0, 0, -0.45], 'confirmed', 500)];
+    expect(stepAutopilot(aligning, input(stale, clear, 1000 + cfg.settleMs)).missingId).toBeUndefined();
+    const step = stepAutopilot(aligning, input(stale, clear, 1000 + cfg.absentMs));
+    expect(step.missingId).toBe(1);
     expect(step.state.mode).toBe('searching');
+  });
+
+  test('scoops: lowers, drives straight over the leaf, then lifts and reports what the lip swept', () => {
+    const start = at([0, 0.3, 0]);
+    const leaves = [leaf(1, [0, 0, -0.5]), leaf(2, [0.1, 0, -0.55]), leaf(3, [0.4, 0, -0.5])];
+    let state: AutopilotState = { ...initialAutopilotState(0), mode: 'scooping', sinceMs: 0, targetId: 1, startedAt: start.origin };
+    let step = stepAutopilot(state, { ...input(leaves, clear, cfg.lowerMs - 1), heading: start });
+    expect([step.left, step.right, step.scoop]).toEqual([0, 0, 'down']);
+    step = stepAutopilot(state, { ...input(leaves, clear, cfg.lowerMs + 1), heading: start });
+    expect(step.left).toBe(cfg.scoopSpeed);
+    expect(step.right).toBe(cfg.scoopSpeed);
+    // The lip (scoopLipM ahead of the camera) is now scoopPastM beyond leaf 1.
+    const past = at([0, 0.3, -0.5 - cfg.scoopPastM - 0.01 + cfg.scoopLipM]);
+    step = stepAutopilot(step.state, { ...input(leaves, clear, 3000), heading: past });
+    expect(step.state.mode).toBe('lifting');
+    expect(step.collectedIds).toEqual([1, 2]); // leaf 3 is 40 cm to the side, outside the scoop
+    state = step.state;
+    step = stepAutopilot(state, { ...input(leaves, clear, 3000 + cfg.liftMs + 1), heading: past });
+    expect(step.state.mode).toBe('returning');
+    expect(step.state.load).toBe(1);
+    expect(step.scoop).toBe('up');
+  });
+
+  test('stops scooping when something is right ahead', () => {
+    const state: AutopilotState = { ...initialAutopilotState(0), mode: 'scooping', sinceMs: 0, targetId: 1, startedAt: heading.origin };
+    const step = stepAutopilot(state, input([leaf(1, [0, 0, -0.4])], blockedAt([0], 0.2), cfg.lowerMs + 1));
+    expect(step.state.mode).toBe('lifting');
+  });
+
+  test('a full scoop goes to the pile, dumps facing it, and backs off', () => {
+    const full: AutopilotState = { ...initialAutopilotState(0, 1), mode: 'returning' };
+    // Pile behind: turn round first.
+    let step = stepAutopilot(full, input([leaf(1, [0, 0, -1])]));
+    expect(step.state.mode).toBe('returning');
+    expect(Math.sign(step.left)).toBe(-Math.sign(step.right));
+    // Facing it, 2 m away: drive.
+    const facing = at([0, 0.3, 0], 180);
+    step = stepAutopilot(full, { ...input([]), heading: facing });
+    expect(step.left).toBeGreaterThan(0);
+    expect(step.right).toBeGreaterThan(0);
+    // At the dump point: tip the scoop.
+    const there = at([0, 0.3, 2 - cfg.dumpAtM + 0.05], 180);
+    step = stepAutopilot(full, { ...input([]), heading: there });
+    expect(step.state.mode).toBe('dumping');
+    step = stepAutopilot(step.state, { ...input([], clear, 1000), heading: there });
+    expect(step.scoop).toBe('dump');
+    step = stepAutopilot(step.state, { ...input([], clear, 1000 + cfg.dumpMs + 1), heading: there });
+    expect(step.dumped).toBe(1);
+    expect(step.state.load).toBe(0);
+    expect(step.state.mode).toBe('backing');
+    step = stepAutopilot(step.state, { ...input([], clear, 3000), heading: there });
+    expect(step.left).toBe(-cfg.backupSpeed);
+    const backed = at([0, 0.3, 2 - cfg.dumpAtM + 0.05 - cfg.backupM - 0.01], 180);
+    step = stepAutopilot(step.state, { ...input([], clear, 4000), heading: backed });
+    expect(step.state.mode).toBe('searching');
+  });
+
+  test('dumps where the grown pile blocks the way, short of the dump point', () => {
+    const full: AutopilotState = { ...initialAutopilotState(0, 1), mode: 'returning' };
+    const near = at([0, 0.3, 2 - 1.2], 180);
+    const step = stepAutopilot(full, { ...input([], blockedAt([-7.5, 0, 7.5], 0.4)), heading: near });
+    expect(step.state.mode).toBe('dumping');
+  });
+
+  test('detours round something between it and the pile', () => {
+    const full: AutopilotState = { ...initialAutopilotState(0, 1), mode: 'returning' };
+    const facing = at([0, 0.3, 0], 180);
+    let step = stepAutopilot(full, { ...input([], blockedAt([-7.5, 0, 7.5, 15], 0.6), 1000), heading: facing });
+    expect(step.state.detourYawDeg).toBeDefined();
+    expect(angleDiffDeg(step.state.detourYawDeg!, 180)).toBe(-15); // the open lane nearest the pile's
+    // Turned onto the detour (corridors are relative to the rover, so that lane is now ahead).
+    step = stepAutopilot(step.state, { ...input([], clear, 1200), heading: at([0, 0.3, 0], 165) });
+    expect(step.left).toBeGreaterThan(0);
+    expect(step.right).toBeGreaterThan(0);
+  });
+
+  test("never targets leaves in the pile, and doesn't scoop more without one", () => {
+    const step = stepAutopilot(initialAutopilotState(0), input([leaf(1, [0, 0, 1.5])]));
+    expect(step.state.targetId).toBeUndefined();
+    const full = stepAutopilot(initialAutopilotState(0, 1), input([leaf(2, [0, 0, -2])], clear, 1000, null));
+    expect(full.message).toMatch(/set a pile/);
+    expect([full.left, full.right]).toEqual([0, 0]);
+  });
+
+  test('prefers leaves nearer the pile, all else equal', () => {
+    // Both 2 m from the rover; one towards the pile.
+    const towards = leaf(1, [1.414, 0, 1.414]);
+    const away = leaf(2, [1.414, 0, -1.414]);
+    expect(chooseTarget([away, towards], heading, clear, cfg, undefined, pile)!.leaf.id).toBe(1);
+  });
+
+  test('sweptLeaves only counts leaves the lip passed over', () => {
+    const swept = sweptLeaves([leaf(1, [0, 0, -0.3]), leaf(2, [0, 0, -0.05]), leaf(3, [0, 0, -0.9])], [0, 0.3, 0], at([0, 0.3, -0.5]));
+    expect(swept).toEqual([1]);
+  });
+
+  test('gives up on a leaf it can not reach in time', () => {
+    const state: AutopilotState = { ...initialAutopilotState(0), mode: 'approaching', sinceMs: 0, targetId: 1 };
+    const step = stepAutopilot(state, input([leaf(1, [0, 0, -2])], clear, cfg.approachMaxMs + 1));
+    expect(step.failedId).toBe(1);
   });
 
   test('skips a leaf behind an obstacle for a reachable one', () => {
@@ -60,8 +201,11 @@ describe('autopilot', () => {
   });
 
   test('never drives forward into a blocked corridor', () => {
-    const step = stepAutopilot(initialAutopilotState(0), input([leaf(1, [0.1, 0, -3])], blockedAt([0], 0.3)));
-    expect(Math.sign(step.left)).toBe(-Math.sign(step.right));
+    let step = stepAutopilot(initialAutopilotState(0), input([leaf(1, [0.1, 0, -3])], blockedAt([0], 0.3)));
+    for (let t = 1200; t < 5000; t += 200) {
+      expect(step.left > 0 && step.right > 0 && Math.abs(step.left - step.right) < 20).toBe(false);
+      step = stepAutopilot(step.state, input([leaf(1, [0.1, 0, -3])], blockedAt([0], 0.3), t));
+    }
   });
 
   test('stops without tracking or fresh depth', () => {

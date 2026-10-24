@@ -12,6 +12,10 @@
  *
  * A **corridor** is a rover-wide strip along one bearing. Its clearance is how far the rover can
  * drive that way before the strip holds `minPoints` blocking points.
+ *
+ * Corridors start at the camera, but the body reaches back behind it. Something remembered right
+ * beside the body (within `sideMarginM` of its side, as far back as `bodyBackM`) closes every
+ * corridor on that side, so the rover doesn't steer into what it's passing.
  */
 
 import { decodeDepth, headingFromPose, scaleIntrinsics, toRover, transformPoint, unproject } from './geometry';
@@ -30,6 +34,10 @@ export type RoverSpec = {
   minPoints: number;
   /** Lens height above the ground, used when the floor can't be seen in the depth. */
   cameraHeightM: number;
+  /** How far the body reaches back behind the camera. */
+  bodyBackM: number;
+  /** Something this close to the body's side blocks steering that way. */
+  sideMarginM: number;
 };
 
 export const DEFAULT_ROVER: RoverSpec = {
@@ -39,6 +47,8 @@ export const DEFAULT_ROVER: RoverSpec = {
   clearanceHeightM: 0.6,
   minPoints: 4,
   cameraHeightM: 0.3,
+  bodyBackM: 0.35,
+  sideMarginM: 0.1,
 };
 
 /** Bearings the corridors are checked along, degrees (0 ahead, + right). */
@@ -160,12 +170,18 @@ export function corridors(
 
   const points = scan?.points ?? [];
   const floorY = scan?.floorY ?? 0;
+  const besides = { left: 0, right: 0 };
   for (const p of points) {
     const r = toRover(p, heading);
-    if (r.forward <= 0) continue;
     const height = p[1] - floorY;
     const kind = height > rover.maxStepM && height < rover.clearanceHeightM ? 'obstacle' : height < -rover.maxDipM ? 'drop' : null;
     if (height >= rover.clearanceHeightM) continue; // overhead: neither ground nor in the way
+    if (r.forward <= 0) {
+      if (kind && r.forward > -rover.bodyBackM && Math.abs(r.right) < half + rover.sideMarginM) {
+        besides[r.right > 0 ? 'right' : 'left'] += 1;
+      }
+      continue;
+    }
     for (const s of strips) {
       const along = r.right * s.sin + r.forward * s.cos;
       if (along <= 0 || along > MAX_RANGE_M) continue;
@@ -176,6 +192,10 @@ export function corridors(
   }
 
   return strips.map((s) => {
+    const beside = s.bearingDeg > 0 ? besides.right : s.bearingDeg < 0 ? besides.left : 0;
+    if (beside >= rover.minPoints) {
+      return { bearingDeg: s.bearingDeg, clearanceM: 0, blockedBy: 'obstacle' as const, observedM: s.observed };
+    }
     if (s.blocking.length < rover.minPoints) {
       return { bearingDeg: s.bearingDeg, clearanceM: MAX_RANGE_M, blockedBy: null, observedM: s.observed };
     }
@@ -200,7 +220,7 @@ export type ObstacleMemoryOptions = {
   maxPoints: number;
 };
 
-export const DEFAULT_OBSTACLE_MEMORY: ObstacleMemoryOptions = { maxAgeMs: 4000, voxelM: 0.05, maxPoints: 20000 };
+export const DEFAULT_OBSTACLE_MEMORY: ObstacleMemoryOptions = { maxAgeMs: 10_000, voxelM: 0.05, maxPoints: 20000 };
 
 /** Whether a world point falls inside a camera's image, in front of it and within LiDAR range. */
 export function inView(p: Vec3, view: { pose: Pose; intrinsics: Intrinsics }, maxDepthM = MAX_RANGE_M): boolean {

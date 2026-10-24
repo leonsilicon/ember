@@ -197,3 +197,31 @@ export function rayToFloor(x: number, y: number, pose: Pose, k: Intrinsics, floo
   if (Math.hypot(point[0] - origin[0], point[2] - origin[2]) > maxRangeM) return null;
   return point;
 }
+
+/**
+ * A camera-to-world pose (column-major) at `position`, looking `pitchDeg` below horizontal and
+ * turned `yawDeg` to the right (clockwise from above) from world −z, with the camera's x axis
+ * horizontal. For simulations and tests; on the phone the pose comes from ARKit.
+ */
+export function makePose(position: Vec3, pitchDeg: number, yawDeg: number): number[] {
+  const p = (-pitchDeg * Math.PI) / 180;
+  const y = (-yawDeg * Math.PI) / 180;
+  // Ry(y) · Rx(p): pitch down, then yaw (negative = clockwise seen from above).
+  const rx = [
+    [1, 0, 0],
+    [0, Math.cos(p), -Math.sin(p)],
+    [0, Math.sin(p), Math.cos(p)],
+  ];
+  const ry = [
+    [Math.cos(y), 0, Math.sin(y)],
+    [0, 1, 0],
+    [-Math.sin(y), 0, Math.cos(y)],
+  ];
+  const r = ry.map((row) => [0, 1, 2].map((j) => row[0] * rx[0][j] + row[1] * rx[1][j] + row[2] * rx[2][j]));
+  return [
+    r[0][0], r[1][0], r[2][0], 0,
+    r[0][1], r[1][1], r[2][1], 0,
+    r[0][2], r[1][2], r[2][2], 0,
+    position[0], position[1], position[2], 1,
+  ];
+}
