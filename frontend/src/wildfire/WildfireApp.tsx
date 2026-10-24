@@ -23,6 +23,7 @@ import {
   BUILDINGS_SOURCE,
   HAZARD_SOURCE,
   L,
+  NO_SELECTION,
   SELECTED_SOURCE,
   buildingLayers,
   firstSymbolLayer,
@@ -120,7 +121,7 @@ export default function WildfireApp() {
         { id: 'wf-coverage-line', type: 'line', source: 'wf-coverage', paint: { 'line-color': '#0f172a', 'line-width': 1.5, 'line-dasharray': [4, 3], 'line-opacity': 0.5 } },
         before,
       )
-      for (const l of selectedLayers(bias.lat, categories.screening_distance_m)) map.addLayer(l, before)
+      for (const l of selectedLayers()) map.addLayer(l, before)
       setReady(true)
     })
 
@@ -148,7 +149,7 @@ export default function WildfireApp() {
       map.remove()
       mapRef.current = null
     }
-  }, [data, bias.lat])
+  }, [data])
 
   useEffect(() => {
     const map = mapRef.current
@@ -163,6 +164,7 @@ export default function WildfireApp() {
     if (!ready || !map) return
     const src = map.getSource(SELECTED_SOURCE) as GeoJSONSource | undefined
     src?.setData(selected ? { type: 'Feature', geometry: selected.geometry, properties: {} } : { type: 'FeatureCollection', features: [] })
+    map.setFilter(L.selectedRing, selected ? ['==', ['id'], selected.props.fid] : NO_SELECTION)
   }, [ready, selected])
 
   useEffect(() => {

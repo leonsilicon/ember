@@ -146,8 +146,9 @@ def hazard_features(arr, transform, nodata, to_wgs84):
         }
 
 
-def run_tippecanoe(tippecanoe: str, src: Path, dst: Path, layer: str, extra: list[str]):
-    cmd = [tippecanoe, "-o", str(dst), "-l", layer, "--force", "--read-parallel", *extra, str(src)]
+def run_tippecanoe(tippecanoe: str, layers: dict[str, Path], dst: Path, extra: list[str]):
+    named = [a for name, path in layers.items() for a in ("-L", f"{name}:{path}")]
+    cmd = [tippecanoe, "-o", str(dst), "--force", "--read-parallel", *extra, *named]
     print("+", " ".join(cmd), file=sys.stderr)
     subprocess.run(cmd, check=True)
 
@@ -210,6 +211,7 @@ def main():
     raw = json.loads(buildings_path.read_text())
     coverage_poly = box(*bbox)
     out_feats = []
+    ring_feats = []
     stats = {"total": 0, "hazard_overlap": 0, "hazard_within_30m": 0, "needs_evaluation": 0, "incomplete": 0}
     for fid, feat in enumerate(raw["features"], start=1):
         g84 = shape(feat["geometry"])
@@ -237,16 +239,20 @@ def main():
         props["lon"], props["lat"] = round(c.x, 6), round(c.y, 6)
         props["area_m2"] = round(g.area, 1)
         out_feats.append({"type": "Feature", "id": fid, "geometry": mapping(g84), "properties": props})
+        ring84 = shp_transform(to_wgs84, g.buffer(SCREEN_M, quad_segs=6))
+        ring_feats.append({"type": "Feature", "id": fid, "geometry": mapping(ring84), "properties": {"fid": fid}})
 
     buildings_geojson = work / "buildings.geojson"
     buildings_geojson.write_text(json.dumps({"type": "FeatureCollection", "features": out_feats}, separators=(",", ":")))
+    rings_geojson = work / "rings.geojson"
+    rings_geojson.write_text(json.dumps({"type": "FeatureCollection", "features": ring_feats}, separators=(",", ":")))
 
     run_tippecanoe(
-        args.tippecanoe, buildings_geojson, out / "buildings.pmtiles", "buildings",
+        args.tippecanoe, {"buildings": buildings_geojson, "rings": rings_geojson}, out / "buildings.pmtiles",
         ["-Z10", "-z16", "--no-feature-limit", "--no-tile-size-limit", "--use-attribute-for-id=fid", "--detect-shared-borders"],
     )
     run_tippecanoe(
-        args.tippecanoe, hazard_geojson, out / "hazard.pmtiles", "hazard",
+        args.tippecanoe, {"hazard": hazard_geojson}, out / "hazard.pmtiles",
         ["-Z7", "-z14", "--no-feature-limit", "--no-tile-size-limit", "--detect-shared-borders", "--coalesce-smallest-as-needed"],
     )
 

@@ -11,7 +11,6 @@ export const L = {
   buildingsFill: 'wf-buildings-fill',
   buildingsLine: 'wf-buildings-line',
   selectedRing: 'wf-selected-ring',
-  selectedFill: 'wf-selected-fill',
   selectedOutline: 'wf-selected-outline',
 } as const
 
@@ -40,13 +39,6 @@ export const buildingOutline: ExpressionSpecification = [
   ['==', ['get', 'needs_evaluation'], true], '#7e22ce',
   '#ffffff',
 ]
-
-/** Pixel width that equals `meters` on the ground at `lat`, for every zoom. */
-export function metersToPx(meters: number, lat: number, scale = 1): ExpressionSpecification {
-  const mppZ0 = (40075016.686 * Math.cos((lat * Math.PI) / 180)) / 512
-  const px = (z: number) => (scale * meters) / (mppZ0 / 2 ** z)
-  return ['interpolate', ['exponential', 2], ['zoom'], 0, px(0), 24, px(24)]
-}
 
 export function hazardLayer(cats: Categories, opacity: number): LayerSpecification {
   return {
@@ -82,22 +74,17 @@ export function buildingLayers(): LayerSpecification[] {
   ]
 }
 
-export function selectedLayers(lat: number, screeningM: number): LayerSpecification[] {
+export const NO_SELECTION: ExpressionSpecification = ['==', ['id'], -1]
+
+export function selectedLayers(): LayerSpecification[] {
   return [
     {
-      // centred on the footprint edge, so the outer half is exactly the 30 m band; the inner
-      // half is hidden under the selected fill. Avoids line-offset, which tears at large widths.
       id: L.selectedRing,
-      type: 'line',
-      source: SELECTED_SOURCE,
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#0ea5e9', 'line-opacity': 0.22, 'line-width': metersToPx(screeningM, lat, 2) },
-    },
-    {
-      id: L.selectedFill,
       type: 'fill',
-      source: SELECTED_SOURCE,
-      paint: { 'fill-color': '#e0f2fe', 'fill-opacity': 1 },
+      source: BUILDINGS_SOURCE,
+      'source-layer': 'rings',
+      filter: NO_SELECTION,
+      paint: { 'fill-color': '#0ea5e9', 'fill-opacity': 0.18, 'fill-outline-color': '#0284c7' },
     },
     {
       id: L.selectedOutline,

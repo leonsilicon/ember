@@ -7,7 +7,7 @@ from `frontend/public/wildfire/`:
 | file | what |
 | --- | --- |
 | `hazard.pmtiles` | vector tiles of raster cells grouped by raw fuel code (`code`, `cat`, `fuel`) |
-| `buildings.pmtiles` | footprints with screening results (`hazard_overlap`, `hazard_within_30m`, `needs_evaluation`, `coverage_complete`, `nearest_hazard_m`, fuel codes) |
+| `buildings.pmtiles` | layers `buildings` (footprints with screening results) and `rings` (exact 30 m buffers, same ids) (`hazard_overlap`, `hazard_within_30m`, `needs_evaluation`, `coverage_complete`, `nearest_hazard_m`, fuel codes) |
 | `coverage.json` | pilot bbox, source metadata, summary stats |
 | `categories.json` | copy of the shared code → category → colour config |
 
