@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Datasets and training output (large, reproducible)
+data/
+runs/
+
+# Model weights and exports (downloaded or trained)
+*.pt
+*.ts
+*.onnx
+*.mlpackage
+*.mlmodel
+
+# Archived leaf-model training experiments
+archive/
