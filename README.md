@@ -98,9 +98,10 @@ and everything within 1 m of it counts as piled (the rover never picks those up)
 4. **Scoop**: lower the scoop, drive straight until the lip (15 cm ahead of the camera) is 10 cm
    past the leaf, lift. That last stretch is blind and steered on the AR pose. Every leaf the
    lip passed over counts as scooped.
-5. **To the pile** once the scoop holds `capacity` loads (default 1), detouring the same way.
+5. **To the pile** once the bin holds `capacity` scoops (default 4: each scoop tips into a bin
+   on the rover), or with a part-full bin once nothing is left nearby, detouring the same way.
    Dump at 60 cm from its centre, facing it, or wherever the grown pile blocks the way first.
-   Then back up 35 cm and search again.
+   The bin tips out, then it backs up 35 cm and searches again.
 
 The scoop position (`up` / `down` / `dump`) is part of every autopilot step, but the firmware has
 no scoop yet, so the app only sends the wheel speeds for now.

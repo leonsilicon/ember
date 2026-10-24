@@ -55,6 +55,36 @@ describe('SimController', () => {
     expect(c.leafAt(0.2, -3)).toBeNull()
   })
 
+  test('leaves per trip defaults to 4 and changes the running brain', () => {
+    const c = new SimController()
+    expect(c.capacity).toBe(4)
+    expect(c.sim.brain.options.autopilot.capacity).toBe(4)
+    c.setCapacity(2)
+    expect(c.sim.brain.options.autopilot.capacity).toBe(2)
+    c.reset()
+    expect(c.sim.brain.options.autopilot.capacity).toBe(2)
+  })
+
+  test('the pile goes where it is put, but not onto a trunk, and survives a restart', () => {
+    const c = new SimController() // Cluttered yard: a trunk at (0, -1.9)
+    expect(c.setPile(0, -1.9)).toBe(false)
+    expect(c.setPile(2, 1)).toBe(true)
+    expect(c.frame.pile?.center).toEqual([2, 0, 1])
+    expect(c.sim.brain.pile?.center).toEqual([2, 0, 1])
+    c.reset()
+    expect(c.sim.brain.pile?.center).toEqual([2, 0, 1])
+    c.resetPile()
+    expect(c.sim.brain.pile?.center).toEqual(WORLDS['Cluttered yard'].pile!.center)
+  })
+
+  test('a moved pile is where the leaves end up', () => {
+    const c = new SimController()
+    c.setPile(2, -3)
+    const frame = c.sim.run(isDone, 20 * 60_000)
+    expect(frame.stats.inPile).toBe(frame.leaves.length)
+    for (const l of frame.leaves) expect(Math.hypot(l.position[0] - 2, l.position[2] + 3)).toBeLessThanOrEqual(1)
+  }, 30_000)
+
   for (const name of Object.keys(WORLDS)) {
     test(`'${name}' clears within 20 sim-minutes at seed 1`, () => {
       const sim = new RoverSim(structuredClone(WORLDS[name]), { seed: 1 })

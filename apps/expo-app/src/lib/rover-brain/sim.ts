@@ -65,7 +65,7 @@ export type SimOptions = {
   noisePerM: number;
   /** False detections per frame, somewhere in view. */
   falsePerFrame: number;
-  /** Chance a leaf under the lip ends up in the scoop. */
+  /** Chance a leaf under the lip ends up in the scoop (and so the bin). */
   scoopSuccess: number;
   /** How deep the scoop is, behind its lip. */
   scoopDepthM: number;
@@ -101,7 +101,7 @@ export const DEFAULT_SIM: SimOptions = {
 export type SimLeaf = {
   id: number;
   position: Vec3;
-  /** On the ground, in the scoop, or on the ground inside the pile's radius. */
+  /** On the ground, on board (`scoop`: in the scoop or the bin), or on the ground inside the pile's radius. */
   where: 'ground' | 'scoop' | 'pile';
 };
 
@@ -330,7 +330,7 @@ export class RoverSim {
     this.x = ax + Math.sin(rad(this.yawDeg)) * o.axleBackM;
     this.z = az - Math.cos(rad(this.yawDeg)) * o.axleBackM;
 
-    // Carried leaves ride in the scoop.
+    // Leaves on board ride in the bin.
     const h = this.heading;
     for (const leaf of this.leaves) {
       if (leaf.where !== 'scoop') continue;
@@ -365,7 +365,7 @@ export class RoverSim {
     if (position === this.scoop) return;
     if (position === 'down') this.tried.clear();
     if (position === 'dump') {
-      // Tipped out in front of the lip, scattering a little.
+      // The bin tips out in front of the lip, scattering a little.
       const h = this.heading;
       const lip = this.brain.options.autopilot.scoopLipM + 0.05;
       for (const leaf of this.leaves) {

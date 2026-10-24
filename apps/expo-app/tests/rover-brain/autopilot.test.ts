@@ -100,10 +100,31 @@ describe('autopilot', () => {
     expect(step.state.mode).toBe('lifting');
     expect(step.collectedIds).toEqual([1, 2]); // leaf 3 is 40 cm to the side, outside the scoop
     state = step.state;
-    step = stepAutopilot(state, { ...input(leaves, clear, 3000 + cfg.liftMs + 1), heading: past });
+    // One scoop fills a one-scoop bin: off to the pile.
+    step = stepAutopilot(state, { ...input(leaves, clear, 3000 + cfg.liftMs + 1), heading: past }, { ...cfg, capacity: 1 });
     expect(step.state.mode).toBe('returning');
     expect(step.state.load).toBe(1);
     expect(step.scoop).toBe('up');
+  });
+
+  test('fills the bin (4 scoops by default) before going to the pile', () => {
+    expect(cfg.capacity).toBe(4);
+    const lifting = (load: number): AutopilotState => ({ ...initialAutopilotState(0, load), mode: 'lifting', sinceMs: 0 });
+    let step = stepAutopilot(lifting(0), input([], clear, cfg.liftMs + 1));
+    expect(step.state.mode).toBe('searching');
+    expect(step.state.load).toBe(1);
+    step = stepAutopilot(lifting(3), input([], clear, cfg.liftMs + 1));
+    expect(step.state.mode).toBe('returning');
+    expect(step.state.load).toBe(4);
+  });
+
+  test('empties a part-full bin once a full look round finds nothing more', () => {
+    let state: AutopilotState = { ...initialAutopilotState(0, 2), lastYawDeg: 0 };
+    for (let yaw = 30; yaw <= 390 && state.mode === 'searching'; yaw += 30) {
+      state = stepAutopilot(state, { ...input([], clear, 1000 + yaw), heading: at([0, 0.3, 0], yaw) }).state;
+    }
+    expect(state.mode).toBe('returning');
+    expect(state.load).toBe(2);
   });
 
   test('stops scooping when something is right ahead', () => {
@@ -162,7 +183,7 @@ describe('autopilot', () => {
   test("never targets leaves in the pile, and doesn't scoop more without one", () => {
     const step = stepAutopilot(initialAutopilotState(0), input([leaf(1, [0, 0, 1.5])]));
     expect(step.state.targetId).toBeUndefined();
-    const full = stepAutopilot(initialAutopilotState(0, 1), input([leaf(2, [0, 0, -2])], clear, 1000, null));
+    const full = stepAutopilot(initialAutopilotState(0, cfg.capacity), input([leaf(2, [0, 0, -2])], clear, 1000, null));
     expect(full.message).toMatch(/set a pile/);
     expect([full.left, full.right]).toEqual([0, 0]);
   });

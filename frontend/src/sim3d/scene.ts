@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { goalOf, type SimController } from '../sim/controller'
 import type { Overlays } from '../sim/overlays'
-import { DEFAULT_OVERLAYS } from '../sim/overlays'
+import { DEFAULT_OVERLAYS, PALETTE } from '../sim/overlays'
 import { VIEW } from '../sim/worlds'
 import { ProceduralGround, type GroundLayer } from './ground'
 import { LeafInstances } from './leaves'
@@ -41,6 +41,10 @@ export class SimScene3D {
   private overlays: Overlays = DEFAULT_OVERLAYS
   private follow = false
   private resets = -1
+  private pileMoves = -1
+  /** Where the pile would go, following the pointer while placing it. */
+  private ghost = new THREE.Group()
+  private ghostMaterials: THREE.MeshBasicMaterial[] = []
   private raf = 0
   private lastMs = performance.now()
   private observer: ResizeObserver
@@ -84,6 +88,21 @@ export class SimScene3D {
 
     this.setGroundLayer(new ProceduralGround(r.capabilities.getMaxAnisotropy()))
     this.world.add(this.pile.zone, this.pile.mound, this.trail.line, this.fov, this.corridors.lines, this.belief.group, this.goal.line)
+    for (const [geometry, opacity] of [
+      [new THREE.RingGeometry(0.95, 1, 96), 0.95],
+      [new THREE.CircleGeometry(1, 96), 0.14],
+    ] as const) {
+      const material = new THREE.MeshBasicMaterial({ color: PALETTE.pile, transparent: true, opacity, depthWrite: false })
+      const mesh = new THREE.Mesh(geometry, material)
+      mesh.rotation.x = -Math.PI / 2
+      mesh.raycast = () => {}
+      this.ghost.add(mesh)
+      this.ghostMaterials.push(material)
+    }
+    this.ghost.position.y = 0.01
+    this.ghost.renderOrder = 2
+    this.ghost.visible = false
+    this.world.add(this.ghost)
 
     // Leaf drag listeners go on before OrbitControls', so a press on a leaf can stop the orbit.
     const el = r.domElement
@@ -91,6 +110,7 @@ export class SimScene3D {
     el.addEventListener('pointermove', this.onMove)
     el.addEventListener('pointerup', this.onUp)
     el.addEventListener('pointercancel', this.onUp)
+    el.addEventListener('pointerleave', this.onLeave)
     this.controls = new OrbitControls(this.camera, el)
     this.controls.enableDamping = true
     this.controls.maxPolarAngle = Math.PI / 2 - 0.06
@@ -147,6 +167,7 @@ export class SimScene3D {
     el.removeEventListener('pointermove', this.onMove)
     el.removeEventListener('pointerup', this.onUp)
     el.removeEventListener('pointercancel', this.onUp)
+    el.removeEventListener('pointerleave', this.onLeave)
     this.controls.dispose()
     this.ground?.dispose()
     this.leaves?.dispose()
@@ -207,6 +228,12 @@ export class SimScene3D {
       this.resets = c.resets
       this.rebuildWorld()
     }
+    if (c.pileMoves !== this.pileMoves) {
+      this.pileMoves = c.pileMoves
+      this.pile.setPile(c.frame.pile)
+      this.pile.zone.visible = this.overlays.pileZone && c.frame.pile != null
+    }
+    if (!c.placingPile) this.ghost.visible = false
     const frame = c.frame
     const pose = c.roverPose()
     const rover = this.rover!
@@ -260,8 +287,20 @@ export class SimScene3D {
     return this.controller.frame.leaves.find((l) => l.id === id)?.where === 'scoop' ? null : id
   }
 
+  /** The ground point under the pointer. */
+  private groundAt(e: PointerEvent) {
+    this.setPointer(e)
+    return this.raycaster.ray.intersectPlane(this.groundPlane, this.tmp)
+  }
+
   private onDown = (e: PointerEvent) => {
     if (e.button !== 0) return
+    if (this.controller.placingPile) {
+      const p = this.groundAt(e)
+      if (p) this.controller.setPile(p.x, p.z)
+      e.stopImmediatePropagation()
+      return
+    }
     const id = this.pickLeaf(e)
     if (id == null) return
     this.dragging = id
@@ -272,6 +311,19 @@ export class SimScene3D {
   }
 
   private onMove = (e: PointerEvent) => {
+    if (this.controller.placingPile && this.dragging == null) {
+      const p = this.groundAt(e)
+      const radius = this.controller.frame.pile?.radiusM ?? 1
+      this.ghost.visible = p != null
+      if (p) {
+        const blocked = this.controller.pileBlocked(p.x, p.z) != null
+        this.ghost.position.set(p.x, 0.01, p.z)
+        this.ghost.scale.setScalar(radius)
+        for (const m of this.ghostMaterials) m.color.set(blocked ? PALETTE.blocked : PALETTE.pile)
+        this.renderer.domElement.style.cursor = blocked ? 'not-allowed' : 'crosshair'
+      }
+      return
+    }
     if (this.dragging == null) {
       if (e.buttons === 0) this.renderer.domElement.style.cursor = this.pickLeaf(e) != null ? 'grab' : ''
       return
@@ -279,6 +331,10 @@ export class SimScene3D {
     this.setPointer(e)
     const p = this.raycaster.ray.intersectPlane(this.groundPlane, this.tmp)
     if (p && !this.controller.moveLeaf(this.dragging, p.x, p.z)) this.endDrag(e)
+  }
+
+  private onLeave = () => {
+    this.ghost.visible = false
   }
 
   private onUp = (e: PointerEvent) => {

@@ -15,13 +15,15 @@
  *   from close up refine where it is. If it isn't seen again, it's gone.
  * - **scooping**: lower the scoop and drive straight over the leaf until the scoop's lip is
  *   `scoopPastM` beyond it. The last stretch is blind and steered on the AR pose alone.
- * - **lifting**: raise the scoop. Every leaf the lip swept over is reported collected.
- * - **returning**: once the scoop holds `capacity` loads, drive to the pile.
+ * - **lifting**: raise the scoop, tipping what it caught into the bin. Every leaf the lip swept
+ *   over is reported collected.
+ * - **returning**: once the bin holds `capacity` scoops, drive to the pile (with a part-full bin
+ *   too, once there's nothing left to scoop nearby).
  *
  * Driving to a leaf or the pile goes straight when the way is open. When it's blocked, the rover
  * detours: it holds the world direction of the open corridor nearest the goal's for `detourMs`,
  * then tries straight again, which works its way round a trunk or a rock.
- * - **dumping**: at the pile's edge, facing it, tip the scoop out.
+ * - **dumping**: at the pile's edge, facing it, tip the bin out.
  * - **backing**: reverse a little, clear of the pile, then search again.
  *
  * It never drives forward into a corridor whose clearance is under `stopDistanceM` (the pile
@@ -56,7 +58,7 @@ export type AutopilotConfig = {
   scoopClearM: number;
   lowerMs: number;
   liftMs: number;
-  /** Scoop loads it carries before taking them to the pile. */
+  /** Scoops (usually one leaf each) that go into the bin before it's taken to the pile and emptied. */
   capacity: number;
   /** Dump with the camera this far from the pile's centre. */
   dumpAtM: number;
@@ -115,7 +117,7 @@ export const DEFAULT_AUTOPILOT: AutopilotConfig = {
   scoopClearM: 0.3,
   lowerMs: 500,
   liftMs: 800,
-  capacity: 1,
+  capacity: 4,
   dumpAtM: 0.6,
   dumpMs: 1500,
   backupM: 0.35,
@@ -146,6 +148,7 @@ export type Pile = { center: Vec3; radiusM: number };
 
 export const DEFAULT_PILE_RADIUS_M = 1;
 
+/** `down`: lowered to scoop. `up`: raised (emptying into the bin). `dump`: tip the bin out onto the pile. */
 export type ScoopPosition = 'up' | 'down' | 'dump';
 
 export type AutopilotMode =
@@ -164,7 +167,7 @@ export type AutopilotState = {
   /** When `mode` started. */
   sinceMs: number;
   targetId?: number;
-  /** Scoop loads carried. */
+  /** Scoops in the bin. */
   load: number;
   /** Degrees turned while searching, to know when a full look-around is done. */
   searchedDeg: number;
@@ -212,7 +215,7 @@ export type AutopilotStep = {
   missingId?: number;
   /** A leaf the rover can't get its scoop to; the caller marks it failed. */
   failedId?: number;
-  /** Scoop loads just tipped onto the pile. */
+  /** Scoops just tipped onto the pile with the bin. */
   dumped?: number;
 };
 
@@ -368,7 +371,7 @@ function seek(state: AutopilotState, input: AutopilotInput, heading: Heading, cf
   if (state.load >= cfg.capacity) {
     return pile
       ? returnToPile({ ...state, mode: 'returning', sinceMs: nowMs }, input, heading, cfg)
-      : halt(state, 'Scoop full: set a pile');
+      : halt(state, 'Bin full: set a pile');
   }
 
   // Mid-detour, stick with the leaf it's going round to; switching would start over.
@@ -424,7 +427,7 @@ function seek(state: AutopilotState, input: AutopilotInput, heading: Heading, cf
   if (searched >= 360) {
     // Nothing more around here: empty a part-full scoop before wandering off.
     if (state.load > 0 && pile) {
-      return halt({ ...searching, mode: 'returning', sinceMs: nowMs, searchedDeg: 0 }, 'No more leaves here; to the pile');
+      return halt({ ...searching, mode: 'returning', sinceMs: nowMs, searchedDeg: 0 }, 'No more leaves here; emptying the bin');
     }
     const open = lanes
       .filter((c) => isOpen(c, cfg.minExploreM, cfg))
@@ -504,16 +507,16 @@ function lift(state: AutopilotState, input: AutopilotInput, heading: Heading, cf
   const load = state.load + 1;
   if (load >= cfg.capacity) {
     return pile
-      ? halt({ ...initialAutopilotState(nowMs, load), mode: 'returning' }, 'Scoop full; to the pile')
-      : halt(initialAutopilotState(nowMs, load), 'Scoop full: set a pile');
+      ? halt({ ...initialAutopilotState(nowMs, load), mode: 'returning' }, 'Bin full; to the pile')
+      : halt(initialAutopilotState(nowMs, load), 'Bin full: set a pile');
   }
-  return halt({ ...initialAutopilotState(nowMs, load), lastYawDeg: heading.yawDeg }, `Scooped (${load}/${cfg.capacity})`);
+  return halt({ ...initialAutopilotState(nowMs, load), lastYawDeg: heading.yawDeg }, `Scooped; bin ${load}/${cfg.capacity}`);
 }
 
 /** Drive to the pile's edge, facing its centre. */
 function returnToPile(state: AutopilotState, input: AutopilotInput, heading: Heading, cfg: AutopilotConfig): AutopilotStep {
   const { nowMs, corridors: lanes, pile } = input;
-  if (!pile) return halt(state, 'Scoop full: set a pile');
+  if (!pile) return halt(state, 'Bin full: set a pile');
   const r = toRover(pile.center, heading);
   const label = `pile · ${r.distance.toFixed(1)} m · ${side(r.bearingDeg)}`;
   const ahead = corridorAt(lanes, 0);
@@ -521,7 +524,7 @@ function returnToPile(state: AutopilotState, input: AutopilotInput, heading: Hea
   const pileAhead = r.distance <= pile.radiusM + cfg.stopDistanceM && !isOpen(ahead, cfg.stopDistanceM, cfg);
   const arrived = r.distance <= cfg.dumpAtM || pileAhead;
   if (arrived && Math.abs(r.bearingDeg) <= cfg.alignDeg * 2) {
-    return halt({ ...state, mode: 'dumping', sinceMs: nowMs, ...NO_DETOUR }, 'Dumping onto the pile');
+    return halt({ ...state, mode: 'dumping', sinceMs: nowMs, ...NO_DETOUR }, 'Emptying the bin onto the pile');
   }
   if (arrived) {
     const { left, right } = fineTurn(r.bearingDeg, cfg);
@@ -614,10 +617,10 @@ function navigate(
 
 function dump(state: AutopilotState, input: AutopilotInput, heading: Heading, cfg: AutopilotConfig): AutopilotStep {
   const { nowMs } = input;
-  if (nowMs - state.sinceMs < cfg.dumpMs) return halt(state, 'Dumping onto the pile');
+  if (nowMs - state.sinceMs < cfg.dumpMs) return halt(state, 'Emptying the bin onto the pile');
   return halt(
     { ...initialAutopilotState(nowMs), mode: 'backing', startedAt: heading.origin },
-    `Dumped ${state.load} scoop${state.load === 1 ? '' : 's'}`,
+    `Emptied the bin (${state.load}) onto the pile`,
     { dumped: state.load },
   );
 }

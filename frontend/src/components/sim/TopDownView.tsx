@@ -19,6 +19,8 @@ export function TopDownView({ controller, overlays }: Props) {
     if (!canvas || !ctx) return
     let layout: CanvasLayout = { scale: 1, ox: 0, oy: 0 }
     let dragging: number | null = null
+    /** The pointer's world position while placing the pile, for the ghost ring. */
+    let hover: [number, number] | null = null
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1
@@ -74,9 +76,9 @@ export function TopDownView({ controller, overlays }: Props) {
       }
 
       // Pile.
-      if (frame.pile && o.pileZone) {
+      if (frame.pile) {
         const c = frame.pile.center
-        circle(c[0], c[2], frame.pile.radiusM, C.pileFill, C.pile, 1.5)
+        circle(c[0], c[2], frame.pile.radiusM, o.pileZone ? C.pileFill : undefined, C.pile, 1.5)
         ctx.fillStyle = C.pile
         ctx.font = '600 12px system-ui'
         ctx.textAlign = 'center'
@@ -155,6 +157,14 @@ export function TopDownView({ controller, overlays }: Props) {
       if (frame.stats.inScoop > 0) circle(cam[0] + fwd[0] * 0.05, cam[2] + fwd[1] * 0.05, 0.06, C.leaf)
       circle(cam[0], cam[2], 0.035, C.rover)
 
+      // Placing the pile: a ghost where it would go, red where it can't.
+      if (controller.placingPile && hover) {
+        const blocked = controller.pileBlocked(hover[0], hover[1]) != null
+        ctx.setLineDash([6, 5])
+        circle(hover[0], hover[1], frame.pile?.radiusM ?? 1, blocked ? 'rgba(248,113,113,.10)' : C.pileFill, blocked ? C.blocked : C.pile, 2)
+        ctx.setLineDash([])
+      }
+
       // Line to the current goal.
       const goal = goalOf(frame)
       if (goal) {
@@ -183,6 +193,11 @@ export function TopDownView({ controller, overlays }: Props) {
     }
     const onDown = (e: PointerEvent) => {
       const [x, z] = toWorld(e)
+      if (controller.placingPile) {
+        controller.setPile(x, z)
+        e.preventDefault()
+        return
+      }
       const id = controller.leafAt(x, z, Math.max(0.15, 10 / layout.scale))
       if (id == null) return
       dragging = id
@@ -192,6 +207,11 @@ export function TopDownView({ controller, overlays }: Props) {
     }
     const onMove = (e: PointerEvent) => {
       const [x, z] = toWorld(e)
+      hover = [x, z]
+      if (controller.placingPile) {
+        canvas.style.cursor = controller.pileBlocked(x, z) ? 'not-allowed' : 'crosshair'
+        return
+      }
       if (dragging != null) {
         if (!controller.moveLeaf(dragging, x, z)) dragging = null
         return
@@ -208,6 +228,8 @@ export function TopDownView({ controller, overlays }: Props) {
     canvas.addEventListener('pointermove', onMove)
     canvas.addEventListener('pointerup', onUp)
     canvas.addEventListener('pointercancel', onUp)
+    const onLeave = () => (hover = null)
+    canvas.addEventListener('pointerleave', onLeave)
 
     return () => {
       cancelAnimationFrame(raf)
@@ -216,6 +238,7 @@ export function TopDownView({ controller, overlays }: Props) {
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
       canvas.removeEventListener('pointercancel', onUp)
+      canvas.removeEventListener('pointerleave', onLeave)
     }
   }, [controller])
 

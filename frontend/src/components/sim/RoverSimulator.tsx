@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { formatTime } from '../../sim/controller'
 import { DEFAULT_OVERLAYS, PALETTE as C, type Overlays } from '../../sim/overlays'
 import { useSimController, useSimVersion } from '../../sim/useSimController'
@@ -6,12 +6,14 @@ import { SPEEDS, WORLDS } from '../../sim/worlds'
 import { ThreeView } from './ThreeView'
 import { TopDownView } from './TopDownView'
 
+const MAX_CAPACITY = 8
+
 const CARD = 'rounded-xl border border-zinc-800 bg-zinc-900/60 p-3'
 const CARD_TITLE = 'mb-2 text-xs font-semibold tracking-wide text-zinc-400 uppercase'
 const INPUT =
   'rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus-visible:border-sky-500 focus-visible:ring-2 focus-visible:ring-sky-500/30'
 const BUTTON =
-  'flex-1 rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-sky-400'
+  'flex-1 rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-sky-400 disabled:cursor-not-allowed disabled:text-zinc-500 disabled:hover:bg-zinc-800'
 
 /** What each autopilot mode is doing, coloured by phase: looking, closing in, scooping, piling. */
 const MODE: Record<string, { label: string; color: string }> = {
@@ -35,6 +37,17 @@ export function RoverSimulator() {
   useSimVersion(controller)
   const [overlays, setOverlays] = useState<Overlays>(DEFAULT_OVERLAYS)
   const toggle = (key: keyof Overlays) => setOverlays((o) => ({ ...o, [key]: !o[key] }))
+  const placing = controller.placingPile
+
+  // Esc stops placing the pile.
+  useEffect(() => {
+    if (!placing) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') controller.setPlacingPile(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [placing, controller])
 
   const { frame } = controller
   const s = frame.stats
@@ -42,6 +55,9 @@ export function RoverSimulator() {
   const time = formatTime(frame.timeMs)
   const done = controller.done
   const mode = step ? (MODE[step.state.mode] ?? { label: step.state.mode, color: '#a1a1aa' }) : null
+  const pile = frame.pile
+  // The brain counts the bin empty only once it's done tipping; the leaves are on the pile before that.
+  const binLoad = done || step?.state.mode === 'dumping' ? 0 : (step?.state.load ?? 0)
 
   return (
     <div className="grid h-full min-h-0 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(0,1fr)_340px] lg:overflow-hidden lg:p-4">
@@ -61,7 +77,15 @@ export function RoverSimulator() {
           </div>
           <p className="mt-0.5 truncate text-xs text-zinc-400">{done ? `Finished in ${time} of rover time` : (step?.message ?? 'Starting')}</p>
           <LeafTally piled={s.inPile} total={frame.leaves.length} carried={s.inScoop} />
+          <BinGauge load={binLoad} capacity={controller.capacity} />
         </div>
+        {placing && (
+          <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center px-3">
+            <p className="rounded-full border border-amber-400/40 bg-zinc-950/90 px-3 py-1 text-xs font-medium text-amber-200 shadow-lg shadow-black/30 max-lg:mt-24">
+              Click the ground to put the pile there · Esc to cancel
+            </p>
+          </div>
+        )}
       </section>
 
       <aside className="flex min-h-0 flex-col gap-3 lg:overflow-y-auto">
@@ -70,6 +94,75 @@ export function RoverSimulator() {
           <span className="pointer-events-none absolute top-2 left-2 rounded bg-zinc-950/80 px-1.5 py-0.5 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
             Top view · 1 m grid
           </span>
+        </section>
+
+        <section className={CARD} aria-labelledby="sim-autopilot">
+          <h3 id="sim-autopilot" className={CARD_TITLE}>
+            Autopilot
+          </h3>
+          <div className="flex flex-col gap-3 text-xs text-zinc-300">
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <span id="sim-capacity">Leaves per trip</span>
+                <div className="flex items-center overflow-hidden rounded-md border border-zinc-700" role="group" aria-labelledby="sim-capacity">
+                  <button
+                    type="button"
+                    aria-label="Fewer leaves per trip"
+                    disabled={controller.capacity <= 1}
+                    onClick={() => controller.setCapacity(controller.capacity - 1)}
+                    className="h-7 w-7 bg-zinc-950 text-zinc-200 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-sky-400 disabled:text-zinc-600 disabled:hover:bg-zinc-950"
+                  >
+                    −
+                  </button>
+                  <output aria-live="polite" className="w-8 text-center font-mono text-sm text-zinc-100 tabular-nums">
+                    {controller.capacity}
+                  </output>
+                  <button
+                    type="button"
+                    aria-label="More leaves per trip"
+                    disabled={controller.capacity >= MAX_CAPACITY}
+                    onClick={() => controller.setCapacity(controller.capacity + 1)}
+                    className="h-7 w-7 bg-zinc-950 text-zinc-200 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-sky-400 disabled:text-zinc-600 disabled:hover:bg-zinc-950"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+              <p className="mt-1 text-[11px] leading-snug text-zinc-500">
+                Each scoop tips into the bin. When the bin holds this many, the rover drives to the pile and empties it.
+              </p>
+            </div>
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <span>Pile</span>
+                <span className="font-mono text-zinc-400 tabular-nums">
+                  {pile ? `${pile.center[0].toFixed(1)}, ${pile.center[2].toFixed(1)} m` : 'none'}
+                  {controller.pileOverride ? '' : ' · default'}
+                </span>
+              </div>
+              <div className="mt-1.5 flex gap-2">
+                <button
+                  type="button"
+                  aria-pressed={placing}
+                  onClick={() => controller.setPlacingPile(!placing)}
+                  className={
+                    placing
+                      ? 'flex-1 rounded-md bg-amber-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-amber-300 focus-visible:outline-2 focus-visible:outline-sky-400'
+                      : BUTTON
+                  }
+                >
+                  {placing ? 'Click the ground…' : 'Place pile'}
+                </button>
+                <button type="button" className={BUTTON} disabled={!controller.pileOverride} onClick={() => controller.resetPile()}>
+                  Default spot
+                </button>
+              </div>
+            </div>
+            <p className="border-t border-zinc-800 pt-2 text-[11px] leading-snug text-zinc-500">
+              This runs the rover's own brain (<span className="font-mono">rover-brain</span>), the same code the phone runs to drive the real
+              rover. Only the bin size here is set by this page.
+            </p>
+          </div>
         </section>
 
         <section className={CARD}>
@@ -130,8 +223,9 @@ export function RoverSimulator() {
           <h3 className={CARD_TITLE}>Run</h3>
           <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-xs">
             <Row label="Still on the ground">{s.onGround}</Row>
-            <Row label="Scoop">{`${frame.scoop}${s.inScoop ? ` · ${s.inScoop} leaf` : ''}`}</Row>
-            <Row label="Trips to the pile">{s.dumped}</Row>
+            <Row label="Bin">{`${binLoad} / ${controller.capacity} scoops`}</Row>
+            <Row label="Scoop">{frame.scoop}</Row>
+            <Row label="Scoops emptied on the pile">{s.dumped}</Row>
             <Row label="Collisions">{s.collisions}</Row>
             <Row label="Wheels L / R">{step ? `${step.left.toFixed(0)} / ${step.right.toFixed(0)}` : '0 / 0'}</Row>
           </dl>
@@ -156,16 +250,26 @@ export function RoverSimulator() {
             <Toggle checked={overlays.trail} onChange={() => toggle('trail')} swatch={<Bar color={C.belief} />}>
               Trail
             </Toggle>
-            <Toggle checked={overlays.pileZone} onChange={() => toggle('pileZone')} swatch={<Ring color={C.pile} />}>
-              Pile zone
-            </Toggle>
-            <Toggle checked={overlays.litter} onChange={() => toggle('litter')} swatch={<Dot color="#6b4a2a" />}>
-              Decorative litter (3D)
-            </Toggle>
           </ul>
           <p className="mt-2 text-[11px] text-zinc-500">Drag a leaf in either view to move it. The rover only learns of it when its camera sees it.</p>
         </section>
       </aside>
+    </div>
+  )
+}
+
+/** The bin's fill: one cell per scoop it holds. */
+function BinGauge({ load, capacity }: { load: number; capacity: number }) {
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <div className="flex gap-0.5" aria-hidden>
+        {Array.from({ length: capacity }, (_, i) => (
+          <span key={i} className="inline-block h-2 w-3 rounded-sm" style={{ background: i < load ? C.scoopDown : '#3f3f46' }} />
+        ))}
+      </div>
+      <span className="text-xs text-zinc-300 tabular-nums">
+        Bin {Math.min(load, capacity)}/{capacity}
+      </span>
     </div>
   )
 }

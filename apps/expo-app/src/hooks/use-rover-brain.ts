@@ -38,8 +38,9 @@ export type RoverBrain = {
   collected: number;
   /** Where the leaves go, and where it is from the rover now. */
   pile: (Pile & { rover?: RoverPoint }) | null;
-  /** Scoop loads carried, and tipped onto the pile so far. */
+  /** Scoops in the bin, how many it holds before a trip to the pile, and scoops emptied so far. */
   load: number;
+  capacity: number;
   dumped: number;
   /**
    * Per detection of `captionsFor`: why LiDAR ruled it out, "~1.2 m · 15° R" for a leaf placed
@@ -107,6 +108,7 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
     collected: 0,
     pile: null,
     load: 0,
+    capacity: 0,
     dumped: 0,
     captions: [],
     corridors: [],
@@ -132,6 +134,7 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
       collected: all.filter((l) => l.state === 'collected').length,
       pile: current.pile && { ...current.pile, rover: h ? toRover(current.pile.center, h) : undefined },
       load: current.autopilot.load,
+      capacity: current.options.autopilot.capacity,
       dumped: current.dumped,
     }));
   }, []);

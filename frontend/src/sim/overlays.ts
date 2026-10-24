@@ -15,7 +15,7 @@ export const DEFAULT_OVERLAYS: Overlays = {
   corridors: true,
   belief: true,
   pileZone: true,
-  litter: true,
+  litter: false,
 }
 
 /** The reference viewer's dark-theme colours (grid swapped for the app's zinc). */

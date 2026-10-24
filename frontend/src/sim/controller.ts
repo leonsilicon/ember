@@ -1,9 +1,11 @@
-import { RoverSim } from '@rover-brain'
+import { Brain, DEFAULT_AUTOPILOT, RoverSim } from '@rover-brain'
 import type { Pile, SimFrame, Vec3 } from '@rover-brain'
-import { DEFAULT_SPEED, DEFAULT_WORLD, HARSH_SENSORS, VIEW, WORLDS } from './worlds'
+import { DEFAULT_SPEED, DEFAULT_WORLD, HARSH_SENSORS, PILE, VIEW, WORLDS } from './worlds'
 
 /** The longest real-time gap one animation frame may advance (a background tab doesn't fast-forward). */
 const MAX_DT_MS = 100
+/** The pile's centre must be this far from a trunk or rock's edge, so the rover can reach it to empty the bin. */
+const PILE_CLEARANCE_M = 0.45
 
 /**
  * Owns the one RoverSim both views draw. It steps the sim in its own rAF loop (the views only read
@@ -21,8 +23,16 @@ export class SimController {
   seed = 1
   noisy = false
   worldName = DEFAULT_WORLD
+  /** Scoops that go into the bin before a trip to the pile: the brain's `capacity`. */
+  capacity = DEFAULT_AUTOPILOT.capacity
+  /** Where the user put the pile, overriding the yard's own; cleared when the yard changes. */
+  pileOverride: Pile | null = null
+  /** The next click on the ground (in either view) places the pile. */
+  placingPile = false
   /** Bumped on every reset, so views can rebuild world geometry (obstacles). */
   resets = 0
+  /** Bumped whenever the pile moves, so views can redraw it. */
+  pileMoves = 0
   private version = 0
   private carry = 0
   private listeners = new Set<() => void>()
@@ -35,7 +45,10 @@ export class SimController {
 
   reset() {
     const world = structuredClone(WORLDS[this.worldName] ?? WORLDS[DEFAULT_WORLD])
-    this.sim = new RoverSim(world, { seed: this.seed || 1, ...(this.noisy ? HARSH_SENSORS : {}) })
+    if (this.pileOverride) world.pile = structuredClone(this.pileOverride)
+    // The rover's own brain, as the phone runs it, with only the bin size changed.
+    const brain = new Brain({ autopilot: { ...DEFAULT_AUTOPILOT, capacity: this.capacity } })
+    this.sim = new RoverSim(world, { seed: this.seed || 1, ...(this.noisy ? HARSH_SENSORS : {}) }, brain)
     this.sim.start()
     this.frame = this.sim.frame()
     this.prevFrame = this.frame
@@ -47,7 +60,56 @@ export class SimController {
 
   setWorld(name: string) {
     this.worldName = name
+    this.pileOverride = null
+    this.placingPile = false
     this.reset()
+  }
+
+  /** Changes the bin size on the running brain; a bin already that full heads for the pile. */
+  setCapacity(capacity: number) {
+    this.capacity = Math.max(1, Math.round(capacity))
+    const brain = this.sim.brain
+    brain.options.autopilot = { ...brain.options.autopilot, capacity: this.capacity }
+    this.emit()
+  }
+
+  setPlacingPile(placing: boolean) {
+    this.placingPile = placing
+    this.emit()
+  }
+
+  /** Why the pile can't go at (x, z), or null if it can. */
+  pileBlocked(x: number, z: number): string | null {
+    const hit = (this.sim.world.obstacles ?? []).some((o) => Math.hypot(x - o.center[0], z - o.center[1]) < o.radiusM + PILE_CLEARANCE_M)
+    return hit ? 'Too close to a trunk or rock' : null
+  }
+
+  /**
+   * Moves the pile to (x, z) for the running sim and future restarts of this yard. Leaves already piled
+   * at the old spot are back on the ground, so the rover fetches them too. Returns false if blocked.
+   */
+  setPile(x: number, z: number): boolean {
+    const cx = clamp(x, VIEW.x0, VIEW.x1)
+    const cz = clamp(z, VIEW.z0, VIEW.z1)
+    if (this.pileBlocked(cx, cz)) return false
+    this.pileOverride = { center: [cx, 0, cz], radiusM: PILE.radiusM }
+    this.applyPile(this.pileOverride)
+    return true
+  }
+
+  /** Puts the pile back where the yard has it. */
+  resetPile() {
+    this.pileOverride = null
+    this.applyPile(structuredClone((WORLDS[this.worldName] ?? WORLDS[DEFAULT_WORLD]).pile ?? PILE))
+  }
+
+  private applyPile(pile: Pile) {
+    this.placingPile = false
+    this.sim.setPile(structuredClone(pile))
+    this.frame = this.sim.frame()
+    this.prevFrame = { ...this.prevFrame, leaves: this.frame.leaves, pile: this.frame.pile }
+    this.pileMoves += 1
+    this.emit()
   }
 
   setSeed(seed: number) {

@@ -20,8 +20,8 @@ export type BrainOptions = {
   obstacleMemory: ObstacleMemoryOptions;
   rover: RoverSpec;
   /**
-   * With leaves in the scoop, sightings this close to the camera are ignored: the raised scoop
-   * can be in view, and what's in it isn't on the ground.
+   * With leaves on board, sightings this close to the camera are ignored: the raised scoop and the
+   * bin can be in view, and what's in them isn't on the ground.
    */
   selfMaskM: number;
 };
@@ -48,7 +48,7 @@ export class Brain {
   pile: Pile | null = null;
   autopilot: AutopilotState = initialAutopilotState(0);
   running = false;
-  /** Scoop loads tipped onto the pile so far. */
+  /** Scoops emptied onto the pile so far. */
   dumped = 0;
 
   constructor(options: Partial<BrainOptions> = {}) {
@@ -75,7 +75,7 @@ export class Brain {
     this.pile = pile;
   }
 
-  /** Starts the autopilot. Whatever is in the scoop stays counted. */
+  /** Starts the autopilot. Whatever is in the bin stays counted. */
   start(nowMs: number) {
     this.autopilot = initialAutopilotState(nowMs, this.autopilot.load);
     this.running = true;

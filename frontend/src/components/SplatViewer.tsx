@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 
 export const SAMPLE_SPLAT_URL = '/splats/leaf-floor.splat'
-export const BANANA_SPLAT_URL = '/splats/banana.splat'
 
 // Scene convention: ground is the y=0 plane and up is -y (cameraUp below). The default view looks down
 // at ~35° onto the middle of the ~4.6 m leaf-floor sample.

@@ -54,7 +54,7 @@ export function RoverBrainHud({ brain, canDrive }: { brain: RoverBrain; canDrive
           </ThemedText>
           <ThemedText type="small" style={styles.secondary} numberOfLines={1}>
             {pileText}
-            {brain.load > 0 ? ` · ${brain.load} in the scoop` : ''}
+            {brain.load > 0 ? ` · bin ${brain.load}/${brain.capacity}` : ''}
           </ThemedText>
           {brain.autopilot.on && brain.autopilot.message !== '' && (
             <ThemedText type="small" style={styles.light} numberOfLines={1}>
