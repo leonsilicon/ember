@@ -43,3 +43,20 @@ area-specific.
    leaves the raster, hits nodata, or leaves the pilot bbox.
 
 `pytest tests` covers inside / boundary / 20 m / far / pine / nodata cases on a synthetic raster.
+
+## Leaf-off (fresh litter) layer and scan priority
+
+`leafoff.py` pulls two Sentinel-2 L2A scenes from Microsoft Planetary Computer (no key): the clearest
+leaf-on scene (Aug–Sep) and the latest clear autumn scene, masks clouds with SCL, and writes the NDVI
+drop on the hazard grid:
+
+    python leafoff.py --like pilot_hazard_30m_epsg3978.tif --bbox=-79.35,45.20,-78.95,45.45 \
+        --out pilot_leafoff_30m_epsg3978.tif
+
+Pass it to the pipeline with `--leafoff`. Each building then gets `leafoff_30m` (mean NDVI drop in its
+30 m band) and a static `scan_priority` (0–100): mapped hazard (overlap 1.0; within 30 m 0.55–1.0 by
+distance; else 0.1) × litter (0.5 + 0.5 × drop/0.35). The UI multiplies this by today's CWFIS Fine Fuel
+Moisture Code (live GetFeatureInfo), so the number on screen moves with the weather. `leafoff.pmtiles`
+holds the drop classes (≥0.25 / ≥0.32 / ≥0.40) where there was canopy (leaf-on NDVI > 0.4).
+
+Satellites can't see a leaf pile; this ranks where the rover should look first, the rover verifies.

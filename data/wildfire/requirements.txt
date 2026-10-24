@@ -4,3 +4,5 @@ pyproj>=3.6
 numpy>=1.26
 overturemaps>=0.14
 pytest>=8
+pystac-client>=0.8
+planetary-computer>=1.0

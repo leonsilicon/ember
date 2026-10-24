@@ -95,3 +95,36 @@ def test_building_leaving_raster_marks_coverage_incomplete():
 def test_every_legend_code_in_categories_has_known_category():
     for code, entry in pipeline.CATEGORIES["codes"].items():
         assert entry["category"] in pipeline.CATEGORIES["categories"], code
+
+
+def test_scan_priority_orders_inputs_sensibly():
+    from pipeline import BuildingResult, scan_priority
+
+    def res(overlap, within, dist):
+        return BuildingResult(overlap, within, None, None, False, False, True, dist, [], [])
+
+    on_hazard = scan_priority(res(True, True, 0.0), 0.4)
+    near = scan_priority(res(False, True, 5.0), 0.4)
+    far_in_ring = scan_priority(res(False, True, 28.0), 0.4)
+    clear = scan_priority(res(False, False, 300.0), 0.4)
+    assert on_hazard == 100
+    assert on_hazard > near > far_in_ring > clear
+    # fresh litter raises the score, no satellite view falls back to neutral (0.5 litter weight)
+    assert scan_priority(res(True, True, 0.0), 0.0) == 50
+    assert scan_priority(res(True, True, 0.0), None) == 50
+    assert 0 <= clear <= 10
+
+
+def test_mean_under_ignores_nan_and_outside():
+    from pipeline import mean_under
+    import numpy as np
+    import rasterio
+    from shapely.geometry import box
+
+    arr = np.full((4, 4), np.nan, dtype=np.float32)
+    arr[0, 0] = 0.2
+    arr[0, 1] = 0.4
+    transform = rasterio.Affine(30, 0, 0, 0, -30, 120)
+    assert abs(mean_under(box(0, 90, 60, 120), arr, transform) - 0.3) < 1e-6
+    assert mean_under(box(60, 0, 120, 60), arr, transform) is None
+    assert mean_under(box(500, 500, 600, 600), arr, transform) is None

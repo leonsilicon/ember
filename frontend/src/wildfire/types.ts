@@ -26,7 +26,14 @@ export interface Coverage {
   source: Categories['source']
   buildings_source: string
   stats: { total: number; hazard_overlap: number; hazard_within_30m: number; needs_evaluation: number; incomplete: number }
-  tiles: { buildings: string; hazard: string }
+  tiles: { buildings: string; hazard: string; leafoff?: string }
+  leafoff?: {
+    leaf_on?: { id: string; date: string; cloud_cover: number }
+    leaf_off?: { id: string; date: string; cloud_cover: number }
+    source?: string
+    classes: { min_drop: number; drop_class: number }[]
+    full_drop: number
+  } | null
 }
 
 export interface BuildingProps {
@@ -46,6 +53,8 @@ export interface BuildingProps {
   lon: number
   lat: number
   area_m2: number
+  leafoff_30m: number | null
+  scan_priority: number | null
 }
 
 export type Verdict = 'overlap' | 'within' | 'none'
@@ -62,7 +71,7 @@ export const VERDICT_STYLE: Record<Verdict, { label: string; color: string; badg
   none: { label: 'No High/Extreme hazard detected within 30 m', color: '#64748b', badge: 'bg-slate-200 text-slate-800' },
 }
 
-export type ListFilter = 'all' | 'flagged' | 'eval' | 'incomplete'
+export type ListFilter = 'all' | 'flagged' | 'priority' | 'eval' | 'incomplete'
 
 export function parseCodes(s: string | undefined): number[] {
   if (!s) return []
@@ -87,6 +96,8 @@ export function normalizeProps(p: Record<string, unknown>, id?: string | number)
     nearest_hazard_m: p.nearest_hazard_m == null ? null : Number(p.nearest_hazard_m),
     highest_category_footprint: (p.highest_category_footprint as CategoryKey) ?? null,
     highest_category_30m: (p.highest_category_30m as CategoryKey) ?? null,
+    leafoff_30m: p.leafoff_30m == null ? null : Number(p.leafoff_30m),
+    scan_priority: p.scan_priority == null ? null : Number(p.scan_priority),
   }
 }
 
@@ -94,6 +105,8 @@ export function applyFilter(items: BuildingProps[], f: ListFilter) {
   switch (f) {
     case 'flagged':
       return items.filter((b) => b.hazard_overlap || b.hazard_within_30m)
+    case 'priority':
+      return items.filter((b) => (b.scan_priority ?? 0) >= 40)
     case 'eval':
       return items.filter((b) => b.needs_evaluation)
     case 'incomplete':
@@ -108,4 +121,17 @@ export function fmtM(m: number): string {
   if (m <= 0) return '0 m'
   if (m < 1) return '<1 m'
   return `${Math.round(m)} m`
+}
+
+/** Scan priority shown in the UI: the static hazard x litter score scaled by today's fine-fuel dryness (0.4-1). */
+export function liveScore(b: BuildingProps, dryness: number): number | null {
+  if (b.scan_priority == null) return null
+  return Math.round(b.scan_priority * (0.4 + 0.6 * dryness))
+}
+
+export function scoreTone(score: number): { label: string; color: string } {
+  if (score >= 70) return { label: 'Scan now', color: '#f43f5e' }
+  if (score >= 40) return { label: 'Scan soon', color: '#fb923c' }
+  if (score >= 20) return { label: 'Monitor', color: '#facc15' }
+  return { label: 'Low', color: '#64748b' }
 }
