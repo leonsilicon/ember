@@ -42,6 +42,8 @@ export async function POST(request: Request) {
     access: 'private',
     validUntil,
     maximumSizeInBytes: MAX_UPLOAD_BYTES,
+    // The agent fetches it by this exact path; presigned uploads otherwise add a random suffix.
+    addRandomSuffix: false,
     allowOverwrite: true,
   });
   return json({ ...publicJob(job), uploadUrl: presignedUrl }, 201);
