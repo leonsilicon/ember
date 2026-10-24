@@ -1,5 +1,5 @@
 import { File, Paths } from 'expo-file-system';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useObjectDetector, type ObjectDetection, type ObjectDetectorModel } from 'react-native-executorch';
 import type { SharedValue } from 'react-native-reanimated';
 
@@ -15,6 +15,8 @@ const MANIFEST_FILE = 'owlvit-leaves.json';
 // The model sees each frame stretched to 768×768 (OWL-ViT's input), so this is as much as it uses.
 const FRAME_SIZE = 768;
 const RETRY_MS = 1000;
+/** How long after a failed load (first, second, … failure) the model is loaded again. */
+const RELOAD_MS = [5_000, 10_000, 30_000, 60_000];
 
 /** What `bun run --filter @soon2026/owlvit build` writes next to the model (see export.py). */
 type LeafDetectorManifest = {
@@ -65,6 +67,11 @@ export type Detections = {
   status?: string;
   /** The model isn't in this build or failed to load, rather than still loading. */
   unavailable: boolean;
+  /**
+   * Detection is on its way but has nothing to show yet: the model is loading (Core ML compiles it
+   * on the phone the first time), or it's running its first frames. Nothing is wrong.
+   */
+  busy: boolean;
   result?: DetectionResult;
   error?: string;
 };
@@ -163,10 +170,23 @@ function uncrop(
  * so they don't blink.
  */
 export function useDetections(enabled: boolean, zoom: SharedValue<number>): Detections {
-  const detector = useObjectDetector(CONFIG, { preventLoad: !BUNDLED.manifest });
-  const { detectObjects } = detector;
+  // A load can fail for a reason that passes (memory pressure while Core ML compiles the model), so
+  // a failed load is tried again, with a growing wait. react-native-executorch keys the model on the
+  // config's value, so a config that differs only in `attempt` loads it afresh; the number means
+  // nothing to it otherwise.
+  const [attempt, setAttempt] = useState(0);
+  const config = useMemo(() => ({ ...CONFIG, attempt }), [attempt]);
+  const detector = useObjectDetector(config, { preventLoad: !BUNDLED.manifest });
+  const { detectObjects, error: loadError } = detector;
+  useEffect(() => {
+    if (!loadError) return;
+    const timer = setTimeout(() => setAttempt((a) => a + 1), RELOAD_MS[Math.min(attempt, RELOAD_MS.length - 1)]);
+    return () => clearTimeout(timer);
+  }, [loadError, attempt]);
   const tracker = useRef(new DetectionTracker(TRACKER));
-  const [result, setResult] = useState<DetectionResult>();
+  // Results are tagged with the detector that made them: after a reload, the last one is stale and
+  // the indicator says detection is starting until the new detector has run a frame.
+  const [result, setResult] = useState<{ by: typeof detectObjects; value: DetectionResult }>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -192,14 +212,17 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
           const { candidates, frameSize } = uncrop(found, frame);
           const detections = tracker.current.update(candidates, frameSize, now);
           setResult((previous) => ({
-            detections,
-            frameSize,
-            zoom: frame.zoom,
-            camera: frame.camera,
-            // Measured here, with the boxes, rather than by the rover brain a render later, so no box
-            // ever shows without its distance.
-            distances: frame.camera && lidarDistances(detections, frameSize, frame.camera),
-            latencyMs: previous ? previous.latencyMs * 0.9 + latencyMs * 0.1 : latencyMs,
+            by: detectObjects,
+            value: {
+              detections,
+              frameSize,
+              zoom: frame.zoom,
+              camera: frame.camera,
+              // Measured here, with the boxes, rather than by the rover brain a render later, so no
+              // box ever shows without its distance.
+              distances: frame.camera && lidarDistances(detections, frameSize, frame.camera),
+              latencyMs: previous ? previous.value.latencyMs * 0.9 + latencyMs * 0.1 : latencyMs,
+            },
           }));
           setError(undefined);
         } catch (e) {
@@ -215,22 +238,30 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
     };
   }, [enabled, detectObjects, zoom]);
 
+  const current = result && detectObjects && result.by === detectObjects ? result.value : undefined;
   let status: string | undefined;
+  let busy = false;
   if (BUNDLED.error) {
     status = `No ${MODEL_NAME}: ${BUNDLED.error}`;
-  } else if (detector.error) {
-    status = `Couldn't load ${MODEL_NAME}: ${detector.error.message}`;
+  } else if (loadError) {
+    status = `Couldn't load ${MODEL_NAME}: ${loadError.message}. Trying again…`;
   } else if (!detector.isReady) {
     // Core ML compiles a model for the phone the first time it loads it.
     status = `Loading ${MODEL_NAME}…`;
+    busy = true;
+  } else if (enabled && current == null && error == null) {
+    // The first run through the model takes a while too.
+    status = `Starting ${MODEL_NAME}…`;
+    busy = true;
   }
 
   const running = enabled && !status;
   return {
     model: MODEL_NAME,
     status,
-    unavailable: Boolean(BUNDLED.error || detector.error),
-    result: running ? result : undefined,
+    unavailable: Boolean(BUNDLED.error || loadError),
+    busy: enabled && busy,
+    result: running ? current : undefined,
     error: running ? error : undefined,
   };
 }
