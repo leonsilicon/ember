@@ -53,7 +53,7 @@ Every push to `main` ships the production app to TestFlight: `.github/workflows/
 - The leaf detector is gitignored, so the workflow exports it (cached by `packages/owlvit`'s inputs) and points `LEAF_DETECTOR_DIST` at it, because `eas build --local` prebuilds a copy of the repo without gitignored files.
 - One-time setup: register the runner (only the repo owner can create its token), run `bunx eas-cli@24.12.1 credentials -p ios` once in `mobile` (profile `production`: reuse the account's distribution certificate, create the App Store provisioning profile, and assign the App Store Connect API key for submissions; `--non-interactive` builds can't create credentials).
 - Secrets: only `EXPO_TOKEN`, and it's optional: without it the runner's `eas login` is used.
-- The repo is github.com/SOON-2026/soon2026 (`origin`), where the runner is registered and where the TestFlight and Vercel jobs run; github.com/leonsilicon/soon2026 (`leon`) and github.com/ParthJairam07/soon2026 (`parth`) are the earlier homes, mirrors now, on which both jobs skip themselves.
+- The repo is github.com/SOON-2026/soon2026 (`origin`), where the runner is registered and where the TestFlight and Vercel jobs run; github.com/ParthJairam07/soon2026 (`parth`) is its earlier home, a mirror now, on which both jobs skip themselves (the interim leonsilicon/soon2026 was deleted on 2026-10-24).
 - The repo is public and its runner is a personal Mac, so every outside contributor's workflow run needs approval, the workflow token is read-only and only GitHub's own actions plus `oven-sh/setup-bun` and `astral-sh/setup-uv` may run. Keep it that way; allow a new third-party action under Settings → Actions before using it.
 
 ## Rules
