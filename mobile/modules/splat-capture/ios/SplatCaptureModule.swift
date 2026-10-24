@@ -15,11 +15,14 @@ public class SplatCaptureModule: Module {
   public func definition() -> ModuleDefinition {
     Name("SplatCapture")
 
-    Events("onStatus", "onUploadProgress")
+    Events("onStatus", "onUploadProgress", "onCameraStreams")
 
     OnCreate {
       CaptureController.shared.onStatus = { [weak self] status in
         self?.sendEvent("onStatus", status)
+      }
+      CaptureController.shared.cameraBrowser.onChange = { [weak self] streams in
+        self?.sendEvent("onCameraStreams", ["streams": streams.map(\.dictionary)])
       }
     }
 
@@ -63,6 +66,15 @@ public class SplatCaptureModule: Module {
 
     Function("cameraStreamStatus") {
       CaptureController.shared.cameraStreamStatus()
+    }
+
+    // Remote mode: the other phones' cameras on the Wi-Fi (CameraStreamBrowser), via onCameraStreams.
+    Function("startCameraBrowse") {
+      CaptureController.shared.cameraBrowser.start()
+    }
+
+    Function("stopCameraBrowse") {
+      CaptureController.shared.cameraBrowser.stop()
     }
 
     AsyncFunction("listCaptures") {

@@ -1,8 +1,9 @@
 import { SparkRenderer, SplatFileType, SplatMesh } from '@sparkjsdev/spark';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import type { Job } from '#jobs.ts';
+
+import { SceneControls } from '../../scene-controls';
 
 function describe(job: Job) {
   const seed = job.mode === 'lidar' ? 'LiDAR seed' : 'no-LiDAR feature-point seed';
@@ -25,12 +26,13 @@ function describe(job: Job) {
   }
 }
 
-/** The splat viewer's three.js scene: orbit controls, and the newest snapshot loaded as training goes. */
+/** The splat viewer's three.js scene: scene-controls.ts, and the newest snapshot loaded as training goes. */
 export class SplatScene {
   private renderer = new THREE.WebGLRenderer({ antialias: false });
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 1000);
-  private controls: OrbitControls;
+  private controls: SceneControls;
+  private clock = new THREE.Clock();
   private current: SplatMesh | null = null;
   private shownStep = 0;
   private loading = false;
@@ -48,11 +50,10 @@ export class SplatScene {
     this.renderer.setSize(innerWidth, innerHeight);
     container.prepend(this.renderer.domElement);
     this.scene.add(new SparkRenderer({ renderer: this.renderer }));
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
+    this.controls = new SceneControls(this.camera, this.renderer.domElement);
     addEventListener('resize', this.resize);
     this.renderer.setAnimationLoop(() => {
-      this.controls.update();
+      this.controls.update(this.clock.getDelta());
       this.renderer.render(this.scene, this.camera);
     });
     this.start().catch((error) => {
@@ -91,13 +92,12 @@ export class SplatScene {
       const m = transforms.frames[0].transform_matrix;
       const position = new THREE.Vector3(m[0][3], m[1][3], m[2][3]);
       const forward = new THREE.Vector3(-m[0][2], -m[1][2], -m[2][2]).normalize();
-      this.camera.position.copy(position);
-      this.controls.target.copy(job.focus ? new THREE.Vector3(...job.focus) : position.clone().addScaledVector(forward, 1.5));
+      const target = job.focus ? new THREE.Vector3(...job.focus) : position.clone().addScaledVector(forward, 1.5);
+      this.controls.setLookAt(position.x, position.y, position.z, target.x, target.y, target.z);
     } else {
       // Not extracted on the Mac yet; the next load of the page starts at the capture's pose.
-      this.camera.position.set(0, 0, 2);
+      this.controls.setLookAt(0, 0, 2, 0, 0, 0);
     }
-    this.controls.update();
     this.poll();
   }
 

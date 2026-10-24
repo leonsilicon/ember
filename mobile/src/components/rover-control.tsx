@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { State } from 'react-native-ble-plx';
 
-import { Glass } from './glass';
 import { ThemedText } from './themed-text';
 
 import { Spacing } from '@/constants/theme';
@@ -31,11 +30,10 @@ import {
 const SPEEDS = [40, 70, 100];
 
 /**
- * The camera's Remote mode: the joystick where the record button is, with the speeds above it like
- * the Camera app's zoom levels, and the connection above those. `left` and `right` go either side
- * of the joystick, as they do either side of the record button.
+ * The rover's remote, for the camera's Remote tray: the connection (finding the rover, connecting,
+ * its telemetry), the speeds like the Camera app's zoom levels, and the joystick under them.
  */
-export function RoverRemote({ left, right }: { left?: ReactNode; right?: ReactNode }) {
+export function RoverRemote() {
   const rover = useRover();
   const [maxSpeed, setMaxSpeed] = useState(SPEEDS[0]);
   const { connection } = rover;
@@ -53,8 +51,7 @@ export function RoverRemote({ left, right }: { left?: ReactNode; right?: ReactNo
 
   return (
     <View style={styles.container}>
-      <View style={styles.panel}>
-        <Glass style={[StyleSheet.absoluteFill, styles.panelShape]} />
+      <View style={styles.connection}>
         <ConnectionStatus rover={rover} />
       </View>
 
@@ -77,18 +74,14 @@ export function RoverRemote({ left, right }: { left?: ReactNode; right?: ReactNo
         })}
       </View>
 
-      <View style={styles.row}>
-        <View style={styles.side}>{left}</View>
-        <Joystick
-          disabled={connection.state !== 'connected'}
-          onMove={(throttle, turn) => {
-            const { left, right } = mix(throttle, turn, maxSpeed);
-            drive(left, right);
-          }}
-          onRelease={stop}
-        />
-        <View style={styles.side}>{right}</View>
-      </View>
+      <Joystick
+        disabled={connection.state !== 'connected'}
+        onMove={(throttle, turn) => {
+          const { left, right } = mix(throttle, turn, maxSpeed);
+          drive(left, right);
+        }}
+        onRelease={stop}
+      />
     </View>
   );
 }
@@ -212,8 +205,6 @@ const PAD_SIZE = 160;
 const KNOB_SIZE = 64;
 const TRAVEL = (PAD_SIZE - KNOB_SIZE) / 2;
 const DEADZONE = 0.1;
-/** Matches the room either side of the record button on the camera screen. */
-const SIDE_WIDTH = 64;
 
 function Joystick({
   disabled,
@@ -267,8 +258,6 @@ function Joystick({
       onResponderRelease={release}
       onResponderTerminate={release}
       style={[styles.pad, disabled && styles.disabled]}>
-      {/* A background rather than a wrapper, so touches start on the pad and locationX/Y are relative to it. */}
-      <Glass style={[StyleSheet.absoluteFill, styles.padShape]} />
       <View
         style={[styles.knob, { transform: [{ translateX: knob.x * TRAVEL }, { translateY: knob.y * TRAVEL }] }]}
       />
@@ -300,14 +289,9 @@ function Button({
 const styles = StyleSheet.create({
   container: {
     gap: Spacing.three,
-    pointerEvents: 'box-none',
   },
-  panel: {
+  connection: {
     gap: Spacing.two,
-    padding: Spacing.three,
-  },
-  panelShape: {
-    borderRadius: Spacing.four,
   },
   header: {
     flexDirection: 'row',
@@ -379,25 +363,15 @@ const styles = StyleSheet.create({
   speedLabelActive: {
     color: '#FFD60A',
   },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    pointerEvents: 'box-none',
-  },
-  side: {
-    width: SIDE_WIDTH,
-    alignItems: 'center',
-    pointerEvents: 'box-none',
-  },
+  /** Dark on the tray's glass, like the Camera app's tray buttons. */
   pad: {
     width: PAD_SIZE,
     height: PAD_SIZE,
+    alignSelf: 'center',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  padShape: {
     borderRadius: PAD_SIZE / 2,
+    backgroundColor: 'rgba(0,0,0,0.3)',
   },
   knob: {
     width: KNOB_SIZE,

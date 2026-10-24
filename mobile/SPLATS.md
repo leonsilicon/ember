@@ -157,9 +157,13 @@ depth of the seed points in view), so dragging pivots on the subject.
 
 While the phone records, the same server can rebuild the scene live: open `<server>/live`, start
 recording, and coloured points appear as you move the phone, with its camera frustum, path and
-latest keyframe drawn in. The viewer follows the newest recording; drag to orbit (that stops
-following, **F** resumes), **C** hides points few keyframes agreed on, and **Download PLY** saves
-the cloud.
+latest keyframe drawn in. The viewer follows the newest recording, its camera chasing the phone's:
+behind and above it, looking where it looks as far out as its latest keyframe's points (so it backs
+off for a far wall). Moving the view stops that (**F** resumes): drag to orbit, right-drag to pan,
+scroll to zoom, or on a touch screen one finger orbits, two pan and pinch, and twisting two fingers
+turns the scene about the vertical (camera-controls plus a twist, in
+`frontend/src/app/(splat)/scene-controls.ts`, which the gallery's viewer shares). **C** hides
+points few keyframes agreed on, and **Download PLY** saves the cloud.
 
 ```bash
 cd frontend
@@ -176,9 +180,12 @@ the newest session until it's locked onto the recording; until the server has fu
 phone sends one every 0.3 s rather than every second, since the first few are often skipped for
 having too few feature points in view. While recording, the cube in the status rail says how
 many keyframes the server has fused (tap it), and the reconstruction floats top left of the
-viewfinder. Tap it to swap it with the camera, FaceTime style (drag the full-screen one to orbit;
-it follows the phone again a few seconds later), and tap the floating camera to swap back. That view is the same page
-for this one recording, `/live/<capture id>?embed`, without its controls.
+viewfinder. Tap it to swap it with the camera, FaceTime style, and tap the floating camera to swap
+back. Floating, it always follows the phone and takes no touches; full screen, the gestures above
+move it, which stops it following until the crosshairs that appear in the status rail, or until
+it's swapped back (the app tells the page through `window.liveInteractive` and a `liveinteractive`
+event, and the page reports `{ type: 'following' }` back). That view is the same page for this one
+recording, `/live/<capture id>?embed`, without its controls.
 
 How it works (`modules/splat-capture/ios/LiveStreamer.swift` → `frontend/src/web/relay.ts`
 → Redis → `frontend/src/agent` and `src/live`, and back):

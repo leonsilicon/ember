@@ -61,6 +61,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
   private let streamQueue = DispatchQueue(label: "soon2026.splatcapture.stream", qos: .userInitiated)
   /// The camera for browsers on the same Wi-Fi (the web app's live mode). Encodes only while watched.
   let cameraServer = CameraStreamServer(device: hardwareModel())
+  /// The other phones' cameras on the Wi-Fi, for remote mode: every one but `cameraServer`.
+  lazy var cameraBrowser = CameraStreamBrowser(ownId: cameraServer.id)
   private let ciContext = CIContext()
   private weak var session: ARSession?
   // main-thread state
@@ -70,7 +72,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
   private var camera = CameraPosition.back
 
   // frameQueue state
-  private var recording: Recording?
+  private var recording: Recording? {
+    didSet { cameraServer.recording = recording != nil }
+  }
   /// The stream to the splat server's live reconstruction: connected ahead of a recording (standing
   /// by, see `armStandby`) so the recording streams from its first frame, then carrying it.
   private var live: LiveStreamer?

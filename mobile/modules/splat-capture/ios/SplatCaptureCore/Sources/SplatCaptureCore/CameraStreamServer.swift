@@ -8,10 +8,13 @@ import Network
 ///   plays as it arrives;
 /// - `GET /frame.jpg`: the newest frame once (503 before the first); with `?size=N`, a still encoded fresh
 ///   from the camera, its longer side N pixels, at high quality (via `stillProvider`), for capturing;
-/// - `GET /status`: JSON `{ device, viewers, frames, width, height }`, to check the phone is reachable.
+/// - `GET /status`: JSON `{ id, device, recording, viewers, frames, width, height }`, to check the phone
+///   is reachable (and, for a phone in remote mode, whether this one is the one recording).
 ///
 /// While running it advertises itself on the network with Bonjour as `_rovercam._tcp` (see `serviceType`),
-/// so the web app's dev server can find the phone and link up without anyone typing an address.
+/// so the web app's dev server, and the app on another phone in remote mode (`CameraStreamBrowser`), can
+/// find the phone and link up without anyone typing an address. Its TXT record carries `id`, so the app
+/// can leave its own server out.
 ///
 /// The owner calls `publish(jpeg:)` with each new frame, and can skip encoding while `wantsFrames` is
 /// false (nobody is watching). A viewer still sending its previous frame skips the new one, so a slow
@@ -46,10 +49,21 @@ public final class CameraStreamServer {
   private var _state = State.stopped
   /// Read from any thread: whether anyone is watching the stream.
   private let watching = ManagedAtomicFlag()
+  private let recordingFlag = ManagedAtomicFlag()
+
+  /// Tells this app's server from the others on the network: a new one each launch.
+  public let id: String
 
   /// `device` is reported by `/status` (e.g. "iPhone 15 Pro").
-  public init(device: String) {
+  public init(device: String, id: String = UUID().uuidString) {
     self.device = device
+    self.id = id
+  }
+
+  /// Whether the phone is recording, for `/status`. Safe from any thread.
+  public var recording: Bool {
+    get { recordingFlag.value }
+    set { recordingFlag.value = newValue }
   }
 
   public var state: State { queue.sync { _state } }
@@ -67,7 +81,7 @@ public final class CameraStreamServer {
         parameters.allowLocalEndpointReuse = true
         let listener = try NWListener(using: parameters, on: port == 0 ? .any : NWEndpoint.Port(rawValue: port)!)
         // The TXT record says which device it is; Bonjour renames the service if the name is taken.
-        let txt = NWTXTRecord(["device": self.device, "path": "/camera.mjpg"])
+        let txt = NWTXTRecord(["device": self.device, "id": self.id, "path": "/camera.mjpg"])
         listener.service = NWListener.Service(name: "Rover camera (\(self.device))", type: Self.serviceType,
                                               txtRecord: txt)
         listener.stateUpdateHandler = { [weak self, weak listener] state in
@@ -230,7 +244,9 @@ public final class CameraStreamServer {
       }
     case "/status":
       let status: [String: Any] = [
+        "id": id,
         "device": device,
+        "recording": recording,
         "viewers": viewers.values.filter(\.streaming).count,
         "frames": frames,
         "width": latestSize.width,
@@ -318,7 +334,7 @@ enum HTTPResponse {
   }
 }
 
-/// A Bool read from any thread and written on the server's queue.
+/// A Bool read and written from any thread.
 private final class ManagedAtomicFlag {
   private let lock = NSLock()
   private var _value = false

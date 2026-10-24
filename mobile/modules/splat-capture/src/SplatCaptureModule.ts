@@ -41,6 +41,12 @@ declare class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> 
   startCameraStream(port: number): CameraStreamStatus;
   stopCameraStream(): void;
   cameraStreamStatus(): CameraStreamStatus;
+  /**
+   * Looks on the Wi-Fi for the other phones' camera servers (Bonjour `_rovercam._tcp`), leaving this
+   * one's own out; `onCameraStreams` reports them.
+   */
+  startCameraBrowse(): void;
+  stopCameraBrowse(): void;
   /** Saved captures, newest first. */
   listCaptures(): Promise<SavedCapture[]>;
   deleteCapture(captureId: string): Promise<void>;

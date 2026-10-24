@@ -153,9 +153,23 @@ export type UploadResult = {
   body: string;
 };
 
+/** Another phone's camera on the Wi-Fi, found by `startCameraBrowse` (CameraStreamBrowser). */
+export type CameraStreamPeer = {
+  /** The app instance serving it, which tells it from this phone's own; none from older builds. */
+  id?: string;
+  /** The Bonjour service name, e.g. "Rover camera (iPhone14,4)". */
+  name: string;
+  /** The phone model, e.g. "iPhone14,4". */
+  device: string;
+  /** Where its camera server is, e.g. "http://192.168.1.23:8787". */
+  origin: string;
+};
+
 export type SplatCaptureModuleEvents = {
   onStatus: (status: CaptureStatus) => void;
   onUploadProgress: (progress: UploadProgress) => void;
+  /** The other phones' cameras found so far, whenever that changes. */
+  onCameraStreams: (event: { streams: CameraStreamPeer[] }) => void;
 };
 
 export type SplatCaptureViewProps = {

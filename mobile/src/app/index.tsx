@@ -4,13 +4,14 @@ import { useKeepAwake } from 'expo-keep-awake';
 import { router, useFocusEffect, useIsFocused } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
   ActivityIndicator,
-  PanResponder,
+  Alert,
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type StyleProp,
   type ViewStyle,
@@ -37,35 +38,41 @@ import SplatCapture, {
   type SavedCapture,
 } from '../../modules/splat-capture';
 
+import { BottomTray } from '@/components/bottom-tray';
 import { CameraMenu } from '@/components/camera-menu';
-import { CameraStatus, useCaption, type Indicator } from '@/components/camera-status';
-import { DetectionOverlay, type Size } from '@/components/detection-overlay';
+import { CameraStatus, RailIcon, useCaption, type Indicator, type RailElement } from '@/components/camera-status';
+import { DetectionOverlay } from '@/components/detection-overlay';
 import { Glass } from '@/components/glass';
 import { LiveSplatView } from '@/components/live-splat-view';
-import { ModePicker } from '@/components/mode-picker';
-import { RoverBrainHud } from '@/components/rover-brain-hud';
+import { MountCameraView } from '@/components/mount-camera-view';
+import { CorridorFan, RoverBrainMenu } from '@/components/rover-brain-menu';
 import { RoverRemote } from '@/components/rover-control';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useCameraZoom, useZoomLevel, zoomTo } from '@/hooks/use-camera-zoom';
 import { useDetections, type Detection, type Detections } from '@/hooks/use-detections';
+import { useMountCamera, type MountCamera } from '@/hooks/use-mount-camera';
 import { useCameraStream } from '@/hooks/use-camera-stream';
 import { useRoverBrain } from '@/hooks/use-rover-brain';
 import { updateSplatSettings, useSplatSettings } from '@/hooks/use-splat-settings';
 import { compact } from '@/lib/captures';
 import { useRover } from '@/lib/rover';
-import { liveEmbedUrl, SPLAT_TOKEN } from '@/lib/splat-server';
+import { liveFollowEmbedUrl, SPLAT_TOKEN } from '@/lib/splat-server';
 
 type Phase =
   | { kind: 'ready' }
   /** `liveServerUrl`: the splat server it streams to, which rebuilds it live in 3D. */
   | { kind: 'recording'; captureId: string; liveServerUrl?: string }
-  | { kind: 'saving' }
-  | { kind: 'failed'; message: string };
+  | { kind: 'saving' };
 
-/** `camera` records splat captures; `remote` drives the rover. The camera stays live in both. */
-type Mode = 'camera' | 'remote';
+/**
+ * `mount`: the phone rides on the rover, so its camera is the one that matters: it shows it,
+ * detects leaves in it, records it and serves it on the Wi-Fi. `remote`: the phone is in someone's
+ * hand, driving the rover, so its own camera is no use: it shows the camera of the phone in mount
+ * mode instead (for now there's only ever one), above the remote's controls.
+ */
+type Mode = 'mount' | 'remote';
 
 const INITIAL_STATUS: CaptureStatus = {
   recording: false,
@@ -103,6 +110,10 @@ function describeTracking(status: CaptureStatus): Indicator {
 function describeLive(live: LiveStatus): Indicator {
   const key = 'live';
   if (live.state === 'open') {
+    if (!live.fused && live.lastSkip) {
+      // The first keyframes often can't be placed yet (too few feature points in view): say why.
+      return { key, icon: 'cube-outline', tone: 'dim', label: `Live 3D: ${live.lastSkip}` };
+    }
     const points = live.points ? ` · ${compact(live.points)} points` : '';
     return {
       key,
@@ -132,6 +143,24 @@ function describeCameraStream(stream: CameraStreamStatus): Indicator {
   }
   if (stream.state === 'failed') return { key, icon: 'cast-off', tone: 'warn', label: `Laptop view off: ${stream.error ?? 'failed to start'}` };
   return { key, icon: 'cast', tone: 'dim', label: 'Laptop view: starting…' };
+}
+
+/** In remote mode: the phone in mount mode whose camera this one shows. */
+function describeMount(camera: MountCamera | null): Indicator {
+  const key = 'mount';
+  if (camera?.state === 'found') {
+    const { device, origin } = camera.peer;
+    return {
+      key,
+      icon: 'cellphone-link',
+      tone: 'good',
+      label: `Showing ${device}'s camera${camera.recording ? ', recording' : ''}, at ${origin.replace('http://', '')}`,
+    };
+  }
+  if (camera?.state === 'unsupported') {
+    return { key, icon: 'cellphone-link-off', tone: 'warn', label: "This build can't look for the rover's phone. Rebuild it." };
+  }
+  return { key, icon: 'cellphone-link', tone: 'dim', busy: true, label: "Looking for the rover's phone on the Wi-Fi" };
 }
 
 function describeDetections(detections: Detections): Indicator {
@@ -170,19 +199,22 @@ function summarize(detections: Detection[]) {
 }
 
 /**
- * The main screen, since the phone rides on the rover, laid out like the Camera app: the
- * viewfinder with live object detection drawn over it, and below it the gallery, the modes
- * (recording splat captures, or driving the rover) and the camera flip.
+ * The main screen, laid out like the Camera app: the viewfinder, showing the camera's whole frame
+ * with live object detection drawn over it and the status rail down its right, the gallery, record
+ * button and remote along its foot, and the live 3D reconstruction below it. In remote mode (see
+ * `Mode`) the viewfinder shows the camera of the phone on the rover instead, above the remote.
  */
 export default function CameraScreen() {
   const insets = useSafeAreaInsets();
+  const screen = useWindowDimensions();
   const focused = useIsFocused();
   // The phone rides on the rover: were the screen to lock, ARKit and detection would stop with it.
   // (Development builds already keep it awake; this is for the production app.)
   useKeepAwake();
   const [capabilities] = useState(() => SplatCapture.getCapabilities());
   const [phase, setPhase] = useState<Phase>({ kind: 'ready' });
-  const [mode, setMode] = useState<Mode>('camera');
+  const [mode, setMode] = useState<Mode>('mount');
+  const remote = mode === 'remote';
   const [camera, setCamera] = useState<CameraPosition>('back');
   const [detection, setDetection] = useState(true);
   const [featurePoints, setFeaturePoints] = useState(true);
@@ -190,44 +222,56 @@ export default function CameraScreen() {
   const [lidarOn, setLidarOn] = useState(true);
   /** Shows the detector's timing over the viewfinder. */
   const [debugOverlay, setDebugOverlay] = useState(false);
-  /** The live 3D view fills the viewfinder and the camera floats, instead of the other way round. */
-  const [swapped, setSwapped] = useState(false);
   /** The newest capture, for the gallery button; `fresh` once this screen has just saved it. */
   const [latest, setLatest] = useState<{ capture: SavedCapture; fresh: boolean } | null>(null);
-  const [viewSize, setViewSize] = useState<Size>({ width: 0, height: 0 });
   const status = useEvent(SplatCapture, 'onStatus', INITIAL_STATUS);
   const recording = phase.kind === 'recording';
-  const liveUrl = recording && phase.liveServerUrl ? liveEmbedUrl(phase.liveServerUrl, phase.captureId) : null;
-  const liveMain = liveUrl !== null && swapped;
-  // Pinches go to the live 3D view while it fills the viewfinder.
-  const { zoom, pinch, style: zoomStyle } = useCameraZoom(!liveMain);
+  const splat = useSplatSettings();
+  /**
+   * The live 3D view behind the camera is loaded ahead of recording (following the newest session,
+   * hidden), and shown, locked onto the recording, once one streams; so it has nothing left to load then.
+   */
+  const liveReady = splat.liveStream && camera === 'back';
+  const liveShown = recording && phase.liveServerUrl !== undefined;
+  // Moving the live view stops it following the phone; the rail's Follow icon puts it back.
+  const liveView = useRef<{ follow(): void }>(null);
+  const [liveFollowing, setLiveFollowing] = useState(true);
+  // The stream to the splat server connects ahead of recording too (while the viewfinder is on
+  // screen, on the back camera), so a recording streams from its first frame, not after a handshake.
+  useEffect(() => {
+    try {
+      SplatCapture.setLiveServer(splat.liveStream ? splat.serverUrl : null, SPLAT_TOKEN);
+    } catch {
+      // An older native build without standby: the recording connects when it starts.
+    }
+  }, [splat.liveStream, splat.serverUrl]);
+  // In remote mode there's no camera of this phone's to zoom.
+  const { zoom, pinch, style: zoomStyle } = useCameraZoom(!remote);
   // Crops each frame to the zoom, so zooming in on a leaf shows it to the detector bigger and sharper.
-  const detections = useDetections(detection && capabilities.arkit, zoom);
+  const detections = useDetections(detection && capabilities.arkit && !remote, zoom);
   const rover = useRover();
   // Places leaves in the world, scans LiDAR for obstacles, and runs the drive-to-leaf autopilot.
   // The front camera can't place anything in the world.
-  const brain = useRoverBrain(detections.result, detection && capabilities.arkit && focused && camera === 'back');
-  // The web app's live mode watches this camera over the Wi-Fi while the screen is open.
-  const cameraStream = useCameraStream(capabilities.arkit && focused);
-  const { stopAutopilot } = brain;
-  const splat = useSplatSettings();
-  const [caption, showCaption] = useCaption();
-  // Like the Camera app, a sideways swipe across the viewfinder moves to the next or previous mode.
-  // Only with one finger: two pinch to zoom.
-  const [swipe] = useState(() =>
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_, { dx, dy, numberActiveTouches }) =>
-        numberActiveTouches === 1 && Math.abs(dx) > 24 && Math.abs(dx) > 2 * Math.abs(dy),
-      onPanResponderRelease: (_, { dx }) => {
-        if (Math.abs(dx) > 48) setMode(dx < 0 ? 'remote' : 'camera');
-      },
-    }),
+  const brain = useRoverBrain(
+    detections.result,
+    detection && capabilities.arkit && focused && camera === 'back' && !remote,
   );
+  // The web app's live mode watches this camera over the Wi-Fi while the screen is open: in mount
+  // mode, or while this phone records.
+  const cameraStream = useCameraStream(capabilities.arkit && focused && (!remote || recording));
+  // In remote mode, the camera of the phone in mount mode.
+  const mountCamera = useMountCamera(remote && focused);
+  /** Its frames' shape (width / height), once they play. */
+  const [mountAspect, setMountAspect] = useState(3 / 4);
+  /** Where the remote's tray starts, so the other phone's camera fits above it. */
+  const [trayTop, setTrayTop] = useState<number>();
+  const { stopAutopilot } = brain;
+  const [caption, showCaption] = useCaption();
 
   // Driving by hand takes over from the autopilot.
   useEffect(() => {
-    if (mode === 'remote') stopAutopilot();
-  }, [mode, stopAutopilot]);
+    if (remote) stopAutopilot();
+  }, [remote, stopAutopilot]);
 
   // Re-read on every return, since the gallery can delete the newest capture.
   useFocusEffect(
@@ -251,11 +295,11 @@ export default function CameraScreen() {
         serverToken: SPLAT_TOKEN,
         forceFeaturePoints: !lidarOn,
       });
-      setSwapped(false);
       setPhase({ kind: 'recording', captureId, liveServerUrl });
       if (zoom.get() > 1) showCaption('Zoom magnifies the preview and detection; the recording keeps the whole view');
     } catch (error) {
-      setPhase({ kind: 'failed', message: message(error) });
+      setPhase({ kind: 'ready' });
+      Alert.alert("Couldn't start recording", message(error));
     }
   }
 
@@ -266,7 +310,8 @@ export default function CameraScreen() {
       setLatest({ capture: await SplatCapture.stopCapture(), fresh: true });
       setPhase({ kind: 'ready' });
     } catch (error) {
-      setPhase({ kind: 'failed', message: message(error) });
+      setPhase({ kind: 'ready' });
+      Alert.alert("Couldn't save the capture", message(error));
     }
   }
 
@@ -298,7 +343,32 @@ export default function CameraScreen() {
     }
   }
 
-  const indicators: Indicator[] = [];
+  const busy = recording || phase.kind === 'saving';
+  // The rover's brain places leaves in the world, which the front camera can't. With the remote
+  // out, the rover is driven by hand.
+  const roverBrain = !remote && detection && !front;
+  // Zoom and the camera flip head the rail.
+  const indicators: (Indicator | RailElement)[] = [
+    { key: 'zoom', element: <ZoomButton zoom={zoom} /> },
+    {
+      key: 'flip',
+      icon: 'camera-flip-outline',
+      // Only the back camera records, so it can't change mid-recording.
+      tone: !capabilities.frontCamera || busy ? 'dim' : undefined,
+      label: front ? 'Switch to the back camera' : 'Switch to the front camera',
+      onPress: () => {
+        if (!capabilities.frontCamera) {
+          showCaption('This phone has no front camera ARKit can use');
+        } else if (busy) {
+          showCaption('Only the back camera records, so it stays on until the recording stops');
+        } else {
+          // Each camera starts at 1×, as in the Camera app.
+          zoom.set(1);
+          setCamera(front ? 'back' : 'front');
+        }
+      },
+    },
+  ];
   if (recording) {
     indicators.push({
       key: 'frames',
@@ -332,6 +402,7 @@ export default function CameraScreen() {
     );
   }
   if (recording && status.live) indicators.push(describeLive(status.live));
+  if (liveShown && !liveFollowing) indicators.push({ key: 'follow', element: <FollowButton live={liveView} /> });
   if (detection) {
     indicators.push(describeDetections(detections));
   } else {
@@ -348,192 +419,184 @@ export default function CameraScreen() {
       },
     });
   }
+  if (roverBrain) {
+    indicators.push({
+      key: 'rover',
+      element: <RoverBrainMenu brain={brain} canDrive={rover.connection.state === 'connected'} />,
+    });
+  }
   if (cameraStream) indicators.push(describeCameraStream(cameraStream));
-  const busy = recording || phase.kind === 'saving';
+  // Guidance beside the rail while it applies: what's wrong with the recording (tracking matters
+  // most while recording, so only then does it say what's wrong with it), else what the autopilot
+  // is doing.
+  const hint = recording && status.frozen
+    ? 'Tracking was lost, so recording paused here. Tap stop to save what was captured.'
+    : recording && status.full
+      ? 'Frame budget reached. Tap stop to save.'
+      : recording && !front && tracking.tone === 'warn'
+        ? tracking.label
+        : roverBrain && brain.autopilot.on && brain.autopilot.message
+          ? brain.autopilot.message
+          : undefined;
   const result = detections.result;
-  const barHeight = BAR_PADDING + BAR_CONTENT + Math.max(insets.bottom, Spacing.three);
+  // The viewfinder shows the camera's whole frame, uncropped, so all the rover can see is on screen
+  // and under the detection boxes: it takes the frame's shape at the screen's full width, under the
+  // status bar, in a card with rounded corners like Instagram's camera. The detector's frames are
+  // whole frames; until one arrives, it's the shape ARKit's default formats have: 4:3 for world
+  // tracking (the back camera), 16:9 for face tracking (the front), both upright. Below it, the live
+  // 3D view is the background. On a screen too short for both, the viewfinder narrows rather than
+  // crops.
+  const frameAspect = result ? result.frameSize.width / result.frameSize.height : front ? 9 / 16 : 3 / 4;
+  const mountViewfinderHeight = Math.min(screen.width / frameAspect, screen.height - insets.top - MIN_LIVE_HEIGHT);
+  // In remote mode it shows the other phone's camera, whole too, above the remote's tray.
+  const viewfinderHeight = remote
+    ? Math.min(screen.width / mountAspect, (trayTop ?? screen.height) - insets.top - Spacing.two)
+    : mountViewfinderHeight;
+  const viewfinderWidth = viewfinderHeight * (remote ? mountAspect : frameAspect);
+  const viewfinderFrame = {
+    top: insets.top,
+    left: (screen.width - viewfinderWidth) / 2,
+    width: viewfinderWidth,
+    height: viewfinderHeight,
+  };
+  // Everything below the camera, reaching up into its rounded corners. In remote mode it stays
+  // where it is, hidden under the remote's tray.
+  const liveFrame = { top: insets.top + mountViewfinderHeight - CARD_RADIUS, left: 0, right: 0, bottom: 0 };
+  const liveIdle = !splat.liveStream ? 'Off in the camera options' : front ? 'Back camera only' : 'Starts when you record';
 
-  const options = (
-    <CameraMenu
-      detection={detection}
-      onDetectionChange={setDetection}
-      featurePoints={featurePoints}
-      onFeaturePointsChange={setFeaturePoints}
-      liveStream={splat.liveStream}
-      onLiveStreamChange={(liveStream) => updateSplatSettings({ liveStream })}
-      debug={debugOverlay}
-      onDebugChange={setDebugOverlay}
-      detectionInfo={detections.status ?? detections.model}
-    />
-  );
-  const zoomButton = <ZoomButton zoom={zoom} />;
+  // The camera's options close the rail.
+  indicators.push({
+    key: 'options',
+    element: (
+      <CameraMenu
+        detection={detection}
+        onDetectionChange={setDetection}
+        featurePoints={featurePoints}
+        onFeaturePointsChange={setFeaturePoints}
+        liveStream={splat.liveStream}
+        onLiveStreamChange={(liveStream) => updateSplatSettings({ liveStream })}
+        debug={debugOverlay}
+        onDebugChange={setDebugOverlay}
+        detectionInfo={detections.status ?? detections.model}
+      />
+    ),
+  });
 
   return (
     <View style={styles.container}>
       {focused && <StatusBar style="light" />}
 
-      <View
-        style={[styles.viewfinder, { top: insets.top, bottom: barHeight }]}
-        onLayout={(event) => {
-          const { width, height } = event.nativeEvent.layout;
-          setViewSize({ width, height });
-        }}
-        // Swipes would fight the live 3D view's orbit drags while it fills the viewfinder.
-        {...(liveMain ? undefined : swipe.panHandlers)}>
-        {/*
-          While a recording streams to the server, its live 3D reconstruction floats top left, and
-          tapping it swaps it with the camera, like a FaceTime call.
-          Both views keep their place in the tree as they swap, so neither the AR session nor the
-          3D page restarts.
-        */}
-        {/* Pinch to zoom the camera. */}
-        <GestureDetector gesture={pinch}>
-          <View style={StyleSheet.absoluteFill}>
-            <Animated.View layout={SWAP} style={liveMain ? styles.pip : StyleSheet.absoluteFill}>
-              {/* Zoomed by pinching, and clipped by the viewfinder (or the floating view's frame). */}
-              <Animated.View style={[StyleSheet.absoluteFill, zoomStyle]}>
-                {/* Pauses itself while the gallery covers it, unless a recording is in progress. */}
-                <SplatCaptureView
-                  style={StyleSheet.absoluteFill}
-                  camera={camera}
-                  showFeaturePoints={featurePoints && !lidar}
-                />
-              </Animated.View>
-              {result && !liveMain && (
-                <DetectionOverlay
-                  detections={result.detections}
-                  inputSize={result.frameSize}
-                  frameSize={result.frameSize}
-                  viewSize={viewSize}
-                  zoom={zoom}
-                  rotated180={false}
-                  distances={result.distances}
-                  captions={brain.captionsFor === result ? brain.captions : undefined}
-                />
-              )}
-              {liveMain && <SwapButton label="Show the camera" onPress={() => setSwapped(false)} />}
-            </Animated.View>
-            {liveUrl && (
-              <Animated.View
-                layout={SWAP}
-                entering={POP}
-                style={liveMain ? StyleSheet.absoluteFill : styles.pip}>
-                <LiveSplatView url={liveUrl} interactive={liveMain} />
-                {!liveMain && <SwapButton label="Show live 3D" onPress={() => setSwapped(true)} />}
-              </Animated.View>
-            )}
+      {/*
+        The live 3D reconstruction is the background, and takes pans wherever it shows: one finger
+        orbits, two pan, pinch and twist.
+      */}
+      <View style={[styles.live, liveFrame, remote && styles.hidden]}>
+        {liveReady && (
+          <View style={[StyleSheet.absoluteFill, !liveShown && styles.hidden]}>
+            <LiveSplatView
+              key={splat.serverUrl}
+              ref={liveView}
+              url={liveFollowEmbedUrl(splat.serverUrl)}
+              interactive
+              onFollowingChange={setLiveFollowing}
+              lockSession={recording ? phase.captureId : null}
+            />
           </View>
-        </GestureDetector>
+        )}
+        {(!liveShown || !liveReady) && <LiveIdle text={liveIdle} />}
+      </View>
 
-        {/* Its captions stop short of the floating view. */}
-        <View style={[styles.top, styles.passThrough, liveUrl !== null && styles.topBesidePip]}>
-          <CameraStatus
-            indicators={indicators}
-            // Tracking matters most while recording, so only then does it say what's wrong.
-            hint={recording && !front && tracking.tone === 'warn' ? tracking.label : undefined}
-            caption={caption}
-            onPressIndicator={(indicator) => showCaption(indicator.label)}
-          />
-        </View>
+      {/* Pinch to zoom the camera. */}
+      <GestureDetector gesture={pinch}>
+        <Animated.View layout={SWAP} style={[styles.card, viewfinderFrame]}>
+          {/* Zoomed by pinching, and clipped by the card. */}
+          <Animated.View style={[StyleSheet.absoluteFill, zoomStyle]}>
+            {/* Pauses itself while the gallery covers it, unless a recording is in progress. */}
+            <SplatCaptureView
+              style={StyleSheet.absoluteFill}
+              camera={camera}
+              showFeaturePoints={featurePoints && !lidar}
+              // Its camera is no use in remote mode, so it pauses (unless recording).
+              active={!remote}
+            />
+          </Animated.View>
+          {result && (
+            <DetectionOverlay
+              detections={result.detections}
+              inputSize={result.frameSize}
+              frameSize={result.frameSize}
+              viewSize={{ width: viewfinderWidth, height: viewfinderHeight }}
+              zoom={zoom}
+              rotated180={false}
+              distances={result.distances}
+              captions={brain.captionsFor === result ? brain.captions : undefined}
+            />
+          )}
+          {mountCamera && <MountCameraView camera={mountCamera} onAspect={setMountAspect} />}
+        </Animated.View>
+      </GestureDetector>
+
+      <View style={[styles.overlay, viewfinderFrame]}>
+        <CameraStatus
+          indicators={remote ? [describeMount(mountCamera)] : indicators}
+          hint={hint}
+          caption={caption}
+          onPressIndicator={(indicator) => showCaption(indicator.label)}
+        />
 
         {debugOverlay && (
-          <ThemedText type="code" style={[styles.debug, liveUrl !== null && styles.debugUnderPip]}>
-            {result
-              ? `${Math.round(result.latencyMs)} ms${result.zoom > 1 ? ` at ${result.zoom.toFixed(1)}×` : ''}`
-              : '– ms'}
-          </ThemedText>
+          <View style={styles.debug}>
+            <ThemedText type="code" style={styles.debugText}>
+              {result
+                ? `${Math.round(result.latencyMs)} ms${result.zoom > 1 ? ` at ${result.zoom.toFixed(1)}×` : ''} · ${result.frameSize.width}×${result.frameSize.height}`
+                : '– ms'}
+            </ThemedText>
+            {roverBrain && <CorridorFan brain={brain} />}
+          </View>
         )}
 
-        <View style={[styles.dock, styles.passThrough]}>
-          {recording && (status.full || status.frozen) && (
-            <View style={styles.panel}>
-              {status.full && <Light>Frame budget reached. Tap stop to save.</Light>}
-              {status.frozen && (
-                <Light>Tracking was lost, so recording paused here. Tap stop to save what was captured.</Light>
-              )}
-            </View>
-          )}
-
-          {phase.kind === 'saving' && (
-            <View style={styles.panel}>
-              <Busy label="Saving capture…" />
-            </View>
-          )}
-
-          {phase.kind === 'failed' && (
-            <View style={styles.panel}>
-              <Light style={styles.error}>{phase.message}</Light>
-              <Button label="Dismiss" secondary onPress={() => setPhase({ kind: 'ready' })} />
-            </View>
-          )}
-
-          {mode === 'camera' && detection && !front && (
-            <RoverBrainHud brain={brain} canDrive={rover.connection.state === 'connected'} />
-          )}
-
-          {mode === 'camera' ? (
-            <View style={[styles.controls, styles.passThrough]}>
-              <View style={[styles.side, styles.passThrough]}>{zoomButton}</View>
-              <RecordButton
-                recording={recording}
-                saving={phase.kind === 'saving'}
-                dimmed={front && !recording}
-                onPress={
-                  recording
-                    ? stopRecording
-                    : front
-                      ? () => showCaption('Only the back camera records. Flip to record.')
-                      : startRecording
-                }
-              />
-              <View style={[styles.side, styles.passThrough]}>{options}</View>
-            </View>
-          ) : (
-            <RoverRemote left={zoomButton} right={options} />
-          )}
-        </View>
-      </View>
-
-      {/* Like the Camera app's, it clears to black while recording, leaving only the time. */}
-      <View style={[styles.bar, { height: barHeight }]}>
-        <Fade hidden={recording} style={styles.barRow}>
+        {/*
+          The gallery, the record button and the remote. While recording, the time takes the
+          gallery's place (it can't open mid-recording anyway). The remote's tray covers them.
+        */}
+        <Fade hidden={remote} style={styles.dock}>
           <View style={styles.side}>
-            <GalleryButton
-              capture={latest?.capture}
-              pop={latest?.fresh}
-              disabled={busy}
-              onPress={() => router.push('/captures')}
-            />
+            {recording ? (
+              <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(200)} style={styles.timerPill}>
+                <Text style={styles.timerText}>{formatSeconds(status.elapsed)}</Text>
+              </Animated.View>
+            ) : (
+              <GalleryButton
+                capture={latest?.capture}
+                pop={latest?.fresh}
+                disabled={busy}
+                onPress={() => router.push('/captures')}
+              />
+            )}
           </View>
-          <ModePicker
-            modes={[
-              { value: 'camera', label: 'Camera' },
-              { value: 'remote', label: 'Remote', badge: rover.connection.state === 'connected' },
-            ]}
-            value={mode}
-            onChange={setMode}
+          <RecordButton
+            recording={recording}
+            saving={phase.kind === 'saving'}
+            dimmed={front && !recording}
+            onPress={
+              recording
+                ? stopRecording
+                : front
+                  ? () => showCaption('Only the back camera records. Flip to record.')
+                  : startRecording
+            }
           />
           <View style={styles.side}>
-            <FlipButton
-              front={front}
-              // Only the back camera records, so it can't change mid-recording.
-              disabled={!capabilities.frontCamera || busy}
-              onPress={() => {
-                // Each camera starts at 1×, as in the Camera app.
-                zoom.set(1);
-                setCamera(front ? 'back' : 'front');
-              }}
-            />
+            <RemoteButton connected={rover.connection.state === 'connected'} onPress={() => setMode('remote')} />
           </View>
         </Fade>
-        {recording && (
-          <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(200)} style={styles.timer}>
-            <View style={styles.timerPill}>
-              <Text style={styles.timerText}>{formatSeconds(status.elapsed)}</Text>
-            </View>
-          </Animated.View>
-        )}
       </View>
+
+      {remote && (
+        <BottomTray label="Remote" onClose={() => setMode('mount')} onTop={setTrayTop}>
+          <RoverRemote />
+        </BottomTray>
+      )}
     </View>
   );
 }
@@ -556,35 +619,6 @@ function Fade({ hidden, style, children }: { hidden: boolean; style?: StyleProp<
 function formatSeconds(seconds: number) {
   const s = Math.floor(seconds);
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function Light({ children, style }: { children: ReactNode; style?: object }) {
-  return (
-    <ThemedText type="small" style={[styles.light, style]}>
-      {children}
-    </ThemedText>
-  );
-}
-
-/** Covers the floating view, which swaps with the main one when tapped. */
-function SwapButton({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      onPress={onPress}
-      style={({ pressed }) => [StyleSheet.absoluteFill, pressed && styles.swapPressed]}
-    />
-  );
-}
-
-function Busy({ label }: { label: string }) {
-  return (
-    <View style={styles.buttons}>
-      <ActivityIndicator color="#fff" />
-      <Light>{label}</Light>
-    </View>
-  );
 }
 
 /**
@@ -629,9 +663,21 @@ function RecordButton({
   );
 }
 
+/** The live 3D panel before it has a recording to rebuild: what it is, and when it starts. */
+function LiveIdle({ text }: { text: string }) {
+  return (
+    <View style={styles.liveIdle}>
+      <SymbolView name="cube" size={24} tintColor="rgba(255,255,255,0.5)" />
+      <Text style={styles.liveIdleTitle}>Live 3D</Text>
+      <Text style={styles.liveIdleText}>{text}</Text>
+    </View>
+  );
+}
+
 /**
- * Like the Camera app's 1× button: how far the camera is zoomed in (yellow when it is), and a tap
- * zooms in to 2× or back out to 1×. Pinching the viewfinder zooms anywhere in between.
+ * Like the Camera app's 1× button, at the head of the rail: how far the camera is zoomed in (yellow
+ * when it is), and a tap zooms in to 2× or back out to 1×. Pinching the viewfinder zooms anywhere
+ * in between.
  */
 function ZoomButton({ zoom }: { zoom: SharedValue<number> }) {
   const level = useZoomLevel(zoom, 0.1);
@@ -643,32 +689,45 @@ function ZoomButton({ zoom }: { zoom: SharedValue<number> }) {
       accessibilityRole="button"
       accessibilityLabel={`Zoom ${label}`}
       accessibilityHint={zoomed ? 'Zooms back out to 1×' : 'Zooms in to 2×. Pinch the viewfinder to zoom further.'}
+      hitSlop={Spacing.one}
       onPress={() => zoomTo(zoom, zoomed ? 1 : 2)}
-      style={({ pressed }) => [styles.round, pressed && styles.pressed]}>
-      <Glass style={[StyleSheet.absoluteFill, styles.roundShape]} />
-      <Text style={[styles.zoomText, zoomed && styles.zoomTextOn]}>{label}</Text>
+      style={({ pressed }) => pressed && styles.pressed}>
+      <RailIcon>
+        <Text style={[styles.zoomText, zoomed && styles.zoomTextOn]}>{label}</Text>
+      </RailIcon>
     </Pressable>
   );
 }
 
-function FlipButton({ front, disabled, onPress }: { front: boolean; disabled: boolean; onPress: () => void }) {
-  // Half a turn per flip, like the Camera app's.
-  const icon = useAnimatedStyle(() => ({
-    transform: [{ rotate: withTiming(front ? '180deg' : '0deg', { duration: 350 }) }],
-  }));
-
+/** In the rail once the live 3D view has been moved: puts it back behind the phone. */
+function FollowButton({ live }: { live: RefObject<{ follow(): void } | null> }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={front ? 'Switch to the back camera' : 'Switch to the front camera'}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
+      accessibilityLabel="Follow the phone"
+      hitSlop={Spacing.one}
+      onPress={() => live.current?.follow()}
+      style={({ pressed }) => pressed && styles.pressed}>
+      <RailIcon icon="crosshairs-gps" />
+    </Pressable>
+  );
+}
+
+/**
+ * Right of the record button: switches to remote mode, where this phone drives the rover from a tray
+ * like the Camera app's controls tray, and shows the camera of the phone on the rover. A green dot
+ * says a rover is connected.
+ */
+function RemoteButton({ connected, onPress }: { connected: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={connected ? 'Remote, rover connected' : 'Remote'}
       onPress={onPress}
-      style={({ pressed }) => [styles.round, (pressed || disabled) && styles.pressed]}>
+      style={({ pressed }) => [styles.round, pressed && styles.pressed]}>
       <Glass style={[StyleSheet.absoluteFill, styles.roundShape]} />
-      <Animated.View style={icon}>
-        <SymbolView name="arrow.triangle.2.circlepath" size={22} weight="medium" tintColor="#fff" />
-      </Animated.View>
+      <SymbolView name="gamecontroller.fill" size={22} tintColor="#fff" />
+      {connected && <View style={styles.connected} />}
     </Pressable>
   );
 }
@@ -713,40 +772,15 @@ function GalleryButton({
   );
 }
 
-function Button({
-  label,
-  onPress,
-  secondary,
-}: {
-  label: string;
-  onPress: () => void;
-  secondary?: boolean;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [styles.button, secondary && styles.buttonSecondary, pressed && styles.pressed]}>
-      <ThemedText type="smallBold" style={secondary ? styles.light : styles.buttonLabel}>
-        {label}
-      </ThemedText>
-    </Pressable>
-  );
-}
-
 const ROUND_SIZE = 48;
 const THUMBNAIL_SIZE = 44;
 const RECORD_SIZE = 80;
 const RECORD_DOT_SIZE = 64;
 const RECORD_STOP_SIZE = 30;
-/** The room either side of the record button and of the modes, so the columns line up. */
-const SIDE_WIDTH = 64;
-const BAR_PADDING = Spacing.three;
-/** The mode capsule's height. */
-const BAR_CONTENT = 48;
-/** The floating view: 3:4, like the camera frames. */
-const PIP_WIDTH = 126;
-const PIP_HEIGHT = 168;
+/** The least of the live 3D view worth showing below the camera: on short screens, the camera narrows to leave it. */
+const MIN_LIVE_HEIGHT = 120;
+/** The camera card's corners, like Instagram's. */
+const CARD_RADIUS = 24;
 // Eased, not sprung: springs overshoot and bounce.
 const SWAP = LinearTransition.duration(260).easing(Easing.out(Easing.cubic));
 const POP = ZoomIn.duration(250).easing(Easing.out(Easing.cubic));
@@ -761,103 +795,78 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     gap: Spacing.three,
   },
-  viewfinder: {
+  /** The camera, edge to edge with rounded corners, like Instagram's. */
+  card: {
     position: 'absolute',
-    left: 0,
-    right: 0,
     overflow: 'hidden',
+    borderRadius: CARD_RADIUS,
+    borderCurve: 'continuous',
+    backgroundColor: '#000',
   },
-  top: {
+  /** The live 3D view, behind the camera. */
+  live: {
     position: 'absolute',
-    top: Spacing.three,
-    left: Spacing.three,
-    right: Spacing.three,
+    backgroundColor: '#000',
   },
-  topBesidePip: {
-    left: Spacing.three + PIP_WIDTH + Spacing.two,
+  /** Loaded but not showing: before a recording. */
+  hidden: {
+    opacity: 0,
+    pointerEvents: 'none',
   },
-  passThrough: {
+  /** Centred on what shows below the camera's rounded corners. */
+  liveIdle: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.one,
+    paddingTop: CARD_RADIUS,
+  },
+  liveIdleTitle: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 13,
+    fontWeight: 600,
+  },
+  liveIdleText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  /** Over the viewfinder, letting touches through to the camera between its controls. */
+  overlay: {
+    position: 'absolute',
     pointerEvents: 'box-none',
   },
-  /** Top left, where the floating view goes while recording. */
   debug: {
     position: 'absolute',
     top: Spacing.three,
     left: Spacing.three,
+    gap: Spacing.two,
+    pointerEvents: 'none',
+  },
+  debugText: {
     color: '#fff',
     fontSize: 13,
     textShadowColor: 'rgba(0,0,0,0.6)',
     textShadowRadius: 3,
-    pointerEvents: 'none',
   },
-  debugUnderPip: {
-    top: Spacing.three + PIP_HEIGHT + Spacing.two,
-  },
-  pip: {
-    position: 'absolute',
-    top: Spacing.three,
-    left: Spacing.three,
-    width: PIP_WIDTH,
-    height: PIP_HEIGHT,
-    // Above the main view whichever one it is (they swap order).
-    zIndex: 1,
-    borderRadius: Spacing.three,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.9)',
-    overflow: 'hidden',
-    backgroundColor: '#000',
-  },
-  swapPressed: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-  },
+  /** The gallery, record button and remote, at the foot of the viewfinder. */
   dock: {
-    position: 'absolute',
-    left: Spacing.three,
-    right: Spacing.three,
-    bottom: Spacing.three,
-    gap: Spacing.three,
-  },
-  panel: {
-    padding: Spacing.three,
-    borderRadius: Spacing.four,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    alignItems: 'center',
-    gap: Spacing.three,
-  },
-  controls: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  side: {
-    width: SIDE_WIDTH,
-    alignItems: 'center',
-  },
-  bar: {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 0,
-    paddingTop: BAR_PADDING,
-    paddingHorizontal: Spacing.three,
-  },
-  barRow: {
+    bottom: Spacing.three,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    pointerEvents: 'box-none',
+  },
+  /** Either side of the record button, each centred in its half. */
+  side: {
+    flex: 1,
+    alignItems: 'center',
+    pointerEvents: 'box-none',
   },
   inert: {
     pointerEvents: 'none',
-  },
-  /** Where the modes were, like the Camera app's recording time. */
-  timer: {
-    position: 'absolute',
-    top: BAR_PADDING,
-    left: 0,
-    right: 0,
-    height: BAR_CONTENT,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   timerPill: {
     paddingHorizontal: Spacing.two,
@@ -871,21 +880,6 @@ const styles = StyleSheet.create({
     fontWeight: 600,
     fontVariant: ['tabular-nums'],
   },
-  light: {
-    color: '#fff',
-    textAlign: 'center',
-  },
-  error: {
-    color: '#ffb4a8',
-    textAlign: 'center',
-  },
-  buttons: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: Spacing.two,
-  },
   round: {
     width: ROUND_SIZE,
     height: ROUND_SIZE,
@@ -897,9 +891,25 @@ const styles = StyleSheet.create({
   },
   zoomText: {
     color: '#fff',
-    fontSize: 14,
-    fontWeight: 600,
+    fontSize: 16,
+    fontWeight: 700,
     fontVariant: ['tabular-nums'],
+    // Legible over any picture, like the icons beside it.
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  /** On the remote button's shoulder. */
+  connected: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#000',
+    backgroundColor: '#30D158',
   },
   /** The Camera app's yellow, as on its zoom buttons. */
   zoomTextOn: {
@@ -908,8 +918,6 @@ const styles = StyleSheet.create({
   thumbnail: {
     width: THUMBNAIL_SIZE,
     height: THUMBNAIL_SIZE,
-    // Centred on the capsule beside it.
-    marginTop: (BAR_CONTENT - THUMBNAIL_SIZE) / 2,
     borderRadius: Spacing.two + Spacing.half,
     overflow: 'hidden',
     alignItems: 'center',
@@ -929,6 +937,9 @@ const styles = StyleSheet.create({
     borderRadius: RECORD_SIZE / 2,
   },
   recordDot: {
+    width: RECORD_DOT_SIZE,
+    height: RECORD_DOT_SIZE,
+    borderRadius: RECORD_DOT_SIZE / 2,
     backgroundColor: '#FF3B30',
   },
   recordPressed: {
@@ -936,18 +947,6 @@ const styles = StyleSheet.create({
   },
   disabled: {
     opacity: 0.35,
-  },
-  button: {
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two + Spacing.half,
-    borderRadius: 999,
-    backgroundColor: '#fff',
-  },
-  buttonSecondary: {
-    backgroundColor: 'rgba(255,255,255,0.18)',
-  },
-  buttonLabel: {
-    color: '#000',
   },
   pressed: {
     opacity: 0.6,

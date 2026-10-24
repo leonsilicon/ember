@@ -28,6 +28,9 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
 
   private var task: URLSessionWebSocketTask?
   private var state = "connecting"
+  /// Pings while nothing else is sent (standing by): an idle socket to a Vercel function dies
+  /// without a close, and the next send only finds out a minute later. Frame queue only.
+  private var keepalive: DispatchSourceTimer?
   private var error: String?
   private(set) var closed = false
   /// Denser than the dataset's selection: the reconstruction wants overlapping views.
@@ -139,6 +142,8 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
     guard !closed else { return }
     closed = true
     state = "closed"
+    keepalive?.cancel()
+    keepalive = nil
     if let reason { error = reason }
     task?.cancel(with: .normalClosure, reason: nil)
     task = nil
@@ -162,6 +167,8 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
   private func connectionLost(_ task: URLSessionTask, reason: String) {
     guard task === self.task, !closed else { return }
     self.task = nil
+    keepalive?.cancel()
+    keepalive = nil
     state = "reconnecting"
     error = reason
     inFlight = 0
@@ -195,7 +202,33 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
       // Standing by, there's no recording to announce yet; `begin` sends it.
       self.sendHello(on: webSocketTask)
       self.receive(on: webSocketTask)
+      self.startKeepalive(on: webSocketTask)
     }
+  }
+
+  /// Frame queue only. A ping every 15 s; one that isn't answered within 10 s, or fails, means the
+  /// connection is gone, and it's made again at once rather than when the next send times out.
+  private func startKeepalive(on task: URLSessionWebSocketTask) {
+    keepalive?.cancel()
+    let timer = DispatchSource.makeTimerSource(queue: frameQueue)
+    timer.schedule(deadline: .now() + 15, repeating: 15)
+    timer.setEventHandler { [weak self] in
+      guard let self, task === self.task, !self.closed else { return }
+      var answered = false
+      task.sendPing { error in
+        self.frameQueue.async {
+          answered = true
+          if error != nil { self.connectionLost(task, reason: "The connection dropped") }
+        }
+      }
+      self.frameQueue.asyncAfter(deadline: .now() + 10) {
+        guard !answered, task === self.task else { return }
+        task.cancel(with: .goingAway, reason: nil)
+        self.connectionLost(task, reason: "The server stopped answering")
+      }
+    }
+    timer.resume()
+    keepalive = timer
   }
 
   /// Frame queue only. Announces the recording to the server, which starts (or picks back up) its session.

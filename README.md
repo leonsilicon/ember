@@ -83,10 +83,12 @@ driving are decoupled:
 
 ### Scooping and the pile
 
-Put the rover where the pile should be and press **Pile here** in the HUD: the pile goes where the
-rover stands, so the rover starts from the pile. It collects the leaves within its **work circle**
-round the pile (`workRadiusM`, 6 ft = 1.83 m by default) and leaves everything outside it alone.
-Leaves within 0.75 m (2.5 ft) of the pile's centre count as piled. Then **Auto**:
+Put the rover where the pile should be, tap the rover icon in the camera's top-right rail and
+choose **Pile here**: the pile goes where the rover stands, so the rover starts from the pile. It
+collects the leaves within its **work circle** round the pile (`workRadiusM`, 6 ft = 1.83 m by
+default) and leaves everything outside it alone. Leaves within 0.75 m (2.5 ft) of the pile's centre
+count as piled. Then **Start autopilot** from the same menu (while it drives, the icon is a stop
+button):
 
 1. **Choose a leaf**: the nearest confirmed one, plus half its distance from the pile (so it
    clears outwards from the pile), plus 2 m if something is in the way. It sticks with its choice
@@ -168,6 +170,19 @@ Frames are only encoded while someone watches. The server is `CameraStreamServer
 `modules/splat-capture/ios/SplatCaptureCore` (routes `/camera.mjpg`, `/frame.jpg`, `/status`), fed by
 `CaptureController`; `swift test` covers it. Phone and laptop must share a network.
 
+### Mount mode and remote mode (two phones)
+
+The app is in **mount mode** by default: the phone rides on the rover, and its camera is the one
+that matters. It shows it whole (uncropped, in the frame's own 3:4 shape), detects leaves in it,
+records it and serves it on the Wi-Fi as above. The **Remote** button beside the record button
+switches to **remote mode**: the phone is in someone's hand, driving the rover, so its own camera
+pauses (unless it's recording), and the viewfinder shows the camera of the phone in mount mode
+instead, above the remote's tray (connection, speeds, joystick). Closing the tray goes back to
+mount mode. The remote phone finds the mounted one with Bonjour (`CameraStreamBrowser`, which
+leaves out its own server by the `id` in each server's TXT record) and plays its `/camera.mjpg` in
+a web view (`src/components/mount-camera-view.tsx`). For now there's only ever one phone in mount
+mode; with more, the first found is shown. Both phones must share a network.
+
 ### Coordinates (what "where the leaf is" means)
 
 - **World:** ARKit's gravity-aligned frame, in metres, with +y up. It's fixed for the session, so
@@ -179,9 +194,10 @@ Frames are only encoded while someone watches. The server is `CameraStreamServer
   the same frame: `dry leaf 1.4 m` (straight-line, so slightly more than the horizontal
   `distance`; `45 cm` under a metre, `– m` where LiDAR has no reading). Without LiDAR, boxes show
   the detector's confidence instead, plus the floor-plane estimate: `dry leaf 23% · ~1.4 m · 12° R`
-  (the front camera shows only the confidence). Boxes LiDAR rules out say why. The HUD shows the nearest
-  confirmed leaf, how many have been found and collected, and the corridor fan (bar height is the
-  clearance; red is blocked).
+  (the front camera shows only the confidence). Boxes LiDAR rules out say why. The rover icon's
+  menu in the rail shows the nearest confirmed leaf and how many have been found and collected;
+  the Debug overlay (camera options → Debug) shows the corridor fan (bar height is the clearance;
+  red is blocked).
 
 ### Mounting the phone
 
@@ -263,8 +279,10 @@ much easier.
 
 **React:**
 - `src/hooks/use-rover-brain.ts` wires it together. The camera screen uses it for distance
-  captions and the HUD.
-- `src/components/rover-brain-hud.tsx` is the HUD with the **Auto**/**STOP** button.
+  captions and the rover's menu.
+- `src/components/rover-brain-menu.tsx` is the rover icon in the camera's top-right rail: a tap
+  opens a menu with **Start autopilot** and **Pile here**; while the autopilot drives, the icon is
+  a stop button. The steering corridors show under the Debug overlay (camera options → Debug).
 - The scoop command is `step.scoop` in the steering loop of `use-rover-brain.ts`. That's where it
   goes to the firmware once the scoop is wired up.
 

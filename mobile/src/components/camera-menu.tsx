@@ -1,16 +1,6 @@
-import { Host, Image, Menu, Section, Toggle } from '@expo/ui/swift-ui';
-import {
-  accessibilityLabel,
-  background,
-  buttonStyle,
-  frame,
-  glassEffect,
-  menuIndicator,
-  menuStyle,
-  shapes,
-} from '@expo/ui/swift-ui/modifiers';
+import { Section, Toggle } from '@expo/ui/swift-ui';
 
-import { LIQUID_GLASS } from './glass';
+import { RailMenu } from './rail-menu';
 
 export type CameraMenuProps = {
   detection: boolean;
@@ -27,7 +17,7 @@ export type CameraMenuProps = {
   detectionInfo: string;
 };
 
-/** The camera screen's options, as a native menu behind a round glass button beside the record button. */
+/** The camera screen's options, as a native menu behind the ⋯ at the foot of the camera's rail. */
 export function CameraMenu({
   detection,
   onDetectionChange,
@@ -40,44 +30,23 @@ export function CameraMenu({
   detectionInfo,
 }: CameraMenuProps) {
   return (
-    <Host matchContents colorScheme="dark">
-      <Menu
-        label={
-          <Image
-            systemName="ellipsis"
-            size={20}
-            color="#ffffff"
-            modifiers={[
-              frame({ width: 48, height: 48 }),
-              LIQUID_GLASS
-                ? glassEffect({ glass: { variant: 'regular' }, shape: 'circle' })
-                : background('rgba(40,40,40,0.75)', shapes.circle()),
-            ]}
-          />
-        }
-        modifiers={[
-          menuStyle('button'),
-          buttonStyle('plain'),
-          menuIndicator('hidden'),
-          accessibilityLabel('Camera options'),
-        ]}>
-        <Section title={detectionInfo}>
-          <Toggle
-            label="Detect objects"
-            systemImage="viewfinder"
-            isOn={detection}
-            onIsOnChange={onDetectionChange}
-          />
-        </Section>
+    <RailMenu icon="dots-horizontal" label="Camera options">
+      <Section title={detectionInfo}>
         <Toggle
-          label="Feature points"
-          systemImage="circle.dotted"
-          isOn={featurePoints}
-          onIsOnChange={onFeaturePointsChange}
+          label="Detect objects"
+          systemImage="viewfinder"
+          isOn={detection}
+          onIsOnChange={onDetectionChange}
         />
-        <Toggle label="Live 3D while recording" systemImage="cube" isOn={liveStream} onIsOnChange={onLiveStreamChange} />
-        <Toggle label="Debug" systemImage="ladybug" isOn={debug} onIsOnChange={onDebugChange} />
-      </Menu>
-    </Host>
+      </Section>
+      <Toggle
+        label="Feature points"
+        systemImage="circle.dotted"
+        isOn={featurePoints}
+        onIsOnChange={onFeaturePointsChange}
+      />
+      <Toggle label="Live 3D while recording" systemImage="cube" isOn={liveStream} onIsOnChange={onLiveStreamChange} />
+      <Toggle label="Debug" systemImage="ladybug" isOn={debug} onIsOnChange={onDebugChange} />
+    </RailMenu>
   );
 }

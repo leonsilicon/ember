@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import type { Intrinsics } from '#live/geometry.ts';
 
+import { SceneControls, wrapAngle } from '../scene-controls';
 import fragmentShader from './points.frag';
 import vertexShader from './points.vert';
 
@@ -10,6 +10,10 @@ const FRUSTUM_DEPTH = 0.12;
 // Until the first keyframe says otherwise, assume the 4:3 wide camera.
 const DEFAULT_K: Intrinsics = { fx: 500, fy: 500, cx: 320, cy: 240, width: 640, height: 480 };
 const TRAIL = 20000;
+/** How long (s) the chase camera takes to catch up with the phone: long enough to iron out a hand's shake. */
+const FOLLOW_SMOOTH = 0.45;
+/** camera-controls' own, for transitions the user starts (a scroll, say). */
+const MANUAL_SMOOTH = 0.25;
 
 function frustumCorners(k: Intrinsics, d: number) {
   const left = (-k.cx / k.fx) * d;
@@ -35,17 +39,17 @@ function frustumLines(k: Intrinsics, color: number) {
 /**
  * The live reconstruction's 3D view: the point cloud growing as the phone streams, the phone's
  * camera (frustum, path and latest keyframe image), a floor grid, and a chase camera that follows
- * the phone. live-viewer.tsx feeds it the socket's messages (see live/protocol.ts).
+ * the phone until someone moves the view (scene-controls.ts). live-viewer.tsx feeds it the
+ * socket's messages (see live/protocol.ts).
  */
 export class LiveScene {
-  /** Whether the camera chases the phone. */
-  follow = true;
-
   private renderer = new THREE.WebGLRenderer({ antialias: true });
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 200);
-  private controls: OrbitControls;
+  private controls: SceneControls;
   private clock = new THREE.Clock();
+  private lastFrame = 0;
+  private following = true;
 
   // Point cloud: one preallocated buffer; voxel i lives at slot i (the server never reorders).
   private pointMaterial = new THREE.ShaderMaterial({
@@ -76,20 +80,28 @@ export class LiveScene {
   // A floor grid at the height most of the lowest points agree on, once there's enough to tell.
   private grid = new THREE.GridHelper(20, 40, 0x2a2d33, 0x1c1e22);
   private gridTimer: ReturnType<typeof setInterval>;
-  private desiredCamera = new THREE.Vector3();
-  private desiredTarget = new THREE.Vector3();
 
-  constructor(container: HTMLElement, onDrag: { start(): void; end(): void }) {
+  // The chase camera: how far ahead the phone's view meets the cloud, and its level heading.
+  private lookDistance = 1;
+  private heading = new THREE.Vector3(0, 0, -1);
+  private chaseTarget = new THREE.Vector3();
+  private chaseCamera = new THREE.Vector3();
+
+  /** `onTakeOver` is called when someone moves the view, which stops the camera following. */
+  constructor(container: HTMLElement, onTakeOver: () => void) {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.setClearColor(0x0b0c0e);
     container.prepend(this.renderer.domElement);
-    this.camera.position.set(1.5, 1.2, 1.5);
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.target.set(0, 0, -1);
-    this.controls.addEventListener('start', onDrag.start);
-    this.controls.addEventListener('end', onDrag.end);
+    this.controls = new SceneControls(this.camera, this.renderer.domElement);
+    this.controls.setLookAt(1.5, 1.2, 1.5, 0, 0, -1);
+    this.controls.smoothTime = FOLLOW_SMOOTH;
+    // A drag, not a touch: a tap shouldn't knock it off the phone.
+    this.controls.addEventListener('control', () => {
+      if (!this.following) return;
+      this.follow = false;
+      onTakeOver();
+    });
     this.allocate(1 << 18);
 
     this.phone.matrixAutoUpdate = false;
@@ -118,6 +130,22 @@ export class LiveScene {
     return this.count;
   }
 
+  /** Whether the camera chases the phone. */
+  get follow() {
+    return this.following;
+  }
+
+  set follow(on: boolean) {
+    this.following = on;
+    this.controls.smoothTime = on ? FOLLOW_SMOOTH : MANUAL_SMOOTH;
+  }
+
+  /** Whether touches and the mouse move the view; off, it only follows the phone. */
+  setInteractive(on: boolean) {
+    if (!on) this.controls.cancel();
+    this.controls.enabled = on;
+  }
+
   /** Clears everything for a new session. */
   reset() {
     this.count = 0;
@@ -126,6 +154,7 @@ export class LiveScene {
     this.trailGeometry.setDrawRange(0, 0);
     this.phone.visible = this.keyframe.visible = this.grid.visible = false;
     this.pose = null;
+    this.lookDistance = 1;
   }
 
   /** Point size in metres (the voxel size times the size slider). */
@@ -168,6 +197,7 @@ export class LiveScene {
     }
     this.count = Math.max(this.count, highest + 1);
     geometry.setDrawRange(0, this.count);
+    this.measureLookDistance(xyz, n);
   }
 
   /** The phone's camera-to-world pose (column-major), many times a second. */
@@ -315,24 +345,64 @@ export class LiveScene {
     this.pointMaterial.uniforms.scale.value = (innerHeight * this.renderer.getPixelRatio()) / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
   };
 
+  /**
+   * Where the phone's view meets the cloud: the median depth, along its view direction, of the
+   * points a keyframe just fused (a sample of them), eased so one odd keyframe doesn't lurch it.
+   */
+  private measureLookDistance(xyz: Float32Array, n: number) {
+    const m = this.pose;
+    if (!m || n < 16) return;
+    const step = Math.max(1, Math.floor(n / 256));
+    const depths: number[] = [];
+    for (let j = 0; j < n; j += step) {
+      const depth = -((xyz[j * 3] - m[12]) * m[8] + (xyz[j * 3 + 1] - m[13]) * m[9] + (xyz[j * 3 + 2] - m[14]) * m[10]);
+      if (depth > 0.05) depths.push(depth);
+    }
+    if (depths.length < 8) return;
+    depths.sort((a, b) => a - b);
+    const median = THREE.MathUtils.clamp(depths[depths.length >> 1], 0.4, 6);
+    this.lookDistance += (median - this.lookDistance) * 0.4;
+  }
+
+  /**
+   * The chase camera: behind and above the phone, looking where it looks at the distance its view
+   * meets the cloud, and further back the further that is, so what's being scanned stays in frame
+   * whether it's a leaf or a wall across the room. camera-controls eases it there (critically
+   * damped, so it never overshoots), orbiting round the target rather than cutting across.
+   */
+  private chase(m: number[]) {
+    const position = new THREE.Vector3(m[12], m[13], m[14]);
+    const forward = new THREE.Vector3(-m[8], -m[9], -m[10]);
+    // Pointing (nearly) straight up or down, what's left of the level heading is mostly noise;
+    // keep the last one rather than swinging round.
+    const level = new THREE.Vector3(forward.x, 0, forward.z);
+    if (level.lengthSq() > 0.04) this.heading.copy(level.normalize());
+    const d = this.lookDistance;
+    this.chaseTarget.copy(position).addScaledVector(forward, d);
+    this.chaseCamera
+      .copy(position)
+      .addScaledVector(this.heading, -(0.5 + 0.6 * d))
+      .setY(position.y + 0.3 + 0.25 * d);
+    const offset = this.chaseCamera.sub(this.chaseTarget);
+    const radius = offset.length();
+    // Unwrapped next to the current azimuth, so it eases the short way round.
+    const current = this.controls.azimuthAngle;
+    const azimuth = current + wrapAngle(Math.atan2(offset.x, offset.z) - current);
+    const polar = Math.acos(THREE.MathUtils.clamp(offset.y / radius, -1, 1));
+    this.controls.moveTo(this.chaseTarget.x, this.chaseTarget.y, this.chaseTarget.z, true);
+    this.controls.rotateTo(azimuth, polar, true);
+    this.controls.dollyTo(radius, true);
+  }
+
   /** Each frame, with the chase camera when following. */
   private frame() {
-    this.pointMaterial.uniforms.time.value = this.clock.getElapsedTime();
+    const now = this.clock.getElapsedTime();
+    const delta = now - this.lastFrame;
+    this.lastFrame = now;
+    this.pointMaterial.uniforms.time.value = now;
     this.uploadDirty();
-    const pose = this.pose;
-    if (this.follow && pose) {
-      // Behind and above the phone, looking where it looks, so new points land in front of you.
-      const position = new THREE.Vector3(pose[12], pose[13], pose[14]);
-      const forward = new THREE.Vector3(-pose[8], -pose[9], -pose[10]);
-      const flat = new THREE.Vector3(forward.x, 0, forward.z);
-      if (flat.lengthSq() > 1e-4) flat.normalize();
-      else flat.set(0, 0, -1);
-      this.desiredTarget.copy(position).addScaledVector(forward, 1.0);
-      this.desiredCamera.copy(position).addScaledVector(flat, -1.1).add(new THREE.Vector3(0, 0.55, 0));
-      this.camera.position.lerp(this.desiredCamera, 0.06);
-      this.controls.target.lerp(this.desiredTarget, 0.08);
-    }
-    this.controls.update();
+    if (this.following && this.pose) this.chase(this.pose);
+    this.controls.update(delta);
     this.renderer.render(this.scene, this.camera);
   }
 }
