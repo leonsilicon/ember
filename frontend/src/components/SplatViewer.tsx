@@ -2,7 +2,13 @@ import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 
-export const SAMPLE_SPLAT_URL = '/splats/banana.splat'
+export const SAMPLE_SPLAT_URL = '/splats/leaf-floor.splat'
+export const BANANA_SPLAT_URL = '/splats/banana.splat'
+
+// Scene convention: ground is the y=0 plane and up is -y (cameraUp below). The default view looks down
+// at ~35° onto the middle of the ~4.6 m leaf-floor sample.
+const CAMERA_POSITION: [number, number, number] = [0, -1.9, -2.9]
+const CAMERA_LOOK_AT: [number, number, number] = [0, 0, 0.15]
 
 type LoadState =
   | { kind: 'idle' }
@@ -29,8 +35,8 @@ export function SplatViewer({ source, label }: Props) {
     const viewer = new GaussianSplats3D.Viewer({
       rootElement: mount,
       cameraUp: [0, -1, 0],
-      initialCameraPosition: [0, 0, -3],
-      initialCameraLookAt: [0, 0, 0],
+      initialCameraPosition: CAMERA_POSITION,
+      initialCameraLookAt: CAMERA_LOOK_AT,
       sharedMemoryForWorkers: false,
       gpuAcceleratedSort: false,
       sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
@@ -104,9 +110,9 @@ export function SplatViewer({ source, label }: Props) {
     const viewer = viewerRef.current
     if (!viewer) return
     const camera = viewer.camera as THREE.PerspectiveCamera
-    camera.position.set(0, 0, -3)
+    camera.position.set(...CAMERA_POSITION)
     camera.up.set(0, -1, 0)
-    viewer.controls?.target.set(0, 0, 0)
+    viewer.controls?.target.set(...CAMERA_LOOK_AT)
     viewer.controls?.update()
     viewer.forceRenderNextFrame()
   }

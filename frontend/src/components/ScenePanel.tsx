@@ -1,7 +1,10 @@
 import { useRef } from 'react'
-import { SAMPLE_SPLAT_URL } from './SplatViewer'
+import { BANANA_SPLAT_URL, SAMPLE_SPLAT_URL } from './SplatViewer'
 
 export type SceneSource = { url: string; label: string } | null
+
+/** Scene shown when the page opens: generated leaf-covered ground (scripts/make-leaf-splat.mjs). */
+export const DEFAULT_SCENE: SceneSource = { url: SAMPLE_SPLAT_URL, label: 'leaf floor (sample)' }
 
 type Props = {
   scene: SceneSource
@@ -27,10 +30,17 @@ export function ScenePanel({ scene, onChange }: Props) {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => onChange({ url: SAMPLE_SPLAT_URL, label: 'banana (sample)' })}
+          onClick={() => onChange(DEFAULT_SCENE)}
           className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
         >
-          Load sample
+          Leaf floor
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange({ url: BANANA_SPLAT_URL, label: 'banana (sample)' })}
+          className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
+        >
+          Banana
         </button>
         <button
           type="button"

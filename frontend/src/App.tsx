@@ -4,14 +4,14 @@ import { CONNECTION_STYLES } from './components/connectionStyles'
 import { DPad } from './components/DPad'
 import { StopButton } from './components/StopButton'
 import { CapturePanel } from './components/CapturePanel'
-import { ScenePanel, type SceneSource } from './components/ScenePanel'
+import { DEFAULT_SCENE, ScenePanel, type SceneSource } from './components/ScenePanel'
 import { SplatViewer } from './components/SplatViewer'
 import { useRover } from './hooks/useRover'
 import { useState } from 'react'
 
 export default function App() {
   const rover = useRover()
-  const [scene, setScene] = useState<SceneSource>(null)
+  const [scene, setScene] = useState<SceneSource>(DEFAULT_SCENE)
   const { snapshot, mode } = rover
   const connected = snapshot.connection === 'connected'
 
