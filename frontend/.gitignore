@@ -1,24 +1,16 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# The Mac agent's captures and training output, the downloaded Brush binary, and the live
+# reconstruction's depth worker and Core ML model (scripts/install-*.sh)
+/data
+/bin
+/models
 
-node_modules
-dist
-dist-ssr
-*.local
+# Next.js build output, and the Vercel project link and pulled environment
+/.next
+/next-env.d.ts
+*.tsbuildinfo
+/.vercel
+# .env.local from `vercel env pull`, and .env for local-only values (SPLAT_TOKEN for scripts)
+.env*
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# Burn/CubeCL GPU autotune cache, written by Brush in the agent's working directory
+/target

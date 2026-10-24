@@ -1,5 +1,5 @@
 /**
- * Debug splat preview: a capture goes to the splat server (apps/next-app, a Next.js app on Vercel), a
+ * Debug splat preview: a capture goes to the splat server (frontend, a Next.js app on Vercel), a
  * Mac running its agent trains it into a splat with Brush, and it is viewed in a browser, so the
  * result can be compared with the production reconstruction.
  */
@@ -21,7 +21,7 @@ export type SplatJob = {
   focus: [number, number, number] | null;
 };
 
-/** Port of `vercel dev` for the splat server on a Mac (`bun run dev` in apps/next-app). */
+/** Port of `vercel dev` for the splat server on a Mac (`bun run dev` in frontend). */
 export const SPLAT_SERVER_PORT = 8899;
 
 /** The splat server's access token (its SPLAT_TOKEN), built into the app from EXPO_PUBLIC_SPLAT_TOKEN. */

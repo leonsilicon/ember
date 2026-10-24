@@ -1,10 +1,48 @@
 {
-  "files": [],
   "compilerOptions": {
-    "paths": { "@rover-brain": ["../mobile/src/lib/rover-brain/index.ts"] }
+    "strict": true,
+    "target": "ES2022",
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ESNext"
+    ],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [
+      "bun"
+    ],
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "allowJs": true,
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@rover-brain": [
+        "../mobile/src/lib/rover-brain/index.ts"
+      ]
+    }
   },
-  "references": [
-    { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" }
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "data",
+    "depth-worker",
+    ".next"
   ]
 }

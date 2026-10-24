@@ -16,11 +16,11 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
 |---|---|
 | `mobile` | The Expo / React Native iPhone app: camera, leaf detection, the rover's brain and autopilot, rover controls, 3D splat capture. Plus the ESP32 firmware (`firmware/rover`). |
 | `mobile/src/lib/rover-brain` | Leaf localisation, obstacle scanning and the drive-to-leaf autopilot (pure TypeScript, unit-tested). |
-| `apps/next-app` | The splat server: a Next.js app on Vercel that trains captures into splats and rebuilds recordings live in 3D, through a Bun agent on a Mac. See "Debug: preview the splat" in [`mobile/SPLATS.md`](mobile/SPLATS.md). |
+| `frontend` | The web app, a Next.js app on Vercel (https://soon2026.vercel.app): the splat server, which trains captures into splats and rebuilds recordings live in 3D through a Bun agent on a Mac (see "Debug: preview the splat" in [`mobile/SPLATS.md`](mobile/SPLATS.md)), plus the laptop pages: rover remote control at `/control`, the autopilot simulator at `/sim` and the wildfire hazard map at `/wildfire`. See [`frontend/README.md`](frontend/README.md). |
 | `packages/owlvit` | Builds the on-device OWL-ViT leaf detector the app embeds. |
 | `packages/dev` | The `vpx _dev` and `vpx _ios` scripts. |
 | `.github/workflows/testflight.yml` | Ships every push to `main` to TestFlight from a self-hosted Mac; see "TestFlight" in [`mobile/AGENTS.md`](mobile/AGENTS.md). |
-| `frontend` | Parth's laptop web app (React + Vite + TS + Tailwind): rover remote control, splat viewer, and the wildfire hazard map at `#/wildfire`. |
+| `.github/workflows/vercel.yml` | Deploys every push to `main` to Vercel from GitHub Actions; see "Deploying" in [`frontend/README.md`](frontend/README.md). |
 | `firmware/rover_ws` | ESP32 Arduino sketch: Wi-Fi access point + WebSocket command endpoint for the web app. |
 | `data/wildfire` | Ontario wildfire hazard pipeline that feeds the web app's map. |
 | `backend` | Python on the Mac: the same leaf detector and depth logic as the app, for testing with a webcam, photo or RealSense, plus an HTTP perception service. See [`backend/README.md`](backend/README.md). |

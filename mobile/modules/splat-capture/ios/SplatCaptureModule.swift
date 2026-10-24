@@ -55,7 +55,7 @@ public class SplatCaptureModule: Module {
       try CaptureController.deleteCapture(id: captureId)
     }
 
-    // Debug splat preview: uploads the saved zip to the splat server (apps/next-app, see CaptureUploader).
+    // Debug splat preview: uploads the saved zip to the splat server (frontend, see CaptureUploader).
     AsyncFunction("uploadCapture") { (captureId: String, serverUrl: String, token: String, promise: Promise) in
       guard let zip = CaptureController.zipURL(id: captureId) else {
         return promise.reject("ERR_CAPTURE_NOT_FOUND", "No saved capture \(captureId)")

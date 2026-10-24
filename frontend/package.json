@@ -1,33 +1,45 @@
 {
-  "name": "frontend",
-  "private": true,
+  "name": "@soon2026/frontend",
   "version": "0.0.0",
+  "private": true,
   "type": "module",
+  "imports": {
+    "#*": "./src/*"
+  },
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
-    "test": "bun test tests",
-    "preview": "vite preview"
+    "dev": "vercel dev --listen 8899",
+    "build": "next build",
+    "agent": "bun src/agent/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint"
   },
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",
-    "@tailwindcss/vite": "^4.3.3",
+    "@sparkjsdev/spark": "2.3.1",
+    "@vercel/blob": "^2.8.2",
+    "@vercel/functions": "^3.10.3",
+    "ioredis": "^5.8.2",
     "maplibre-gl": "^6.15.0",
+    "next": "16.4.3",
     "pmtiles": "^4.5.0",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "tailwindcss": "^4.3.3",
-    "three": "^0.186.1"
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "three": "0.180.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
-    "@types/node": "^24.19.2",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@types/three": "^0.186.0",
-    "@vitejs/plugin-react": "^6.1.2",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/bun": "^1.4.4",
+    "@types/geojson": "^7946.0.16",
+    "@types/node": "^24.0.0",
+    "@types/react": "~19.3.0",
+    "@types/react-dom": "~19.3.0",
+    "@types/three": "0.180.0",
+    "@types/ws": "^8.18.1",
     "oxlint": "^1.88.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
-    "vite": "^8.3.4"
+    "vercel": "^65.2.0"
   }
 }

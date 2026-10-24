@@ -31,7 +31,7 @@ Motor and arm outputs are **stubs** (the onboard LED lights while driving). Fill
 ## Connect the laptop
 
 1. Join Wi-Fi network **`rover-ap`**, password **`rover1234`** (edit at the top of the
-   sketch). The laptop loses internet while joined; the Vite dev server runs locally so
+   sketch). The laptop loses internet while joined; the web app's dev server (`bun run dev` in `frontend/`) runs locally so
    that's fine.
 2. In the web app switch to **Live**, URL `ws://192.168.4.1/ws`, click **Connect**.
 3. Hold a direction: the onboard LED lights, the Serial Monitor prints `[drive] forward`,

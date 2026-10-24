@@ -5,14 +5,12 @@ import {
   NavigationControl,
   ScaleControl,
   addProtocol,
-  setWorkerUrl,
   type GeoJSONSource,
   type LngLatBoundsLike,
   type MapGeoJSONFeature,
   type MapLayerMouseEvent,
 } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { Protocol } from 'pmtiles'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BuildingPanel } from './BuildingPanel'
@@ -47,7 +45,6 @@ import { BTN, MICRO, PANEL } from './ui'
 import { DATA_BASE, useWildfireData } from './useWildfireData'
 import { VisibleList } from './VisibleList'
 
-setWorkerUrl(maplibreWorkerUrl)
 const protocol = new Protocol()
 addProtocol('pmtiles', protocol.tile)
 

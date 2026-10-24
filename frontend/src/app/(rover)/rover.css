@@ -1,0 +1,10 @@
+/* Tailwind for the laptop pages. Classes are read from everything under src/ (the path is relative to
+   this file); the splat pages have their own root layout and CSS, so this never applies to them. */
+@import 'tailwindcss' source('../..');
+
+body {
+  @apply bg-zinc-950 text-zinc-100 antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}

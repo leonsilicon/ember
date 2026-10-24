@@ -90,18 +90,18 @@ axis convention — i.e. poses, intrinsics and depth unprojection line up.
 To compare against the production reconstruction, the app can train a capture with the reference
 pipeline and show the result. It has two halves, so a phone only ever needs the public URL:
 
-- **The splat server** (`apps/next-app`): a Next.js app on Vercel, https://soon2026.vercel.app (project
-  `improvelabs/soon2026`, root directory `apps/next-app`, region `yul1`; every push to `main` deploys
+- **The splat server** (`frontend`): a Next.js app on Vercel, https://soon2026.vercel.app (project
+  `improvelabs/soon2026`, root directory `frontend`, region `yul1`; every push to `main` deploys
   it). It serves the pages and API, relays the live 3D sockets, and keeps the capture jobs in Upstash
   Redis (`soon2026-redis`, Canada) and the zips and splats in a private Vercel Blob store
   (`soon2026-blob`, Montréal).
-- **The Mac agent** (`apps/next-app/src/agent`, `bun run agent` there, or `vpx _dev`): a Bun process with no
+- **The Mac agent** (`frontend/src/agent`, `bun run agent` there, or `vpx _dev`): a Bun process with no
   server of its own. It trains queued captures with Brush (one at a time) and runs the live
   reconstruction, talking to the same Redis and Blob store. Nothing trains while it's offline; the
   queue waits for it.
 
 ```bash
-cd apps/next-app
+cd frontend
 ./scripts/install-brush.sh            # Brush v0.3.0 into bin/ (sha256-checked)
 bunx vercel login                     # in a real terminal; the agent's Blob access refreshes through it
 bunx vercel link --project soon2026 --scope improvelabs && bunx vercel env pull .env.local
@@ -118,7 +118,7 @@ The free plans set the limits: Upstash allows 500,000 Redis commands a month (an
 capture's zip is deleted once it's trained; its final splat stays).
 
 Everything needs the access token, `SPLAT_TOKEN` (a Vercel environment variable, a secret in
-Production and Preview, so it can't be pulled back; `apps/next-app/.env` keeps a copy for scripts
+Production and Preview, so it can't be pulled back; `frontend/.env` keeps a copy for scripts
 like `live-replay.ts`): the app has it built in from `EXPO_PUBLIC_SPLAT_TOKEN`, with the server's
 address in `EXPO_PUBLIC_SPLAT_SERVER_URL` (both in `mobile/.env.local` for local builds, and
 EAS environment variables for EAS builds).
@@ -143,8 +143,8 @@ teammate's viewer. **Retrain splat** uploads it again, e.g. after changing the a
 Agent settings (environment variables for `bun run agent`): `SPLAT_STEPS` (5000),
 `SPLAT_MAX_RESOLUTION` (960), `SPLAT_EXPORT_EVERY` (steps/10), `SPLAT_SH_DEGREE` (1),
 `SPLAT_GROWTH` (0.5, Brush's growth-select-fraction), `SPLAT_MAX_SPLATS` (600k, keeps a long
-capture's splat loadable in a phone browser, ~100 bytes each), `SPLAT_DATA_DIR` (`apps/next-app/data`,
-where it unpacks and trains), `BRUSH_BIN` (`apps/next-app/bin/brush_app`). `SPLAT_REDIS_PREFIX`
+capture's splat loadable in a phone browser, ~100 bytes each), `SPLAT_DATA_DIR` (`frontend/data`,
+where it unpacks and trains), `BRUSH_BIN` (`frontend/bin/brush_app`). `SPLAT_REDIS_PREFIX`
 (`splat:`) separates deployments sharing one Redis.
 
 The viewer starts at the first camera and orbits around what it was looking at (the median
@@ -159,7 +159,7 @@ following, **F** resumes), **C** hides points few keyframes agreed on, and **Dow
 the cloud.
 
 ```bash
-cd apps/next-app
+cd frontend
 ./scripts/install-depth.sh            # once: Depth Anything V2 (Core ML, sha256-checked) + the Swift worker
 bun run agent                         # or `vpx _dev` from anywhere
 bun scripts/live-replay.ts data/captures/<id>/<id>   # try it without the phone
@@ -172,18 +172,18 @@ viewfinder. Tap it to swap it with the camera, FaceTime style (drag the full-scr
 it follows the phone again a few seconds later), and tap the floating camera to swap back. That view is the same page
 for this one recording, `/live/<capture id>?embed`, without its controls.
 
-How it works (`modules/splat-capture/ios/LiveStreamer.swift` → `apps/next-app/src/web/relay.ts`
-→ Redis → `apps/next-app/src/agent` and `src/live`, and back):
+How it works (`modules/splat-capture/ios/LiveStreamer.swift` → `frontend/src/web/relay.ts`
+→ Redis → `frontend/src/agent` and `src/live`, and back):
 
 - The phone sends its pose ~15×/s and a keyframe whenever it has moved 3 cm or turned 3° (at most
   5/s, and at least 1/s): a 640×480 JPEG, pose, intrinsics, and the ARKit feature points it sees in
   that frame. LiDAR phones send their depth map instead.
 - A socket stays on whichever Vercel function instance accepted it, and instances share nothing, so
-  each instance relays its sockets through two Redis streams (`apps/next-app/src/bus.ts`): messages in to
+  each instance relays its sockets through two Redis streams (`frontend/src/bus.ts`): messages in to
   the agent, and messages out to whichever sockets they're for. Vercel closes sockets after 5
   minutes (Hobby); the phone and viewers reconnect and the session carries on by its id. If the
   agent restarts, the relays announce their sockets (and phones' hellos) to it again.
-- Without LiDAR, `apps/next-app/depth-worker` runs Depth Anything V2 Small on the Mac's Neural Engine
+- Without LiDAR, `frontend/depth-worker` runs Depth Anything V2 Small on the Mac's Neural Engine
   (~30–50 ms). Its depth is relative, so each keyframe's scale and shift are fitted (RANSAC, then
   reweighted least squares) to that frame's ARKit points and to what's already reconstructed, which
   keeps overlapping views from doubling surfaces. Frames the anchors can't pin down are skipped.

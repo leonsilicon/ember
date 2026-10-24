@@ -1,7 +1,7 @@
 import Foundation
 
 /// Uploads a capture zip straight from disk, so the bytes never pass through JS.
-/// Used by the debug splat preview (see apps/next-app): the server hands out an upload URL in its Blob
+/// Used by the debug splat preview (see frontend): the server hands out an upload URL in its Blob
 /// store, the zip goes there directly (a few hundred MB is more than the server itself accepts),
 /// and the server is then told it's in, which queues it for training.
 final class CaptureUploader: NSObject, URLSessionTaskDelegate {

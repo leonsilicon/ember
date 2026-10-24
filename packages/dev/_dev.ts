@@ -6,9 +6,9 @@
  *   0  metro         Expo dev server for mobile, on Stim's `metro.port` (committed in
  *                    mobile/.stim.json; 8081 without Stim), so `stim ios` reuses it.
  *                    Always `--dev-client`: the app runs as a development build, never in Expo Go
- *   1  splat-agent   the splat server's Mac agent (apps/next-app/src/agent): trains captures
+ *   1  splat-agent   the splat server's Mac agent (frontend/src/agent): trains captures
  *                    with Brush and runs the live 3D reconstruction for the app on Vercel. It reads
- *                    the app's Redis and Blob credentials from apps/next-app/.env.local (`vercel env pull`)
+ *                    the app's Redis and Blob credentials from frontend/.env.local (`vercel env pull`)
  *
  * `--force` replaces a running stack and frees its ports, through `stim stop` when Stim's own dev
  * server holds Metro's. `--port <n>` overrides the Metro port; every other argument goes to
@@ -142,7 +142,7 @@ const config = {
     },
     'splat-agent': {
       cmd: [process.execPath, 'src/agent/main.ts'],
-      // Bun loads apps/next-app/.env.local from here.
+      // Bun loads frontend/.env.local from here.
       cwd: NEXT_APP_DIR,
       stop: 'SIGINT',
     },

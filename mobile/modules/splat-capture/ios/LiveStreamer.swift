@@ -1,11 +1,11 @@
 import ARKit
 import CoreImage
 
-/// Streams a recording to the live reconstruction on the splat server (apps/next-app/src/live) while it
+/// Streams a recording to the live reconstruction on the splat server (frontend/src/live) while it
 /// records, so a browser can watch the scene being rebuilt: a keyframe whenever the phone has
 /// moved enough (a 640×480 JPEG with its pose and intrinsics, plus the feature points ARKit sees
 /// in it, or LiDAR depth), and the pose about 15 times a second so the viewer can draw the phone
-/// moving. The wire format is described in apps/next-app/src/live/protocol.ts.
+/// moving. The wire format is described in frontend/src/live/protocol.ts.
 ///
 /// `offer` runs on the capture's frame queue and only picks frames and grabs their buffers;
 /// encoding happens on `encodeQueue`, with at most two keyframes in flight, so a slow network

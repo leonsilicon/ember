@@ -5,7 +5,7 @@ import path from 'node:path';
 export const REPO_ROOT = path.resolve(import.meta.dir, '../..');
 export const APP_DIR = path.join(REPO_ROOT, 'mobile');
 /** The splat server: the Next.js app on Vercel, and the Mac agent `vpx _dev` runs. */
-export const NEXT_APP_DIR = path.join(REPO_ROOT, 'apps/next-app');
+export const NEXT_APP_DIR = path.join(REPO_ROOT, 'frontend');
 export const DEFAULT_METRO_PORT = 8081;
 
 /** A command's trimmed stdout, or null if it is missing or fails. */

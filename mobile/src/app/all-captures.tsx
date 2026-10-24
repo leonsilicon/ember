@@ -99,7 +99,7 @@ export default function AllCapturesScreen() {
   );
 }
 
-/** Debug-only: preview splats trained on a Mac (apps/next-app) to compare with the real reconstruction. */
+/** Debug-only: preview splats trained on a Mac (frontend) to compare with the real reconstruction. */
 function DebugCard() {
   const theme = useTheme();
   const debug = useDebugSettings();
@@ -117,10 +117,10 @@ function DebugCard() {
             alive &&
             setServer(
               !h.agent
-                ? 'Connected, but the Mac agent is offline (bun run agent in apps/next-app), so nothing trains'
+                ? 'Connected, but the Mac agent is offline (bun run agent in frontend), so nothing trains'
                 : [
                     h.brush ? 'Connected · Mac agent ready' : 'Connected, but Brush is not installed on the Mac',
-                    h.depthWorker ? null : 'live 3D needs apps/next-app/scripts/install-depth.sh',
+                    h.depthWorker ? null : 'live 3D needs frontend/scripts/install-depth.sh',
                   ]
                     .filter(Boolean)
                     .join(' · '),

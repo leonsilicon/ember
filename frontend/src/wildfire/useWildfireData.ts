@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Categories, Coverage } from './types'
 
-export const DATA_BASE = `${import.meta.env.BASE_URL}wildfire/`
+export const DATA_BASE = '/wildfire/'
 
 export function useWildfireData() {
   const [data, setData] = useState<{ coverage: Coverage; categories: Categories } | null>(null)
