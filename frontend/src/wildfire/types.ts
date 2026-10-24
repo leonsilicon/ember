@@ -101,12 +101,12 @@ export function normalizeProps(p: Record<string, unknown>, id?: string | number)
   }
 }
 
-export function applyFilter(items: BuildingProps[], f: ListFilter) {
+export function applyFilter(items: BuildingProps[], f: ListFilter, dryness = 0.5) {
   switch (f) {
     case 'flagged':
       return items.filter((b) => b.hazard_overlap || b.hazard_within_30m)
     case 'priority':
-      return items.filter((b) => (b.scan_priority ?? 0) >= 40)
+      return items.filter((b) => (liveScore(b, dryness) ?? 0) >= SCAN_SOON)
     case 'eval':
       return items.filter((b) => b.needs_evaluation)
     case 'incomplete':
@@ -129,9 +129,11 @@ export function liveScore(b: BuildingProps, dryness: number): number | null {
   return Math.round(b.scan_priority * (0.4 + 0.6 * dryness))
 }
 
+export const SCAN_SOON = 40
+
 export function scoreTone(score: number): { label: string; color: string } {
   if (score >= 70) return { label: 'Scan now', color: '#f43f5e' }
-  if (score >= 40) return { label: 'Scan soon', color: '#fb923c' }
+  if (score >= SCAN_SOON) return { label: 'Scan soon', color: '#fb923c' }
   if (score >= 20) return { label: 'Monitor', color: '#facc15' }
   return { label: 'Low', color: '#64748b' }
 }

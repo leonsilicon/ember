@@ -424,7 +424,8 @@ export default function WildfireApp() {
       )}
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col gap-3 p-3 md:right-[412px] md:p-4">
-        <div className="flex items-start gap-3">
+        {/* relative + z so the search dropdown paints over the Layers / Live row below it */}
+        <div className="relative z-10 flex items-start gap-3">
           <a href="#/" className={`pointer-events-auto hidden shrink-0 px-3 py-2 md:block ${PANEL}`}>
             <span className="flex items-center gap-2 text-sm font-semibold">
               <span className={`h-2 w-2 rounded-full ${dryness.status === 'ok' ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : dryness.status === 'loading' ? 'bg-amber-400' : 'bg-rose-500'}`} />

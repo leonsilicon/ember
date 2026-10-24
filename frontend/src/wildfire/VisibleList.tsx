@@ -16,7 +16,7 @@ const RANK = { overlap: 0, within: 1, none: 2 }
 export function VisibleList({ items, filter, dryness, onFilter, onPick, zoomedOut }: Props) {
   const flagged = items.filter((b) => b.hazard_overlap || b.hazard_within_30m).length
   const byPriority = filter === 'priority'
-  const shown = applyFilter(items, filter).sort((a, b) =>
+  const shown = applyFilter(items, filter, dryness).sort((a, b) =>
     byPriority
       ? (liveScore(b, dryness) ?? -1) - (liveScore(a, dryness) ?? -1)
       : RANK[verdictOf(a)] - RANK[verdictOf(b)] || (a.nearest_hazard_m ?? 1e9) - (b.nearest_hazard_m ?? 1e9),
