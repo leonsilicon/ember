@@ -43,3 +43,9 @@ src/clients/WebSocketClient.ts  real transport
 src/hooks/useRover.ts           hold-to-drive repeat, keyboard, mode switching
 src/components/                 DPad, StopButton, ArmPanel, ConnectionPanel, ViewerPlaceholder
 ```
+
+## Viewer, scene and capture (milestone 2)
+
+- **Viewer** — renders a Gaussian splat (`.splat`, `.ply`, `.ksplat`) with `@mkkellogg/gaussian-splats-3d`. Drag to orbit, scroll to zoom, right-drag to pan; Bird's-eye and Reset view buttons. Runs without `SharedArrayBuffer` (no COOP/COEP headers needed).
+- **Scene panel** — "Load sample" (bundled `public/splats/banana.splat`, 8 MB), "Open .splat / .ply…" for a local file, or a URL such as `/splats/scene.splat` for pipeline output dropped into `public/splats/`.
+- **Capture panel** — webcam stand-in until the depth camera is decided. Start camera → Choose folder (Chrome's File System Access API) → Record 1 fps writes `frame_0001.jpg…` into that folder; "Snap one" takes a single frame. Feed the folder to `pipeline/reconstruct.py`.

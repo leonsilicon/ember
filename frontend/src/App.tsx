@@ -3,11 +3,15 @@ import { ConnectionPanel } from './components/ConnectionPanel'
 import { CONNECTION_STYLES } from './components/connectionStyles'
 import { DPad } from './components/DPad'
 import { StopButton } from './components/StopButton'
-import { ViewerPlaceholder } from './components/ViewerPlaceholder'
+import { CapturePanel } from './components/CapturePanel'
+import { ScenePanel, type SceneSource } from './components/ScenePanel'
+import { SplatViewer } from './components/SplatViewer'
 import { useRover } from './hooks/useRover'
+import { useState } from 'react'
 
 export default function App() {
   const rover = useRover()
+  const [scene, setScene] = useState<SceneSource>(null)
   const { snapshot, mode } = rover
   const connected = snapshot.connection === 'connected'
 
@@ -39,7 +43,13 @@ export default function App() {
       </header>
 
       <main className="grid flex-1 gap-4 p-4 lg:grid-cols-[1fr_380px] lg:p-6">
-        <ViewerPlaceholder />
+        <div className="flex min-h-[420px] flex-col gap-4">
+          <SplatViewer source={scene?.url ?? null} label={scene?.label} />
+          <div className="grid gap-4 md:grid-cols-2">
+            <ScenePanel scene={scene} onChange={setScene} />
+            <CapturePanel />
+          </div>
+        </div>
 
         <aside className="flex flex-col gap-4">
           <ConnectionPanel
