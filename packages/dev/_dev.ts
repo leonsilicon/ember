@@ -25,10 +25,9 @@ import path from 'node:path';
 
 import { configFromEnv } from 'soon2026/server/src/config';
 
-const REPO_ROOT = path.resolve(import.meta.dir, '../..');
-const APP_DIR = path.join(REPO_ROOT, 'apps/soon2026');
+import { APP_DIR, DEFAULT_METRO_PORT, listenerPid, REPO_ROOT, run, stimMetroPort } from './lib';
+
 const CONTROL_PORT = 8898;
-const DEFAULT_METRO_PORT = 8081;
 const LOG_DIR = path.join(REPO_ROOT, '.mprocs-logs');
 // JSON is valid YAML, so the generated config needs no YAML library.
 const CONFIG_PATH = path.join(REPO_ROOT, 'node_modules/.cache/_dev/mprocs.yaml');
@@ -38,25 +37,6 @@ const MPROCS: string = createRequire(import.meta.url)('mprocs');
 function fail(message: string): never {
   console.error(`_dev: ${message}`);
   process.exit(1);
-}
-
-/** A command's trimmed stdout, or null if it is missing or fails. */
-function run(command: string, args: string[], cwd = REPO_ROOT) {
-  const result = spawnSync(command, args, { cwd, encoding: 'utf8' });
-  return result.status === 0 ? result.stdout.trim() : null;
-}
-
-function stimMetroPort() {
-  const port = Number(run('stim', ['settings', 'get', 'metro.port'], APP_DIR));
-  return Number.isInteger(port) && port > 0 ? port : null;
-}
-
-/**
- * The pid listening on a port, or null if it is free. Uses lsof rather than connecting: mprocs 0.9
- * crashes when a probe opens and closes its control port.
- */
-function listenerPid(port: number) {
-  return run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'])?.split('\n')[0] || null;
 }
 
 function describePid(pid: string) {
@@ -161,6 +141,8 @@ const config = {
     metro: {
       cmd: [node, expoCli, 'start', '--dev-client', '--port', String(metroPort), ...expoArgs],
       cwd: APP_DIR,
+      // The development build's identity (apps/soon2026/app.config.ts) in the manifest it loads.
+      env: { EXPO_PUBLIC_APP_VARIANT: 'development' },
       stop: 'SIGINT',
     },
     'splat-server': {

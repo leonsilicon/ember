@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "_dev": "./_dev.ts"
+    "_dev": "./_dev.ts",
+    "_ios": "./_ios.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

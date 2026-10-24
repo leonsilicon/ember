@@ -1,0 +1,112 @@
+# Builds the production app (dev.improve.soon2026) on a self-hosted Mac on every push to main and ships it to
+# TestFlight, as Haniverse's staging build does: `eas build --local` signs with the credentials EAS manages for the
+# improvelabs Expo account, and `eas submit` uploads with the App Store Connect API key EAS holds. One-time setup:
+# the "TestFlight" section of apps/soon2026/AGENTS.md.
+name: TestFlight
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One build at a time. A push during a build waits for it, and a newer push replaces a waiting one, so the next
+# build is always of the latest main.
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: Build and submit to TestFlight
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 120
+    env:
+      EAS_CLI: eas-cli@24.12.1
+      # Without it, eas-cli uses the runner Mac's own `eas login`.
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      # For packages/dev/testflight-group.ts, which gives each build to the external group below. Without them the
+      # build only reaches internal testers (members of the App Store Connect team).
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+      TESTFLIGHT_GROUP: Friends
+    steps:
+      # `eas build --local` copies the repo, installs it and archives the app in $TMPDIR: about 10 GB.
+      - name: Check free disk space
+        run: |
+          free=$(df -g "$RUNNER_TEMP" | awk 'NR==2 {print $4}')
+          echo "$free GB free"
+          if [ "$free" -lt 25 ]; then
+            echo "::error::Only $free GB free on the runner; an iOS build needs about 25 GB."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # For eas-cli, which reads the app config and its plugins from node_modules. The build installs its own copy.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # The leaf detector is gitignored and takes a while to export, so it is cached by what it's built from.
+      - name: Restore the leaf detector
+        id: leaf-detector
+        uses: actions/cache/restore@v6
+        with:
+          path: packages/owlvit/dist
+          key: owlvit-${{ hashFiles('packages/owlvit/export.py', 'packages/owlvit/pyproject.toml', 'packages/owlvit/uv.lock', 'packages/owlvit/fixtures/**') }}
+
+      - if: steps.leaf-detector.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@v10.3.0
+
+      - name: Build the leaf detector
+        if: steps.leaf-detector.outputs.cache-hit != 'true'
+        run: bun run --filter @soon2026/owlvit build
+
+      - name: Save the leaf detector
+        if: steps.leaf-detector.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: packages/owlvit/dist
+          key: ${{ steps.leaf-detector.outputs.cache-primary-key }}
+
+      - name: Build the app
+        working-directory: apps/soon2026
+        env:
+          # The runner empties its temp directory after every job, so a failed or cancelled build leaves nothing behind.
+          TMPDIR: ${{ runner.temp }}
+          # The build's copy of the repo leaves out the gitignored model; see plugins/with-leaf-detector.js.
+          LEAF_DETECTOR_DIST: ${{ github.workspace }}/packages/owlvit/dist
+        run: >-
+          caffeinate -i bunx "$EAS_CLI" build --platform ios --profile production --local --non-interactive
+          --output "$RUNNER_TEMP/soon2026.ipa"
+
+      - name: Read the build number
+        id: ipa
+        run: |
+          build_number=$(unzip -p "$RUNNER_TEMP/soon2026.ipa" 'Payload/*.app/Info.plist' | plutil -extract CFBundleVersion raw -o - -)
+          echo "build-number=$build_number" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to TestFlight
+        working-directory: apps/soon2026
+        run: bunx "$EAS_CLI" submit --platform ios --profile production --path "$RUNNER_TEMP/soon2026.ipa" --non-interactive --verbose
+
+      - name: Send to the ${{ env.TESTFLIGHT_GROUP }} group
+        if: env.ASC_API_KEY_P8 != ''
+        env:
+          WHAT_TO_TEST: ${{ github.event.head_commit.message }}
+        run: bun packages/dev/testflight-group.ts "${{ steps.ipa.outputs.build-number }}"
+
+      - name: Summary
+        run: |
+          echo "Build ${{ steps.ipa.outputs.build-number }} of \`${GITHUB_SHA::7}\` is on TestFlight (dev.improve.soon2026)." >> "$GITHUB_STEP_SUMMARY"

@@ -1,16 +1,15 @@
 {
   "expo": {
-    "name": "soon2026",
-    "slug": "soon2026",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "soon2026",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.leonsilicon.soon2026",
       "appleTeamId": "M76P5G9HXK",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "infoPlist": {
         "NSCameraUsageDescription": "Allow $(PRODUCT_NAME) to use the camera to identify objects in real time and to capture scenes as 3D splats.",
         "NSLocalNetworkUsageDescription": "$(PRODUCT_NAME) connects to development tools on your local network.",
@@ -64,7 +63,8 @@
           "neverForLocation": true,
           "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to the rover's ESP32 over Bluetooth to drive its motors."
         }
-      ]
+      ],
+      "./plugins/with-leaf-detector"
     ],
     "experiments": {
       "typedRoutes": true,

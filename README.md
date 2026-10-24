@@ -8,14 +8,17 @@ drives an ESP32 motor board over Bluetooth.
 ```bash
 bun install        # from the repo root: one hoisted node_modules for every workspace
 vpx _dev           # Metro + the splat server in mprocs; --force replaces a running stack
+vpx _ios           # build the dev build onto the cabled iPhone and open it on that Metro (--simulator for no ARKit)
+vpx _ios production  # the production app (dev.improve.soon2026) in Release beside the dev build (com.leonsilicon.soon2026.development): no dev client or Metro
 ```
 
 | Path | What |
 |---|---|
 | `apps/soon2026` | The Expo / React Native iPhone app: camera, leaf detection, the rover's brain and autopilot, rover controls, 3D splat capture. Plus its splat server (`server/`) and the ESP32 firmware (`firmware/rover`). |
 | `apps/soon2026/src/lib/rover-brain` | Leaf localisation, obstacle scanning and the drive-to-leaf autopilot (pure TypeScript, unit-tested). |
-| `packages/owlvit` | Builds the on-device OWL-ViT leaf detector the app downloads. |
-| `packages/dev` | The `vpx _dev` script. |
+| `packages/owlvit` | Builds the on-device OWL-ViT leaf detector the app embeds. |
+| `packages/dev` | The `vpx _dev` and `vpx _ios` scripts, and the TestFlight workflow's group step. |
+| `.github/workflows/testflight.yml` | Ships every push to `main` to TestFlight from a self-hosted Mac; see "TestFlight" in [`apps/soon2026/AGENTS.md`](apps/soon2026/AGENTS.md). |
 | `backend` | Python on the Mac: the same leaf detector, a trained **hazard** model (water, rocks, logs…), and an HTTP perception service. See [`backend/README.md`](backend/README.md). |
 
 ---
@@ -98,10 +101,11 @@ text queries describe, with no training. The queries ("a photo of a dead leaf", 
 "fallen brown leaves", "a pile of autumn leaves", …) are set in `packages/owlvit/export.py` for the
 phone and in `backend/rover_vision/leaf_detector.py` for the Mac.
 
-- **On the phone:** `packages/owlvit` exports it as an ExecuTorch / Core ML program, the splat
-  server serves it at `/models/`, and `src/hooks/use-detections.ts` runs it on the AR camera's
-  frames. To change what it looks for, edit `QUERIES` and rebuild (`bun run --filter
-  @soon2026/owlvit build`).
+- **On the phone:** `packages/owlvit` exports it as an ExecuTorch / Core ML program,
+  `apps/soon2026/plugins/with-leaf-detector.js` embeds it in the app when it's prebuilt, and
+  `src/hooks/use-detections.ts` runs it on the AR camera's frames. To change what it looks for,
+  edit `QUERIES`, rebuild the model (`bun run --filter @soon2026/owlvit build`), then rebuild the
+  app (`vpx _ios`).
 - **On the Mac:** `python -m rover_vision.leaf_detector --image photo.jpg` for quick tests with
   2×2 tiling (better for small, distant leaves).
 - **Scores are low in absolute terms** (0.05–0.3 is normal for OWL-ViT). Keep the threshold low
