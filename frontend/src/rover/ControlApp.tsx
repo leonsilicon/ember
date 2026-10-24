@@ -55,7 +55,7 @@ export default function App() {
             <ScenePanel scene={scene} onChange={setScene} />
             {/* The iPhone riding on the rover, in live mode or as soon as its app is found on the Wi-Fi;
                 otherwise the laptop webcam stand-in. */}
-            {mode === 'live' || phones.length > 0 ? <PhoneCameraPanel discovered={phones[0] ?? null} /> : <CapturePanel />}
+            {mode === 'live' || phones.length > 0 ? <PhoneCameraPanel phones={phones} /> : <CapturePanel />}
           </div>
         </div>
 

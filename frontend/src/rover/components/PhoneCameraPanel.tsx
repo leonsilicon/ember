@@ -5,7 +5,7 @@ import { CaptureControls } from './CaptureControls'
 import { useDetectionStream } from '../hooks/useDetectionStream'
 import { DetectionBoxes } from './DetectionBoxes'
 import { MjpegView } from './MjpegView'
-import { PHONE_CAMERA_PORT, phoneCameraOrigin } from '../phoneCamera'
+import { PHONE_CAMERA_PORT, phoneCameraOrigin, pickPhone } from '../phoneCamera'
 
 const STORAGE_KEY = 'rover.phoneCameraAddress'
 const STATUS_TIMEOUT_MS = 3000
@@ -52,11 +52,13 @@ const displayAddress = (origin: string) => origin.replace(/^https?:\/\//, '').re
 /**
  * Capture from the camera of the iPhone riding on the rover, streamed over the Wi-Fi by the leaf detector
  * app while its camera screen is open. The live view is the MJPEG stream; captured frames are
- * full-resolution stills the phone encodes on request (`/frame.jpg?size=1920`). `discovered` is a phone the dev server
- * found on the Wi-Fi (usePhoneDiscovery): the panel links up with it by itself, unless the user stopped.
+ * full-resolution stills the phone encodes on request (`/frame.jpg?size=1920`). `phones` are the ones the dev server
+ * found on the Wi-Fi (usePhoneDiscovery): the panel links up by itself with the only one, or the one used last;
+ * with a choice to make (a shared Wi-Fi), it lists them to pick from. Not after the user pressed Stop.
  */
-export function PhoneCameraPanel({ discovered = null }: { discovered?: DiscoveredPhone | null }) {
+export function PhoneCameraPanel({ phones = [] }: { phones?: readonly DiscoveredPhone[] }) {
   const [address, setAddress] = useState(readSaved)
+  const discovered = pickPhone(phones, phoneCameraOrigin(address))
   // A remembered phone is reconnected to as the panel opens.
   const [initialOrigin] = useState(() => phoneCameraOrigin(address))
   const [state, setState] = useState<State>(() => (initialOrigin ? { kind: 'checking' } : { kind: 'idle' }))
@@ -268,6 +270,43 @@ export function PhoneCameraPanel({ discovered = null }: { discovered?: Discovere
           </button>
         )}
       </form>
+
+      {(phones.length > 1 || (phones.length > 0 && !discovered)) && (
+        <div className="mt-3">
+          <p className="mb-1.5 text-xs text-zinc-400">
+            {phones.length === 1 ? 'A camera' : `${phones.length} cameras`} on this Wi-Fi{discovered ? '' : ': pick yours'}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {phones.map((phone) => {
+              const current = phone.origin === origin && (streaming || busy)
+              return (
+                <button
+                  key={phone.origin}
+                  type="button"
+                  aria-pressed={current}
+                  onClick={() => {
+                    setAddress(displayAddress(phone.origin))
+                    try {
+                      localStorage.setItem(STORAGE_KEY, displayAddress(phone.origin))
+                    } catch {
+                      // Private mode: the choice just isn't remembered.
+                    }
+                    setStopped(false)
+                    setStreamUrl(null)
+                    setState({ kind: 'checking' })
+                    void check(phone.origin)
+                  }}
+                  className={`rounded-md px-2.5 py-1 text-xs focus-visible:outline-2 focus-visible:outline-sky-400 ${
+                    current ? 'bg-sky-500 font-semibold text-zinc-950' : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+                  }`}
+                >
+                  {phone.device} <span className={current ? 'text-zinc-800' : 'text-zinc-500'}>· {displayAddress(phone.origin)}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="relative mt-3 flex aspect-[3/4] max-h-[420px] w-full items-center justify-center overflow-hidden rounded-lg bg-zinc-950">
         {streamUrl ? (
