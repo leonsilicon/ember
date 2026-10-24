@@ -1,5 +1,48 @@
 # soon2026
 
+## Quickstart
+
+```bash
+bun install                                   # once, from the repo root
+```
+
+**Frontend:** runs the Next.js app on http://localhost:8899 (`/control`, `/sim`, `/wildfire`).
+
+```bash
+cd frontend
+bunx vercel link && bunx vercel env pull .env.local   # first time only
+bun run dev
+```
+
+**Mobile app:** builds the leaf model, then installs on a real iPhone (no Expo Go, no simulator ARKit); every push to `main` ships to TestFlight.
+
+```bash
+bun run --filter @soon2026/owlvit build      # required before any build (or: cd packages/owlvit && uv run export.py --precision fp32)
+vpx _dev                                      # terminal 1: Metro + Mac agent
+vpx _ios                                      # terminal 2: dev build onto the cabled iPhone
+vpx _ios production                           # Release build, no Metro
+
+# manual TestFlight
+cd mobile
+export LEAF_DETECTOR_DIST="$(cd ../packages/owlvit/dist && pwd)"
+bunx eas-cli@24.12.1 build --platform ios --profile production --local --non-interactive --output ./soon2026.ipa
+bunx eas-cli@24.12.1 submit --platform ios --profile production --path ./soon2026.ipa
+```
+
+**Backend leaf camera detector:** runs OWL-ViT leaf detection on a photo, webcam or RealSense on the Mac.
+
+```bash
+cd backend
+python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+python -m rover_vision.leaf_detector --image photo.jpg            # writes photo-detections.jpg
+python -m rover_vision.leaf_detector --camera-source webcam       # live (or: realsense)
+python -m rover_vision navigate                                   # leaves + distance + minimap
+python -m rover_vision serve && curl localhost:8765/v1/health     # HTTP service for the phone
+python -m pytest -q                                               # tests
+```
+
+---
+
 An autonomous rover that finds **dry leaves and pine needles** on the ground and collects them,
 breaking up the fuel that lets small ignitions grow into wildfires. An iPhone rides on the rover
 and is its brain: camera, LiDAR depth, AR tracking and leaf detection all run on the phone, which

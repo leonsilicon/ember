@@ -198,7 +198,7 @@ export function PhoneCameraPanel({ phones = [] }: { phones?: readonly Discovered
 
   // The leaf detector's boxes, while linked: drawn over the picture, never into captured frames.
   const [showBoxes, setShowBoxes] = useState(true)
-  const detections = useDetectionStream(streaming && showBoxes ? origin : null)
+  const { frame: detections, unsupported: boxesUnsupported } = useDetectionStream(streaming && showBoxes ? origin : null)
   const frameAspect = detections && detections.width > 0 ? detections.width / detections.height : 3 / 4
 
   const capture = useFrameCapture(async () => {
@@ -352,7 +352,9 @@ export function PhoneCameraPanel({ phones = [] }: { phones?: readonly Discovered
               onClick={() => setShowBoxes((v) => !v)}
               className="absolute right-2 bottom-2 rounded-md bg-zinc-950/80 px-2 py-1 text-[11px] font-semibold text-zinc-200 hover:bg-zinc-900 focus-visible:outline-2 focus-visible:outline-sky-400"
             >
-              {showBoxes ? `Boxes on${detections ? ` · ${detections.boxes.length}` : ''}` : 'Boxes off'}
+              {showBoxes
+                ? `Boxes on${detections ? ` · ${detections.boxes.length}` : boxesUnsupported ? ' · phone app too old' : ''}`
+                : 'Boxes off'}
             </button>
           </div>
         ) : (
