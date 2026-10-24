@@ -9,4 +9,5 @@
 /next-env.d.ts
 *.tsbuildinfo
 /.vercel
-.env*.local
+# .env.local from `vercel env pull`, and .env for local-only values (SPLAT_TOKEN for scripts)
+.env*

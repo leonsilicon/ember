@@ -5,6 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   AGENT_BEAT_SECONDS,
   AGENT_TTL_SECONDS,
+  BLOCK_SECONDS,
   append,
   connect,
   keys,
@@ -83,6 +84,14 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
   };
   await beat();
   const heartbeat = setInterval(() => beat().catch((error) => console.error('heartbeat', error)), AGENT_BEAT_SECONDS * 1000);
+  // Recordings starting and stopping show up in /api/live (and the phone dot) without waiting for the next beat.
+  let recordings = '';
+  const beatIfRecordingsChanged = () => {
+    const now = JSON.stringify(hub.list().map((s) => [s.id, s.phoneConnected]));
+    if (now === recordings) return;
+    recordings = now;
+    beat().catch((error) => console.error('heartbeat', error));
+  };
 
   async function readLive() {
     let after = await latestId(redis, k.liveIn);
@@ -90,7 +99,7 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
     publish({ kind: 'agent' });
     while (running) {
       try {
-        for (const { id, fields } of await readStream(liveReader, k.liveIn, after, 30_000)) {
+        for (const { id, fields } of await readStream(liveReader, k.liveIn, after, BLOCK_SECONDS * 1000)) {
           after = id;
           const entry = parseIn(fields);
           if (entry?.kind === 'open') hub.open(entry.peer, entry.role, entry.session);
@@ -98,6 +107,7 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
           else if (entry?.kind === 'resync') hub.resync(entry.peer);
           else if (entry?.kind === 'close') hub.close(entry.peer);
         }
+        beatIfRecordingsChanged();
       } catch (error) {
         if (!running) return;
         console.error('live:in', error);
@@ -113,7 +123,7 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
     }
     while (running) {
       try {
-        const popped = await queueReader.blpop(k.queue, 30);
+        const popped = await queueReader.blpop(k.queue, BLOCK_SECONDS);
         if (popped) trainer.enqueue(popped[1]);
       } catch (error) {
         if (!running) return;

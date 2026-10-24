@@ -40,9 +40,16 @@ export function keys(prefix = process.env.SPLAT_REDIS_PREFIX ?? 'splat:') {
 
 export type Keys = ReturnType<typeof keys>;
 
-/** How often the agent refreshes its heartbeat, and how long the heartbeat outlives the agent. */
-export const AGENT_BEAT_SECONDS = 5;
-export const AGENT_TTL_SECONDS = 15;
+/**
+ * How often the agent refreshes its heartbeat (and also whenever a recording starts or stops),
+ * and how long the heartbeat outlives an agent that died. Sparing: Upstash's free plan allows
+ * 500,000 commands a month, and an idle agent should use only a small part of that.
+ */
+export const AGENT_BEAT_SECONDS = 60;
+export const AGENT_TTL_SECONDS = 180;
+
+/** How long the agent's blocking reads wait before asking again, for the same reason. */
+export const BLOCK_SECONDS = 60;
 
 /** The agent's heartbeat: what /health reports, and the live sessions for /api/live. */
 export type AgentInfo = {
