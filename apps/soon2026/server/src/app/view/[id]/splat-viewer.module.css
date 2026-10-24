@@ -1,0 +1,27 @@
+.root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #0d0d0d;
+}
+
+.root canvas {
+  display: block;
+  touch-action: none;
+}
+
+.hud {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  top: 12px;
+  color: #eee;
+  font-size: 13px;
+  pointer-events: none;
+  text-shadow: 0 1px 2px #000;
+}
+
+.hud a {
+  pointer-events: auto;
+  color: #eee;
+}

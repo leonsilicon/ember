@@ -1,0 +1,3 @@
+[test]
+# One throwaway Redis for the whole run (see test/setup.ts).
+preload = ["./test/setup.ts"]

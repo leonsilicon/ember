@@ -1,15 +1,22 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 
-import { createApp } from '../src/app';
+import { WebSocketServer } from 'ws';
+
+import { startAgent } from '../src/agent/agent';
+import { directoryStorage } from '../src/agent/storage';
 import type { ServerConfig } from '../src/config';
 import type { DepthEstimator } from '../src/live/depth-worker';
 import { anchorsInView, depthFromDisparity, fitDisparity, type Intrinsics } from '../src/live/geometry';
-import type { SocketData } from '../src/live/hub';
+import { LiveHub, type LiveTransport } from '../src/live/hub';
 import { encodeIngest, parseIngest, ProtocolError, type KeyframeHeader } from '../src/live/protocol';
 import { depthEdges, VoxelCloud } from '../src/live/voxels';
+import { redisUrl } from '../src/bus';
 
 const W = 64;
 const H = 48;
@@ -132,121 +139,209 @@ class FakeEstimator implements DepthEstimator {
   close() {}
 }
 
-let root: string | null = null;
-afterEach(async () => {
-  if (root) await rm(root, { recursive: true, force: true });
-  root = null;
-});
+type Message = string | ArrayBuffer;
+
+/** Points messages decoded into { index → z }. */
+function pointDepths(messages: Message[]) {
+  const z = new Map<number, number>();
+  for (const m of messages) {
+    if (typeof m === 'string' || new Uint32Array(m, 0, 1)[0] !== 1) continue;
+    const n = new Uint32Array(m, 4, 1)[0];
+    const index = new Uint32Array(m, 8, n);
+    const xyz = new Float32Array(m, 8 + n * 4, n * 3);
+    index.forEach((i, j) => z.set(i, xyz[j * 3 + 2]));
+  }
+  return z;
+}
+
+const waitFor = async (check: () => boolean) => {
+  for (let i = 0; i < 300 && !check(); i++) await sleep(10);
+  expect(check()).toBe(true);
+};
+
+const jpeg = new Uint8Array([0xff, 0xd8, 0xff]);
+const keyframe: KeyframeHeader = { type: 'keyframe', seq: 1, t: 0, pose: IDENTITY, intrinsics: K, anchors: wallPoints(), jpegBytes: 3 };
+const LIVE = { voxelSize: 0.05, maxDepth: 4, gridWidth: W, gridHeight: H };
 
 describe('live hub', () => {
-  async function startServer() {
-    root = await mkdtemp(path.join(tmpdir(), 'live-server-'));
+  /** A hub whose transport just records what each peer would get. */
+  function startHub() {
+    const inbox = new Map<string, Message[]>();
+    const closed = new Map<string, number>();
+    const transport: LiveTransport = {
+      send(peers, message) {
+        const copy = typeof message === 'string' ? message : message.slice().buffer;
+        for (const peer of peers) inbox.set(peer.id, [...(inbox.get(peer.id) ?? []), copy]);
+      },
+      close(peer, code) {
+        closed.set(peer.id, code);
+      },
+    };
+    const estimator = new FakeEstimator();
+    const hub = new LiveHub(LIVE, transport, async () => estimator);
+    const messages = (peer: string) => inbox.get(peer) ?? [];
+    const has = (peer: string, text: string) => messages(peer).some((m) => typeof m === 'string' && m.includes(text));
+    return { hub, estimator, messages, has, closed };
+  }
+
+  test('fuses a phone keyframe and streams it to viewers, including late ones', async () => {
+    const { hub, estimator, messages, has } = startHub();
+    hub.open('viewer', 'viewer');
+    hub.open('phone', 'phone');
+    hub.message('phone', encodeIngest({ type: 'hello', session: 'capture-test', mode: 'features', device: 'iPhone14,4' }));
+    expect(has('viewer', '"id":"capture-test"')).toBe(true);
+
+    hub.message('phone', encodeIngest({ type: 'pose', t: 0, pose: IDENTITY }));
+    hub.message('phone', encodeIngest(keyframe, jpeg));
+    await hub.idle();
+
+    expect(estimator.calls).toBe(1);
+    const depths = pointDepths(messages('viewer'));
+    expect(depths.size).toBe(hub.cloud('capture-test')!.count);
+    // The wall spans 1.5–2.5 m in front of the camera (−z).
+    for (const z of depths.values()) {
+      expect(z).toBeLessThan(-1.4);
+      expect(z).toBeGreaterThan(-2.6);
+    }
+    expect(has('viewer', '"type":"pose"')).toBe(true);
+    expect(messages('viewer').some((m) => typeof m !== 'string' && new Uint32Array(m, 0, 1)[0] === 2)).toBe(true);
+    expect(has('phone', '"fused":1')).toBe(true);
+
+    hub.open('late', 'viewer', 'capture-test');
+    expect(pointDepths(messages('late')).size).toBe(depths.size);
+    expect(hub.list()).toMatchObject([{ id: 'capture-test', fused: 1 }]);
+
+    // Without anchors the keyframe can't be scaled, so it's skipped with a reason.
+    hub.message('phone', encodeIngest({ ...keyframe, seq: 2, anchors: [] }, jpeg));
+    await hub.idle();
+    expect(has('phone', 'feature points in view')).toBe(true);
+  });
+
+  test('gives a viewer the session it asked for once the phone starts it, and only that one', () => {
+    const { hub, has } = startHub();
+    // The app opens its view of a recording as the recording starts, which can beat the phone's hello.
+    hub.open('viewer', 'viewer', 'capture-early');
+    expect(has('viewer', '"id":null')).toBe(true);
+    hub.open('other', 'phone');
+    hub.message('other', encodeIngest({ type: 'hello', session: 'capture-other', mode: 'features' }));
+    hub.open('phone', 'phone');
+    hub.message('phone', encodeIngest({ type: 'hello', session: 'capture-early', mode: 'features' }));
+    expect(has('viewer', '"id":"capture-early"')).toBe(true);
+    expect(has('viewer', 'capture-other')).toBe(false);
+  });
+
+  test('tells the phone about a malformed message and keeps going', () => {
+    const { hub, messages } = startHub();
+    hub.open('phone', 'phone');
+    hub.message('phone', encodeIngest({ type: 'pose', t: 0, pose: IDENTITY }));
+    hub.message('phone', new Uint8Array([1, 2]));
+    const errors = messages('phone').filter((m) => typeof m === 'string' && m.includes('"type":"error"'));
+    expect(errors).toHaveLength(2);
+    expect(String(errors[0])).toContain('send hello first');
+  });
+
+  test('closes a phone the same recording reconnected from', () => {
+    const { hub, closed } = startHub();
+    hub.open('first', 'phone');
+    hub.message('first', encodeIngest({ type: 'hello', session: 'capture-test', mode: 'features' }));
+    hub.open('second', 'phone');
+    hub.message('second', encodeIngest({ type: 'hello', session: 'capture-test', mode: 'features' }));
+    expect(closed.get('first')).toBe(4000);
+    expect(hub.list()).toHaveLength(1);
+  });
+});
+
+describe('through Redis', () => {
+  // The Redis and key prefix from test/setup.ts, which the relay also uses.
+  const prefix = process.env.SPLAT_REDIS_PREFIX!;
+
+  /**
+   * The app's socket relay (src/web/relay.ts) on a plain ws server, standing in for Vercel's
+   * upgradeWebSocket, plus the Mac agent.
+   */
+  async function startStack() {
+    const { relaySocket } = await import('../src/web/relay');
+    const sockets = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 ** 2 });
+    const http = createServer();
+    http.on('upgrade', (request, socket, head) => {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      sockets.handleUpgrade(request, socket, head, (ws) => {
+        if (url.pathname === '/live/ingest') relaySocket(ws, 'phone', null);
+        else relaySocket(ws, 'viewer', url.searchParams.get('session'));
+      });
+    });
+    await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
+    const base = `ws://127.0.0.1:${(http.address() as AddressInfo).port}`;
+    const root = await mkdtemp(path.join(tmpdir(), 'live-agent-'));
     const config: ServerConfig = {
       port: 0, host: '127.0.0.1', dataDir: path.join(root, 'data'), brushBin: null, steps: 300, exportEvery: 100,
       maxResolution: 960, shDegree: 1, growthFraction: 0.5, maxSplats: 600_000, depthWorkerBin: null, depthModel: null,
-      modelsDir: path.join(root, 'models'), live: { voxelSize: 0.05, maxDepth: 4, gridWidth: W, gridHeight: H },
+      live: LIVE,
     };
     const estimator = new FakeEstimator();
-    const app = await createApp(config, { startEstimator: async () => estimator });
-    const server = Bun.serve<SocketData>({
-      port: 0,
-      hostname: '127.0.0.1',
-      fetch(request, server) {
-        if (app.live.upgrade(request, server)) return;
-        return app.fetch(request);
+    const agentOptions = { config, redisUrl: redisUrl(), prefix, storage: directoryStorage(root), startEstimator: async () => estimator };
+    const stack = {
+      base,
+      agent: await startAgent(agentOptions),
+      agentOptions,
+      async stop() {
+        await stack.agent.stop();
+        for (const client of sockets.clients) client.terminate();
+        http.close();
+        await rm(root, { recursive: true, force: true });
       },
-      websocket: app.live.websocket,
-    });
-    return { app, server, estimator, base: `127.0.0.1:${server.port}` };
+    };
+    return stack;
   }
 
   function open(url: string) {
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
-    const messages: (string | ArrayBuffer)[] = [];
+    const messages: Message[] = [];
     ws.onmessage = (event) => messages.push(event.data);
-    return new Promise<{ ws: WebSocket; messages: typeof messages }>((resolve, reject) => {
+    return new Promise<{ ws: WebSocket; messages: Message[] }>((resolve, reject) => {
       ws.onopen = () => resolve({ ws, messages });
       ws.onerror = reject;
     });
   }
 
-  const waitFor = async (check: () => boolean) => {
-    for (let i = 0; i < 200 && !check(); i++) await Bun.sleep(10);
-    expect(check()).toBe(true);
-  };
+  const has = (messages: Message[], text: string) => messages.some((m) => typeof m === 'string' && m.includes(text));
 
-  /** Points messages decoded into { index → z }. */
-  function pointDepths(messages: (string | ArrayBuffer)[]) {
-    const z = new Map<number, number>();
-    for (const m of messages) {
-      if (typeof m === 'string' || new Uint32Array(m, 0, 1)[0] !== 1) continue;
-      const n = new Uint32Array(m, 4, 1)[0];
-      const index = new Uint32Array(m, 8, n);
-      const xyz = new Float32Array(m, 8 + n * 4, n * 3);
-      index.forEach((i, j) => z.set(i, xyz[j * 3 + 2]));
-    }
-    return z;
-  }
-
-  test('fuses a phone keyframe and streams it to viewers, including late ones', async () => {
-    const { app, server, estimator, base } = await startServer();
+  test('relays a phone to the agent and the reconstruction to viewers', async () => {
+    const stack = await startStack();
     try {
-      const viewer = await open(`ws://${base}/live/socket`);
-      const phone = await open(`ws://${base}/live/ingest`);
-      phone.ws.send(encodeIngest({ type: 'hello', session: 'capture-test', mode: 'features', device: 'iPhone14,4' }));
-      await waitFor(() => viewer.messages.some((m) => typeof m === 'string' && m.includes('"id":"capture-test"')));
-
-      phone.ws.send(encodeIngest({ type: 'pose', t: 0, pose: IDENTITY }));
-      const jpeg = new Uint8Array([0xff, 0xd8, 0xff]);
-      const keyframe: KeyframeHeader = { type: 'keyframe', seq: 1, t: 0, pose: IDENTITY, intrinsics: K, anchors: wallPoints(), jpegBytes: 3 };
+      const viewer = await open(`${stack.base}/live/socket`);
+      const phone = await open(`${stack.base}/live/ingest`);
+      phone.ws.send(encodeIngest({ type: 'hello', session: 'capture-test', mode: 'features' }));
+      await waitFor(() => has(viewer.messages, '"id":"capture-test"'));
       phone.ws.send(encodeIngest(keyframe, jpeg));
-      await app.live.idle();
       await waitFor(() => pointDepths(viewer.messages).size > 0);
-
-      expect(estimator.calls).toBe(1);
-      const depths = pointDepths(viewer.messages);
-      expect(depths.size).toBe(app.live.cloud('capture-test')!.count);
-      // The wall spans 1.5–2.5 m in front of the camera (−z).
-      for (const z of depths.values()) {
-        expect(z).toBeLessThan(-1.4);
-        expect(z).toBeGreaterThan(-2.6);
-      }
-      expect(viewer.messages.some((m) => typeof m === 'string' && m.includes('"type":"pose"'))).toBe(true);
-      expect(viewer.messages.some((m) => typeof m !== 'string' && new Uint32Array(m, 0, 1)[0] === 2)).toBe(true);
-      await waitFor(() => phone.messages.some((m) => typeof m === 'string' && m.includes('"fused":1')));
-
-      const late = await open(`ws://${base}/live/socket?session=capture-test`);
-      await waitFor(() => pointDepths(late.messages).size === depths.size);
-
-      const sessions = (await (await app.fetch(new Request('http://x/api/live'))).json()) as { sessions: { id: string; fused: number }[] };
-      expect(sessions.sessions).toMatchObject([{ id: 'capture-test', fused: 1 }]);
-      const ply = await app.fetch(new Request('http://x/api/live/capture-test/points.ply'));
-      expect(ply.status).toBe(200);
-
-      // Without anchors the keyframe can't be scaled, so it's skipped with a reason.
-      phone.ws.send(encodeIngest({ ...keyframe, seq: 2, anchors: [] }, jpeg));
-      await app.live.idle();
-      await waitFor(() => phone.messages.some((m) => typeof m === 'string' && m.includes('feature points in view')));
-      for (const socket of [viewer, phone, late]) socket.ws.close();
+      await waitFor(() => has(phone.messages, '"fused":1'));
+      expect(pointDepths(viewer.messages).size).toBe(stack.agent.hub.cloud('capture-test')!.count);
+      for (const socket of [viewer, phone]) socket.ws.close();
     } finally {
-      app.live.close();
-      server.stop(true);
+      await stack.stop();
     }
   });
 
-  test('tells the phone about a malformed message and keeps going', async () => {
-    const { app, server, base } = await startServer();
+  test('a restarted agent picks up the phones and viewers already connected', async () => {
+    const stack = await startStack();
     try {
-      const phone = await open(`ws://${base}/live/ingest`);
-      phone.ws.send(encodeIngest({ type: 'pose', t: 0, pose: IDENTITY }));
-      phone.ws.send(new Uint8Array([1, 2]));
-      await waitFor(() => phone.messages.filter((m) => typeof m === 'string' && m.includes('"type":"error"')).length === 2);
-      expect(String(phone.messages[0])).toContain('send hello first');
-      phone.ws.close();
+      const viewer = await open(`${stack.base}/live/socket?session=capture-test`);
+      const phone = await open(`${stack.base}/live/ingest`);
+      phone.ws.send(encodeIngest({ type: 'hello', session: 'capture-test', mode: 'features' }));
+      await waitFor(() => has(viewer.messages, '"id":"capture-test"'));
+
+      await stack.agent.stop();
+      stack.agent = await startAgent(stack.agentOptions);
+      viewer.messages.length = 0;
+      // The relay announces both sockets again, and the phone's hello, so the session carries on.
+      await waitFor(() => has(viewer.messages, '"id":"capture-test"'));
+      phone.ws.send(encodeIngest(keyframe, jpeg));
+      await waitFor(() => pointDepths(viewer.messages).size > 0);
+      for (const socket of [viewer, phone]) socket.ws.close();
     } finally {
-      app.live.close();
-      server.stop(true);
+      await stack.stop();
     }
   });
 });

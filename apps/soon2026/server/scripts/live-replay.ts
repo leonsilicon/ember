@@ -1,14 +1,20 @@
 #!/usr/bin/env bun
 /**
  * Streams a saved capture into the live reconstruction as if a phone were recording it, so the
- * pipeline and the viewer (http://localhost:8899/live) can be tried without the phone:
+ * pipeline and the viewer (<server>/live) can be tried without the phone:
  *
- *   bun server/scripts/live-replay.ts <unzipped capture dir> [--server http://localhost:8899] [--fps 3]
+ *   bun server/scripts/live-replay.ts <unzipped capture dir> [--server url] [--token token] [--fps 3]
+ *
+ * The server defaults to SPLAT_SERVER_URL (else `vercel dev` on http://localhost:8899), and the
+ * token to SPLAT_TOKEN (both in server/.env.local after `vercel env pull`). The Mac agent has to
+ * be running for anything to be reconstructed.
  *
  * Saved captures don't keep each frame's ARKit feature points, so the anchors come from the
  * capture's points.ply instead: the seed points each frame can see (nearest per screen cell).
  */
 import path from 'node:path';
+
+import WebSocket from 'ws';
 
 import { readPlyPositions } from '../src/dataset';
 import { anchorsInView, scaleIntrinsics, type Anchor, type Intrinsics } from '../src/live/geometry';
@@ -20,11 +26,12 @@ const option = (name: string, fallback: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args.splice(i, 2)[1] : fallback;
 };
-const server = option('--server', 'http://localhost:8899').replace(/^http/, 'ws').replace(/\/+$/, '');
+const server = option('--server', process.env.SPLAT_SERVER_URL ?? 'http://localhost:8899').replace(/^http/, 'ws').replace(/\/+$/, '');
+const token = option('--token', process.env.SPLAT_TOKEN ?? '');
 const fps = Number(option('--fps', '3'));
 const dir = args[0];
 if (!dir) {
-  console.error('usage: bun server/scripts/live-replay.ts <unzipped capture dir> [--server url] [--fps n]');
+  console.error('usage: bun server/scripts/live-replay.ts <unzipped capture dir> [--server url] [--token token] [--fps n]');
   process.exit(2);
 }
 
@@ -61,7 +68,7 @@ function between(a: number[], b: number[], t: number) {
 }
 
 const session = `replay-${path.basename(dir).replace(/[^A-Za-z0-9_-]/g, '')}-${Date.now().toString(36)}`.slice(0, 80);
-const ws = new WebSocket(`${server}/live/ingest`);
+const ws = new WebSocket(`${server}/live/ingest`, { headers: { Authorization: `Bearer ${token}` } });
 ws.binaryType = 'arraybuffer';
 const latest: { stats: SessionStats | null } = { stats: null };
 ws.onmessage = (event) => {

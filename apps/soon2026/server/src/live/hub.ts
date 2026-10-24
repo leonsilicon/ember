@@ -1,5 +1,6 @@
-import type { Server, ServerWebSocket } from 'bun';
+import { setTimeout as sleep } from 'node:timers/promises';
 
+import type { Role } from '../bus';
 import type { DepthEstimator } from './depth-worker';
 import { anchorsInView, depthFromDisparity, fitDisparity, scaleIntrinsics } from './geometry';
 import {
@@ -22,11 +23,20 @@ export type LiveConfig = {
   gridHeight: number;
 };
 
-export type SocketData =
+export type PeerData =
   | { role: 'phone'; session: string | null }
-  | { role: 'viewer'; session: string | null; follow: boolean; resync: boolean };
+  /** `wanted`: the session a viewer asked for, which it gets once the phone starts it if it hasn't yet. */
+  | { role: 'viewer'; session: string | null; wanted: string | null; follow: boolean };
 
-type Socket = ServerWebSocket<SocketData>;
+/** A phone or browser connected to the hub, by the id of its socket (see bus.ts). */
+export type Peer = { id: string; data: PeerData };
+
+/** How the hub reaches its peers: through the app's socket relays (Redis), or directly in tests. */
+export interface LiveTransport {
+  /** Sends one message to several peers. */
+  send(peers: Peer[], message: string | Uint8Array): void;
+  close(peer: Peer, code: number, reason: string): void;
+}
 
 export type SessionStats = {
   phoneConnected: boolean;
@@ -42,6 +52,15 @@ export type SessionStats = {
   fuseMs: number | null;
 };
 
+/** A session as /api/live lists it. */
+export type LiveSession = SessionStats & {
+  id: string;
+  mode: CaptureMode;
+  device: string | null;
+  startedAt: string;
+  voxelSize: number;
+};
+
 type Keyframe = { header: KeyframeHeader; payload: Uint8Array };
 
 type Session = {
@@ -50,7 +69,7 @@ type Session = {
   device: string | null;
   startedAt: string;
   cloud: VoxelCloud;
-  phone: Socket | null;
+  phone: Peer | null;
   /** The newest keyframe waiting to be fused; when the server falls behind, older ones are dropped. */
   pending: Keyframe | null;
   fusing: boolean;
@@ -62,8 +81,8 @@ type Session = {
 
 /** Sessions kept in memory (a viewer can still open a finished one). Older ones are dropped. */
 const KEEP_SESSIONS = 4;
-/** Points per viewer message, so one snapshot of a big cloud doesn't become one huge message. */
-const POINTS_PER_MESSAGE = 200_000;
+/** Points per viewer message (20 bytes each), so no message passes 1 MB on its way through Redis. */
+const POINTS_PER_MESSAGE = 50_000;
 
 /**
  * The live reconstruction: phones stream keyframes in, each is turned into metric depth (LiDAR,
@@ -73,68 +92,64 @@ const POINTS_PER_MESSAGE = 200_000;
 export class LiveHub {
   private sessions = new Map<string, Session>();
   private latest: Session | null = null;
-  private viewers = new Set<Socket>();
+  private peers = new Map<string, Peer>();
+  private viewers = new Set<Peer>();
   private estimator: Promise<DepthEstimator> | null = null;
 
   constructor(
     private config: LiveConfig,
+    private transport: LiveTransport,
     private startEstimator: () => Promise<DepthEstimator>,
   ) {}
 
-  /** Upgrades `/live/ingest` (phones) and `/live/socket` (viewers); false for anything else. */
-  upgrade(request: Request, server: Server<SocketData>) {
-    const url = new URL(request.url);
-    if (url.pathname === '/live/ingest') {
-      return server.upgrade(request, { data: { role: 'phone', session: null } });
+  /** A phone or viewer connected. A viewer asks for one session, or follows the newest without one. */
+  open(id: string, role: Role, wanted: string | null = null) {
+    this.close(id);
+    const peer: Peer = {
+      id,
+      data: role === 'phone' ? { role, session: null } : { role, session: wanted, wanted, follow: !wanted },
+    };
+    this.peers.set(id, peer);
+    if (peer.data.role === 'viewer') {
+      this.viewers.add(peer);
+      this.sendSession(peer, peer.data.follow ? this.latest : (this.sessions.get(wanted ?? '') ?? null));
     }
-    if (url.pathname === '/live/socket') {
-      const session = url.searchParams.get('session');
-      return server.upgrade(request, {
-        data: { role: 'viewer', session, follow: !session, resync: false },
-      });
-    }
-    return false;
   }
 
-  readonly websocket = {
-    // Keyframes are ~100 KB; LiDAR adds ~250 KB of depth.
-    maxPayloadLength: 8 * 1024 ** 2,
-    backpressureLimit: 64 * 1024 ** 2,
-    open: (ws: Socket) => {
-      if (ws.data.role === 'viewer') {
-        this.viewers.add(ws);
-        this.sendSession(ws, ws.data.follow ? this.latest : (this.sessions.get(ws.data.session ?? '') ?? null));
-      }
-    },
-    message: (ws: Socket, message: string | Uint8Array) => {
-      if (ws.data.role !== 'phone' || typeof message === 'string') return;
-      try {
-        this.onPhoneMessage(ws, message);
-      } catch (error) {
-        if (!(error instanceof ProtocolError)) throw error;
-        ws.send(JSON.stringify({ type: 'error', message: error.message }));
-      }
-    },
-    drain: (ws: Socket) => {
-      // A viewer that missed point updates under backpressure gets the whole cloud again.
-      if (ws.data.role === 'viewer' && ws.data.resync) {
-        ws.data.resync = false;
-        this.sendSession(ws, this.sessions.get(ws.data.session ?? '') ?? null);
-      }
-    },
-    close: (ws: Socket) => {
-      this.viewers.delete(ws);
-      if (ws.data.role !== 'phone') return;
-      const session = this.sessions.get(ws.data.session ?? '');
-      if (session?.phone === ws) {
-        session.phone = null;
-        session.stats.phoneConnected = false;
-        this.broadcastStats(session);
-      }
-    },
-  };
+  /** A message from a phone. Anything malformed is reported back to it. */
+  message(id: string, message: Uint8Array) {
+    const peer = this.peers.get(id);
+    if (peer?.data.role !== 'phone') return;
+    try {
+      this.onPhoneMessage(peer, message);
+    } catch (error) {
+      if (!(error instanceof ProtocolError)) throw error;
+      this.send(peer, JSON.stringify({ type: 'error', message: error.message }));
+    }
+  }
 
-  list() {
+  /** Sends a viewer that missed messages (it fell behind) everything again. */
+  resync(id: string) {
+    const peer = this.peers.get(id);
+    if (peer?.data.role === 'viewer') this.sendSession(peer, this.sessions.get(peer.data.session ?? '') ?? null);
+  }
+
+  /** A phone or viewer disconnected. */
+  close(id: string) {
+    const peer = this.peers.get(id);
+    if (!peer) return;
+    this.peers.delete(id);
+    this.viewers.delete(peer);
+    if (peer.data.role !== 'phone') return;
+    const session = this.sessions.get(peer.data.session ?? '');
+    if (session?.phone === peer) {
+      session.phone = null;
+      session.stats.phoneConnected = false;
+      this.broadcastStats(session);
+    }
+  }
+
+  list(): LiveSession[] {
     return [...this.sessions.values()].reverse().map((s) => ({
       id: s.id,
       mode: s.mode,
@@ -149,20 +164,21 @@ export class LiveHub {
     return this.sessions.get(id)?.cloud ?? null;
   }
 
-  close() {
+  /** Stops the depth worker. */
+  stop() {
     this.estimator?.then((e) => e.close()).catch(() => {});
   }
 
   /** Resolves once every queued keyframe has been fused (used by tests). */
   async idle() {
-    while ([...this.sessions.values()].some((s) => s.fusing || s.pending)) await Bun.sleep(5);
+    while ([...this.sessions.values()].some((s) => s.fusing || s.pending)) await sleep(5);
   }
 
-  private onPhoneMessage(ws: Socket, message: Uint8Array) {
+  private onPhoneMessage(peer: Peer, message: Uint8Array) {
     const { header, payload } = parseIngest(message);
-    if (header.type === 'hello') return this.hello(ws, header);
-    const session = this.sessions.get(ws.data.session ?? '');
-    if (!session || session.phone !== ws) throw new ProtocolError('send hello first');
+    if (header.type === 'hello') return this.hello(peer, header);
+    const session = this.sessions.get(peer.data.session ?? '');
+    if (!session || session.phone !== peer) throw new ProtocolError('send hello first');
     if (header.type === 'pose') {
       session.lastPose = header.pose;
       this.broadcast(session, JSON.stringify({ type: 'pose', t: header.t, pose: header.pose }));
@@ -174,7 +190,7 @@ export class LiveHub {
     this.fuseQueued(session);
   }
 
-  private hello(ws: Socket, hello: HelloHeader) {
+  private hello(peer: Peer, hello: HelloHeader) {
     // The same id again is the phone reconnecting mid-recording: carry on with its cloud.
     let session = this.sessions.get(hello.session);
     if (!session) {
@@ -197,15 +213,14 @@ export class LiveHub {
       for (const old of [...this.sessions.keys()].slice(0, -KEEP_SESSIONS)) this.sessions.delete(old);
       console.log(`Live session ${session.id} (${session.mode}${session.device ? `, ${session.device}` : ''})`);
     }
-    if (session.phone && session.phone !== ws) session.phone.close(4000, 'replaced by a newer connection');
-    session.phone = ws;
+    if (session.phone && session.phone !== peer) this.transport.close(session.phone, 4000, 'replaced by a newer connection');
+    session.phone = peer;
     session.stats.phoneConnected = true;
-    ws.data.session = session.id;
-    if (this.latest !== session) {
-      this.latest = session;
-      for (const viewer of this.viewers) {
-        if (viewer.data.role === 'viewer' && viewer.data.follow) this.sendSession(viewer, session);
-      }
+    peer.data.session = session.id;
+    this.latest = session;
+    for (const viewer of this.viewers) {
+      if (viewer.data.role !== 'viewer' || viewer.data.session === session.id) continue;
+      if (viewer.data.follow || viewer.data.wanted === session.id) this.sendSession(viewer, session);
     }
     this.broadcastStats(session);
   }
@@ -303,10 +318,11 @@ export class LiveHub {
   }
 
   /** Points a viewer at a session (or at none yet) and sends everything it has so far. */
-  private sendSession(ws: Socket, session: Session | null) {
-    if (ws.data.role !== 'viewer') return;
-    ws.data.session = session?.id ?? null;
-    ws.send(
+  private sendSession(peer: Peer, session: Session | null) {
+    if (peer.data.role !== 'viewer') return;
+    peer.data.session = session?.id ?? null;
+    this.send(
+      peer,
       JSON.stringify(
         session
           ? { type: 'session', id: session.id, mode: session.mode, device: session.device, startedAt: session.startedAt, voxelSize: session.cloud.voxelSize, stats: session.stats }
@@ -317,26 +333,25 @@ export class LiveHub {
     const { cloud } = session;
     for (let start = 0; start < cloud.count; start += POINTS_PER_MESSAGE) {
       const end = Math.min(start + POINTS_PER_MESSAGE, cloud.count);
-      this.sendTo(ws, encodePoints(cloud, Array.from({ length: end - start }, (_, i) => start + i)));
+      this.send(peer, encodePoints(cloud, Array.from({ length: end - start }, (_, i) => start + i)));
     }
-    if (session.lastKeyframe) this.sendTo(ws, session.lastKeyframe);
-    if (session.lastPose) ws.send(JSON.stringify({ type: 'pose', pose: session.lastPose }));
+    if (session.lastKeyframe) this.send(peer, session.lastKeyframe);
+    if (session.lastPose) this.send(peer, JSON.stringify({ type: 'pose', pose: session.lastPose }));
   }
 
-  private sendTo(ws: Socket, message: string | Uint8Array) {
-    // 0 means the message was dropped because the viewer is too far behind.
-    if (ws.send(message) === 0 && ws.data.role === 'viewer') ws.data.resync = true;
+  private send(peer: Peer, message: string | Uint8Array) {
+    this.transport.send([peer], message);
   }
 
   private broadcast(session: Session, message: string | Uint8Array) {
-    for (const viewer of this.viewers) {
-      if (viewer.data.session === session.id) this.sendTo(viewer, message);
-    }
+    const watching = [...this.viewers].filter((viewer) => viewer.data.session === session.id);
+    if (watching.length) this.transport.send(watching, message);
   }
 
   private broadcastStats(session: Session) {
     const message = JSON.stringify({ type: 'stats', stats: session.stats });
-    this.broadcast(session, message);
-    session.phone?.send(message);
+    const to = [...this.viewers].filter((viewer) => viewer.data.session === session.id);
+    if (session.phone) to.push(session.phone);
+    if (to.length) this.transport.send(to, message);
   }
 }

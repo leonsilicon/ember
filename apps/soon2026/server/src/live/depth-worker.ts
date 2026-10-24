@@ -1,8 +1,9 @@
 /**
  * Client for server/depth-worker (a Swift program running Depth Anything V2 through Core ML).
- * It decodes the phone's JPEGs too, since Bun has no image decoder. See the protocol at the
+ * It decodes the phone's JPEGs too, since Node has no image decoder. See the protocol at the
  * top of server/depth-worker/Sources/depth_worker/main.swift.
  */
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 export type DepthResult = {
   width: number;
@@ -34,21 +35,26 @@ export class DepthWorker implements DepthEstimator {
   private resolveReady!: () => void;
   private rejectReady!: (error: Error) => void;
 
-  private constructor(private proc: Bun.Subprocess<'pipe', 'pipe', 'pipe'>) {
+  private constructor(private proc: ChildProcessWithoutNullStreams) {
     this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
     });
     this.read();
-    proc.exited.then(async (code) => {
-      const stderr = (await new Response(proc.stderr).text().catch(() => '')).trim();
-      this.fail(new Error(`depth worker exited with code ${code}${stderr ? `: ${stderr.split('\n').slice(-3).join(' ')}` : ''}`));
+    let stderr = '';
+    proc.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+    // Writing to a worker that has died fails here; its exit explains why.
+    proc.stdin.on('error', () => {});
+    proc.on('error', (error) => this.fail(error));
+    proc.on('close', (code, signal) => {
+      const tail = stderr.trim().split('\n').slice(-3).join(' ');
+      this.fail(new Error(`depth worker exited with ${code !== null ? `code ${code}` : signal}${tail ? `: ${tail}` : ''}`));
     });
   }
 
   /** Starts the worker and resolves once its model is loaded (the first load takes a few seconds). */
   static async start(bin: string, model: string) {
-    const worker = new DepthWorker(Bun.spawn([bin, model], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' }));
+    const worker = new DepthWorker(spawn(bin, [model], { stdio: 'pipe' }));
     await worker.ready;
     return worker;
   }
@@ -64,7 +70,6 @@ export class DepthWorker implements DepthEstimator {
     const result = new Promise<DepthResult>((resolve, reject) => this.pending.set(id, { resolve, reject }));
     this.proc.stdin.write(new Uint8Array(header.buffer));
     this.proc.stdin.write(jpeg);
-    this.proc.stdin.flush();
     return result;
   }
 

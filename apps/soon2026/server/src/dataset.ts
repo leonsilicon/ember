@@ -1,4 +1,5 @@
-import { mkdir, readdir } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { access, mkdir, open, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export type CaptureMode = 'lidar' | 'features' | 'unknown';
@@ -15,16 +16,19 @@ export type ExtractedCapture = {
 
 export class DatasetError extends Error {}
 
-async function run(cmd: string[]) {
-  const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'pipe' });
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (code !== 0) throw new DatasetError(`${cmd[0]} failed: ${stderr.trim() || stdout.trim()}`);
-  return stdout;
+function run([command, ...args]: string[]) {
+  return new Promise<string>((resolve, reject) => {
+    // A capture's file list is small, but leave room for long ones.
+    execFile(command, args, { maxBuffer: 64 * 1024 ** 2 }, (error, stdout, stderr) => {
+      if (error) reject(new DatasetError(`${command} failed: ${stderr.trim() || stdout.trim() || error.message}`));
+      else resolve(stdout);
+    });
+  });
 }
+
+const exists = (file: string) => access(file).then(() => true, () => false);
+
+const readJson = async (file: string) => JSON.parse(await readFile(file, 'utf8'));
 
 /** True for archive paths that would land outside the extraction directory. */
 export function isUnsafeEntry(entry: string) {
@@ -55,20 +59,20 @@ export async function extractCapture(zipPath: string, destDir: string): Promise<
   const datasetDir = await findTransforms(destDir);
   if (!datasetDir) throw new DatasetError('no transforms.json in the upload');
 
-  const transforms = await Bun.file(path.join(datasetDir, 'transforms.json')).json();
+  const transforms = await readJson(path.join(datasetDir, 'transforms.json'));
   const frames: (Frame & { file_path?: unknown })[] = Array.isArray(transforms.frames) ? transforms.frames : [];
   if (frames.length === 0) throw new DatasetError('transforms.json has no frames');
   for (const frame of frames) {
     if (typeof frame.file_path !== 'string' || isUnsafeEntry(frame.file_path)) {
       throw new DatasetError(`bad frame path: ${String(frame.file_path)}`);
     }
-    if (!(await Bun.file(path.join(datasetDir, frame.file_path)).exists())) {
+    if (!(await exists(path.join(datasetDir, frame.file_path)))) {
       throw new DatasetError(`missing image ${frame.file_path}`);
     }
   }
 
-  const infoFile = Bun.file(path.join(datasetDir, 'capture.json'));
-  const info = (await infoFile.exists()) ? await infoFile.json() : {};
+  const infoFile = path.join(datasetDir, 'capture.json');
+  const info = (await exists(infoFile)) ? await readJson(infoFile) : {};
   const mode: CaptureMode = info.mode === 'lidar' || info.mode === 'features' ? info.mode : 'unknown';
   const plyFile = typeof transforms.ply_file_path === 'string' && !isUnsafeEntry(transforms.ply_file_path)
     ? transforms.ply_file_path
@@ -90,7 +94,7 @@ const PLY_TYPE_SIZE: Record<string, number> = {
 
 /** x/y/z (float32) of every vertex in a binary little-endian PLY, or null for anything else. */
 export async function readPlyPositions(file: string): Promise<Float64Array | null> {
-  const bytes = new Uint8Array(await Bun.file(file).arrayBuffer());
+  const bytes = new Uint8Array(await readFile(file));
   const headerEnd = Buffer.from(bytes).indexOf('end_header\n');
   if (headerEnd < 0) return null;
   const header = new TextDecoder().decode(bytes.subarray(0, headerEnd)).split('\n');
@@ -129,7 +133,7 @@ type Frame = { transform_matrix: number[][]; fl_x?: number; fl_y?: number; cx?: 
 export async function focusPoint(datasetDir: string, frame: Frame, plyFile: string | undefined) {
   if (!plyFile) return null;
   const ply = path.join(datasetDir, plyFile);
-  if (!(await Bun.file(ply).exists())) return null;
+  if (!(await exists(ply))) return null;
   const points = await readPlyPositions(ply);
   const m = frame.transform_matrix;
   const { fl_x: fx, fl_y: fy, cx, cy, w, h } = frame;
@@ -155,7 +159,9 @@ export async function focusPoint(datasetDir: string, frame: Frame, plyFile: stri
 
 /** Reads the vertex count from a PLY header, or null if the file isn't a PLY. */
 export async function plyVertexCount(file: string): Promise<number | null> {
-  const head = await Bun.file(file).slice(0, 4096).text();
+  const handle = await open(file);
+  const { buffer, bytesRead } = await handle.read(Buffer.alloc(4096), 0, 4096, 0).finally(() => handle.close());
+  const head = buffer.toString('latin1', 0, bytesRead);
   if (!head.startsWith('ply')) return null;
   const match = /element vertex (\d+)/.exec(head);
   return match ? Number(match[1]) : null;

@@ -1,0 +1,37 @@
+{
+  "name": "@soon2026/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#*": "./src/*"
+  },
+  "scripts": {
+    "dev": "vercel dev --listen 8899",
+    "build": "next build",
+    "agent": "bun src/agent/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@sparkjsdev/spark": "2.3.1",
+    "@vercel/blob": "^2.8.2",
+    "@vercel/functions": "^3.10.3",
+    "ioredis": "^5.8.2",
+    "next": "16.4.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "three": "0.180.0",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "@types/node": "^24.0.0",
+    "@types/react": "~19.3.0",
+    "@types/react-dom": "~19.3.0",
+    "@types/three": "0.180.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "~6.0.3",
+    "vercel": "^65.2.0"
+  }
+}

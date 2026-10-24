@@ -47,6 +47,10 @@ example
 /server/data
 /server/bin
 /server/models
+# its Next.js build output and Vercel project link
+/server/.next
+/server/next-env.d.ts
+/server/.vercel
 
 # Burn/CubeCL GPU autotune cache (written by the splat trainer)
 target/

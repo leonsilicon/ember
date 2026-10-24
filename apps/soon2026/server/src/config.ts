@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { accessSync, constants, existsSync } from 'node:fs';
 import path from 'node:path';
 
 import type { LiveConfig } from './live/hub';
@@ -29,26 +29,33 @@ export type ServerConfig = {
    */
   depthWorkerBin: string | null;
   depthModel: string | null;
-  /**
-   * Models the app downloads, served at /models/: packages/owlvit's build (the leaf detector and
-   * its manifest) unless MODELS_DIR says otherwise.
-   */
-  modelsDir: string;
   live: LiveConfig;
 };
 
-const SERVER_DIR = path.resolve(import.meta.dir, '..');
+const SERVER_DIR = path.resolve(import.meta.dirname, '..');
 
 function int(value: string | undefined, fallback: number) {
   const n = Number.parseInt(value ?? '', 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-export function findBrush(env: Record<string, string | undefined>): string | null {
+/** The first executable called `name` on the PATH, like `which`. */
+function which(name: string, env: Record<string, string | undefined>) {
+  for (const dir of (env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    const file = path.join(dir, name);
+    try {
+      accessSync(file, constants.X_OK);
+      return file;
+    } catch {}
+  }
+  return null;
+}
+
+export function findBrush(env: Record<string, string | undefined>, serverDir = SERVER_DIR): string | null {
   if (env.BRUSH_BIN) return env.BRUSH_BIN;
-  const local = path.join(SERVER_DIR, 'bin', 'brush_app');
+  const local = path.join(serverDir, 'bin', 'brush_app');
   if (existsSync(local)) return local;
-  return Bun.which('brush_app');
+  return which('brush_app', env);
 }
 
 function installed(envPath: string | undefined, local: string) {
@@ -56,13 +63,17 @@ function installed(envPath: string | undefined, local: string) {
   return existsSync(local) ? local : null;
 }
 
-export function configFromEnv(env: Record<string, string | undefined> = process.env): ServerConfig {
+/** `serverDir` is this server's directory, where `data/`, `bin/` and `models/` are. */
+export function configFromEnv(
+  env: Record<string, string | undefined> = process.env,
+  serverDir = SERVER_DIR,
+): ServerConfig {
   const steps = int(env.SPLAT_STEPS, 5000);
   return {
     port: int(env.SPLAT_PORT, 8899),
     host: env.SPLAT_HOST ?? '0.0.0.0',
-    dataDir: path.resolve(env.SPLAT_DATA_DIR ?? path.join(SERVER_DIR, 'data')),
-    brushBin: findBrush(env),
+    dataDir: path.resolve(env.SPLAT_DATA_DIR ?? path.join(serverDir, 'data')),
+    brushBin: findBrush(env, serverDir),
     steps,
     // A snapshot every ~10% of training, so the viewer fills in while it trains.
     exportEvery: int(env.SPLAT_EXPORT_EVERY, Math.max(100, Math.round(steps / 10))),
@@ -70,9 +81,8 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     shDegree: int(env.SPLAT_SH_DEGREE, 1),
     growthFraction: Number(env.SPLAT_GROWTH) || 0.5,
     maxSplats: int(env.SPLAT_MAX_SPLATS, 600_000),
-    depthWorkerBin: installed(env.DEPTH_WORKER_BIN, path.join(SERVER_DIR, 'bin', 'depth_worker')),
-    depthModel: installed(env.DEPTH_MODEL, path.join(SERVER_DIR, 'models', 'DepthAnythingV2SmallF16.mlmodelc')),
-    modelsDir: path.resolve(env.MODELS_DIR ?? path.join(SERVER_DIR, '..', '..', '..', 'packages', 'owlvit', 'dist')),
+    depthWorkerBin: installed(env.DEPTH_WORKER_BIN, path.join(serverDir, 'bin', 'depth_worker')),
+    depthModel: installed(env.DEPTH_MODEL, path.join(serverDir, 'models', 'DepthAnythingV2SmallF16.mlmodelc')),
     live: {
       voxelSize: Number(env.LIVE_VOXEL_SIZE) || 0.02,
       maxDepth: Number(env.LIVE_MAX_DEPTH) || 4,
