@@ -90,9 +90,11 @@ axis convention — i.e. poses, intrinsics and depth unprojection line up.
 To compare against the production reconstruction, the app can train a capture with the reference
 pipeline and show the result. It has two halves, so a phone only ever needs the public URL:
 
-- **The splat server** (`apps/next-app`): a Next.js app on Vercel (region `yul1`). It serves the pages and
-  API, relays the live 3D sockets, and keeps the capture jobs in Redis (from the Vercel Marketplace)
-  and the zips and splats in a private Vercel Blob store.
+- **The splat server** (`apps/next-app`): a Next.js app on Vercel, https://soon2026.vercel.app (project
+  `improvelabs/soon2026`, root directory `apps/next-app`, region `yul1`; every push to `main` deploys
+  it). It serves the pages and API, relays the live 3D sockets, and keeps the capture jobs in Upstash
+  Redis (`soon2026-redis`, Canada) and the zips and splats in a private Vercel Blob store
+  (`soon2026-blob`, Montréal).
 - **The Mac agent** (`apps/next-app/src/agent`, `bun run agent` there, or `vpx _dev`): a Bun process with no
   server of its own. It trains queued captures with Brush (one at a time) and runs the live
   reconstruction, talking to the same Redis and Blob store. Nothing trains while it's offline; the
@@ -101,13 +103,25 @@ pipeline and show the result. It has two halves, so a phone only ever needs the 
 ```bash
 cd apps/next-app
 ./scripts/install-brush.sh            # Brush v0.3.0 into bin/ (sha256-checked)
-vercel link && vercel env pull .env.local   # once: the agent's Redis and Blob credentials
+bunx vercel login                     # in a real terminal; the agent's Blob access refreshes through it
+bunx vercel link --project soon2026 --scope improvelabs && bunx vercel env pull .env.local
 bun run agent                         # or `vpx _dev` from anywhere
 ```
 
-Everything needs the access token, `SPLAT_TOKEN` (a Vercel environment variable): the app has it
-built in from `EXPO_PUBLIC_SPLAT_TOKEN`, with the server's address in `EXPO_PUBLIC_SPLAT_SERVER_URL`
-(both in `apps/expo-app/.env.local` for local builds, and EAS environment variables for EAS builds).
+The agent reads `REDIS_URL`, `BLOB_STORE_ID` and `VERCEL_OIDC_TOKEN` from the Development
+environment's `.env.local`; the Blob SDK renews the OIDC token through the Vercel CLI's login, so no
+long-lived Blob token is needed. Only one agent runs at a time (a second refuses to start while the
+first's heartbeat is fresh).
+
+The free plans set the limits: Upstash allows 500,000 Redis commands a month (an idle agent uses about
+130,000; a live recording about 150,000 an hour), and Blob 1 GB stored and 2,000 uploads a month (a
+capture's zip is deleted once it's trained; its final splat stays).
+
+Everything needs the access token, `SPLAT_TOKEN` (a Vercel environment variable, a secret in
+Production and Preview, so it can't be pulled back; `apps/next-app/.env` keeps a copy for scripts
+like `live-replay.ts`): the app has it built in from `EXPO_PUBLIC_SPLAT_TOKEN`, with the server's
+address in `EXPO_PUBLIC_SPLAT_SERVER_URL` (both in `apps/expo-app/.env.local` for local builds, and
+EAS environment variables for EAS builds).
 A browser signs in once by opening any page with `?token=<SPLAT_TOKEN>` (or entering it on the page);
 it keeps it in a cookie. API clients send `Authorization: Bearer <SPLAT_TOKEN>`.
 

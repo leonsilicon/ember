@@ -173,11 +173,13 @@ export class Trainer {
     while (!done) {
       await Promise.race([exit, sleep(1000)]);
       if (this.closed) break;
-      await this.publishSnapshot(job, done, save);
+      if (!done) await this.publishSnapshot(job, false, save);
     }
 
     const code = await exit;
     if (this.closed) return;
+    // Brush may have written its last snapshots while an upload was still going.
+    await this.publishSnapshot(job, true, save);
     const trainSeconds = Math.round((performance.now() - started) / 100) / 10;
     if (code === 0 && job.step > 0) {
       await save({ state: 'done', trainSeconds });

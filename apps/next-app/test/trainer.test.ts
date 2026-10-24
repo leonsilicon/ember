@@ -16,6 +16,7 @@ import { testPrefix } from './redis';
 
 const FAKE_BRUSH = path.join(import.meta.dir, 'fixtures/fake-brush.sh');
 const FAILING_BRUSH = path.join(import.meta.dir, 'fixtures/failing-brush.sh');
+const SLOW_BRUSH = path.join(import.meta.dir, 'fixtures/slow-brush.sh');
 
 const redis: Redis = connect();
 let root: string;
@@ -35,13 +36,13 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-function trainer(brushBin: string | null) {
+function trainer(brushBin: string | null, storage = directoryStorage(blobDir)) {
   const config: ServerConfig = {
     port: 0, host: '127.0.0.1', dataDir: path.join(root, 'data'), brushBin, steps: 300, exportEvery: 100,
     maxResolution: 960, shDegree: 1, growthFraction: 0.5, maxSplats: 600_000, depthWorkerBin: null, depthModel: null,
     live: { voxelSize: 0.02, maxDepth: 4, gridWidth: 256, gridHeight: 192 },
   };
-  return new Trainer(store, directoryStorage(blobDir), config);
+  return new Trainer(store, storage, config);
 }
 
 /**
@@ -81,6 +82,22 @@ describe('training a queued capture', () => {
     expect(await readdir(t.runDir('cap-1'))).toContain('splat_300.ply');
     expect((await readdir(t.runDir('cap-1'))).filter((f) => f.endsWith('.ply'))).toEqual(['splat_300.ply']);
   });
+
+  test('publishes the final snapshot even when Brush exits during an upload', async () => {
+    await queueCapture('cap-1', [{ file_path: 'images/frame_00000.jpg' }]);
+    // Uploads as slow as a 10 MB snapshot's to Blob: Brush finishes while the first is still going.
+    const storage = directoryStorage(blobDir);
+    const slow = { ...storage, upload: async (...args: Parameters<typeof storage.upload>) => {
+      if (args[0].endsWith('.ply')) await new Promise((resolve) => setTimeout(resolve, 2500));
+      return storage.upload(...args);
+    } };
+    const t = trainer(SLOW_BRUSH, slow);
+    t.enqueue('cap-1');
+    await t.whenIdle();
+    expect(await store.get('cap-1')).toMatchObject({ state: 'done', step: 300, gaussians: 3000, snapshots: [300] });
+    expect(await stored(blobPath.snapshot('cap-1', 100))).toBeNull();
+    expect((await readdir(t.runDir('cap-1'))).filter((f) => f.endsWith('.ply'))).toEqual(['splat_300.ply']);
+  }, 20_000);
 
   test('passes the growth fraction and splat cap to Brush', async () => {
     await queueCapture('cap-1', [{ file_path: 'images/frame_00000.jpg' }]);
