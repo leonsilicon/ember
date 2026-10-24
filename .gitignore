@@ -41,3 +41,6 @@ __pycache__/
 *-detections.jpg
 *-detections.png
 .vercel
+
+# Agent scratch: task reports, screenshots, probes
+.agents/
