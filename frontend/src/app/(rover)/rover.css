@@ -72,3 +72,13 @@ body {
 .ops .bp6-tab { font-family: var(--ops-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
 .ops .bp6-tab-indicator { background-color: var(--ops-cyan); }
 .ops input.bp6-input { background: #10161a; box-shadow: inset 0 0 0 1px var(--ops-border); }
+
+/* keep MapLibre's bottom controls clear of the timeline while a run is shown */
+.ops .maplibregl-ctrl-bottom-left,
+.ops .maplibregl-ctrl-bottom-right {
+  transition: bottom 0.3s ease;
+}
+.ops.sim-on .maplibregl-ctrl-bottom-left,
+.ops.sim-on .maplibregl-ctrl-bottom-right {
+  bottom: 64px;
+}

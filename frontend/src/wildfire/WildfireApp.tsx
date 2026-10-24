@@ -363,9 +363,34 @@ export default function WildfireApp() {
     setPlaying(true)
     setTab('sim')
     sim.simulate(selected, activeWeather, { cleared: new Set(), breaks: [] })
-    const map = mapRef.current
-    if (map) map.easeTo({ zoom: Math.min(map.getZoom(), 14.2), pitch: 45, duration: 2200, padding: { top: 0, bottom: 0, left: 400, right: 0 } })
   }, [selected, activeWeather, sim])
+
+  // frame the 12 h burned extent once the untouched run is solved
+  const framedRef = useRef<typeof sim.baseline>(null)
+  useEffect(() => {
+    const map = mapRef.current, grid = data?.grid, base = sim.baseline
+    if (!map || !grid || !base || framedRef.current === base) return
+    framedRef.current = base
+    const { cells } = base
+    if (!cells.length) return
+    let c0 = Infinity, c1 = -Infinity, r0 = Infinity, r1 = -Infinity
+    for (let i = 0; i < cells.length; i++) {
+      const col = cells[i] % grid.width, row = (cells[i] - col) / grid.width
+      if (col < c0) c0 = col
+      if (col > c1) c1 = col
+      if (row < r0) r0 = row
+      if (row > r1) r1 = row
+    }
+    const [w, n] = gridToLngLat(grid, c0 - 1, r0 - 1)
+    const [e, s] = gridToLngLat(grid, c1 + 2, r1 + 2)
+    map.fitBounds(
+      [
+        [w, s],
+        [e, n],
+      ],
+      { padding: { top: 80, bottom: 120, left: 440, right: 60 }, pitch: 45, bearing: map.getBearing(), duration: 2400, maxZoom: 16 },
+    )
+  }, [sim.baseline, data?.grid])
 
   const exitSim = useCallback(() => {
     setPlaying(false)
@@ -430,8 +455,8 @@ export default function WildfireApp() {
   const burnedHaNow = sim.run ? (lowerBound(sim.run.times, t) * sim.run.result.burnedHa) / Math.max(1, sim.run.cells.length) : 0
 
   return (
-    <div className="ops bp6-dark relative h-full w-full overflow-hidden">
-      <div ref={containerRef} className="absolute inset-0" />
+    <div className={`ops bp6-dark relative h-full w-full overflow-hidden ${sim.run ? 'sim-on' : ''}`}>
+      <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
       <canvas ref={smokeCanvasRef} className="pointer-events-none absolute inset-0" />
       {!ready && (
         <div className="grid-bg absolute inset-0 grid place-items-center" style={{ background: 'var(--ops-bg)' }}>
@@ -454,7 +479,7 @@ export default function WildfireApp() {
           <div className="panel flex items-center gap-2 px-3 py-1.5">
             <span className="h-2 w-2 blink" style={{ background: ffmc.color, boxShadow: `0 0 8px ${ffmc.color}` }} />
             <span className="label">FFMC</span>
-            <span className="mono text-sm">{dryness.data?.ffmc ?? '–'}</span>
+            <span className="mono text-sm">{dryness.data?.ffmc != null ? dryness.data.ffmc.toFixed(1) : '–'}</span>
             <Tag minimal style={{ color: ffmc.color }} className="mono">{ffmc.label}</Tag>
             <span className="label hair border-l pl-2">Wind</span>
             <span className="mono text-sm">{Math.round(wind.speedKmh)} km/h · {Math.round(wind.fromDeg)}°</span>

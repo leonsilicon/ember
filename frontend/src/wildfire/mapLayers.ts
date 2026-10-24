@@ -64,7 +64,7 @@ export function buildingLayers(multiplier: number): LayerSpecification[] {
       'source-layer': 'buildings',
       paint: {
         'fill-color': ['case', IGNITED, '#1a0a05', CLEARED, '#3dcc91', riskColor(multiplier)],
-        'fill-opacity': ['case', IGNITED, 0.95, ['interpolate', ['linear'], ['zoom'], 11, 0.55, 15, 0.9]],
+        'fill-opacity': ['interpolate', ['linear'], ['zoom'], 11, ['case', IGNITED, 0.95, 0.55], 15, ['case', IGNITED, 0.95, 0.9]],
       },
     },
     {

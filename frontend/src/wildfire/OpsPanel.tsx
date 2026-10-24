@@ -149,7 +149,7 @@ export function HomeTab({ b, dryness, drynessFactor, weights, neighbourCap, clea
             </div>
           ))}
           <div className="flex justify-between border-t pt-2 text-xs hair">
-            <span className="flex items-center gap-1"><Wind size={12} />Today's dryness (FFMC {dryness?.ffmc ?? '–'})</span>
+            <span className="flex items-center gap-1"><Wind size={12} />Today's dryness (FFMC {dryness?.ffmc != null ? dryness.ffmc.toFixed(1) : '–'})</span>
             <span className="mono" style={{ color: 'var(--ops-muted)' }}>× {drynessMultiplier(drynessFactor).toFixed(2)}</span>
           </div>
           <div className="label pt-1">risk = 100 × exposure {exposure.toFixed(2)} × dryness {drynessMultiplier(drynessFactor).toFixed(2)}</div>
