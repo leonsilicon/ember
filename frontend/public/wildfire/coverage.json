@@ -1,0 +1,59 @@
+{
+  "area_name": "Huntsville / Lake of Bays, Ontario",
+  "bbox": [
+    -79.35,
+    45.2,
+    -78.95,
+    45.45
+  ],
+  "coverage": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          -78.95,
+          45.2
+        ],
+        [
+          -78.95,
+          45.45
+        ],
+        [
+          -79.35,
+          45.45
+        ],
+        [
+          -79.35,
+          45.2
+        ],
+        [
+          -78.95,
+          45.2
+        ]
+      ]
+    ]
+  },
+  "screening_distance_m": 30,
+  "source": {
+    "name": "Ontario MNRF \u2014 Potential Hazardous Forest Types for Wildland Fire",
+    "short": "Ontario MNRF, 2025-03-14",
+    "date": "2025-03-14",
+    "resolution_m": 30,
+    "url": "https://geohub.lio.gov.on.ca/documents/f52f092ee6744e0687ead57f78b5d88a/about",
+    "licence": "Open Government Licence \u2013 Ontario",
+    "codes_reference": "https://cwfis.cfs.nrcan.gc.ca/downloads/fuels/development/Canadian_Forest_FBP_Fuel_Types/FBPfueltypes_sample_colour_classification.xlsx"
+  },
+  "buildings_source": "Overture Maps buildings (OSM + Microsoft ML + Google + Esri), ODbL/CDLA",
+  "stats": {
+    "total": 16013,
+    "hazard_overlap": 3058,
+    "hazard_within_30m": 7732,
+    "needs_evaluation": 1220,
+    "incomplete": 23
+  },
+  "hazard_features": 221395,
+  "tiles": {
+    "buildings": "buildings.pmtiles",
+    "hazard": "hazard.pmtiles"
+  }
+}
