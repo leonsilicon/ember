@@ -27,12 +27,6 @@ jobs:
       EAS_CLI: eas-cli@24.12.1
       # Without it, eas-cli uses the runner Mac's own `eas login`.
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-      # For packages/dev/testflight-group.ts, which gives each build to the external group below. Without them the
-      # build only reaches internal testers (members of the App Store Connect team).
-      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
-      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
-      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
-      TESTFLIGHT_GROUP: Friends
     steps:
       # `eas build --local` copies the repo, installs it and archives the app in $TMPDIR: about 10 GB.
       - name: Check free disk space
@@ -97,16 +91,16 @@ jobs:
           build_number=$(unzip -p "$RUNNER_TEMP/soon2026.ipa" 'Payload/*.app/Info.plist' | plutil -extract CFBundleVersion raw -o - -)
           echo "build-number=$build_number" >> "$GITHUB_OUTPUT"
 
+      # Internal testers only, which needs no Beta App Review: the internal "SOON" group distributes every build
+      # automatically once App Store Connect has processed it (5–15 minutes after the upload).
       - name: Upload to TestFlight
         working-directory: apps/soon2026
-        run: bunx "$EAS_CLI" submit --platform ios --profile production --path "$RUNNER_TEMP/soon2026.ipa" --non-interactive --verbose
-
-      - name: Send to the ${{ env.TESTFLIGHT_GROUP }} group
-        if: env.ASC_API_KEY_P8 != ''
         env:
           WHAT_TO_TEST: ${{ github.event.head_commit.message }}
-        run: bun packages/dev/testflight-group.ts "${{ steps.ipa.outputs.build-number }}"
+        run: >-
+          bunx "$EAS_CLI" submit --platform ios --profile production --path "$RUNNER_TEMP/soon2026.ipa" --non-interactive --verbose
+          ${WHAT_TO_TEST:+--what-to-test "$WHAT_TO_TEST"}
 
       - name: Summary
         run: |
-          echo "Build ${{ steps.ipa.outputs.build-number }} of \`${GITHUB_SHA::7}\` is on TestFlight (dev.improve.soon2026)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Build ${{ steps.ipa.outputs.build-number }} of \`${GITHUB_SHA::7}\` is on TestFlight for the SOON group (dev.improve.soon2026)." >> "$GITHUB_STEP_SUMMARY"
