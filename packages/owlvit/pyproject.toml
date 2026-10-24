@@ -1,0 +1,18 @@
+[project]
+name = "owlvit-export"
+version = "0.0.0"
+description = "Exports OWL-ViT as the app's on-device leaf detector (an ExecuTorch .pte for react-native-executorch)."
+# coremltools 9.0, which executorch 1.4.1 pins, has no Python 3.14 build.
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  # Must match the ExecuTorch runtime react-native-executorch ships (1.4.1 in 0.10.x), or the
+  # phone refuses the .pte. Check node_modules/react-native-executorch/third-party/include/
+  # executorch/runtime/core/version.h after upgrading react-native-executorch.
+  "executorch==1.4.1",
+  "torch==2.13.*",
+  "transformers>=5,<6",
+  "pillow>=11",
+]
+
+[tool.uv]
+package = false

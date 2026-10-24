@@ -1,8 +1,14 @@
-# OS / editors
+# OS / editors (.vscode/ is not ignored: apps commit shared editor settings)
 .DS_Store
 .idea/
-.vscode/
 *.swp
+
+# JS
+node_modules/
+
+# `vpx _dev` pane logs, and the crash log mprocs writes to its working directory
+.mprocs-logs/
+mprocs.log
 
 # Python
 .venv/
