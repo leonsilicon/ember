@@ -1,6 +1,6 @@
 # Backend: rover vision on the Mac
 
-The rover's brain runs on the iPhone (`apps/soon2026/src/lib/rover-brain`).
+The rover's brain runs on the iPhone (`apps/expo-app/src/lib/rover-brain`).
 This folder is its Mac-side twin, for testing without a phone and for anything
 too heavy for the phone:
 

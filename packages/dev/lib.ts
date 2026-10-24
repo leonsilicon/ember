@@ -3,7 +3,9 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 export const REPO_ROOT = path.resolve(import.meta.dir, '../..');
-export const APP_DIR = path.join(REPO_ROOT, 'apps/soon2026');
+export const APP_DIR = path.join(REPO_ROOT, 'apps/expo-app');
+/** The splat server: the Next.js app on Vercel, and the Mac agent `vpx _dev` runs. */
+export const NEXT_APP_DIR = path.join(REPO_ROOT, 'apps/next-app');
 export const DEFAULT_METRO_PORT = 8081;
 
 /** A command's trimmed stdout, or null if it is missing or fails. */
@@ -12,7 +14,7 @@ export function run(command: string, args: string[], cwd = REPO_ROOT) {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-/** Stim's `metro.port` for the app (committed in apps/soon2026/.stim.json), which `vpx _dev` runs Metro on. */
+/** Stim's `metro.port` for the app (committed in apps/expo-app/.stim.json), which `vpx _dev` runs Metro on. */
 export function stimMetroPort() {
   const port = Number(run('stim', ['settings', 'get', 'metro.port'], APP_DIR));
   return Number.isInteger(port) && port > 0 ? port : null;

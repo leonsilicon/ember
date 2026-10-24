@@ -3,12 +3,12 @@
  * `vpx _dev` (from anywhere in the repo): the whole dev stack in mprocs, one pane per long-lived
  * process. Pane order is the index mprocs' remote control uses:
  *
- *   0  metro         Expo dev server for apps/soon2026, on Stim's `metro.port` (committed in
- *                    apps/soon2026/.stim.json; 8081 without Stim), so `stim ios` reuses it.
+ *   0  metro         Expo dev server for apps/expo-app, on Stim's `metro.port` (committed in
+ *                    apps/expo-app/.stim.json; 8081 without Stim), so `stim ios` reuses it.
  *                    Always `--dev-client`: the app runs as a development build, never in Expo Go
- *   1  splat-agent   the splat server's Mac agent (apps/soon2026/server/src/agent): trains captures
+ *   1  splat-agent   the splat server's Mac agent (apps/next-app/src/agent): trains captures
  *                    with Brush and runs the live 3D reconstruction for the app on Vercel. It reads
- *                    the app's Redis and Blob credentials from server/.env.local (`vercel env pull`)
+ *                    the app's Redis and Blob credentials from apps/next-app/.env.local (`vercel env pull`)
  *
  * `--force` replaces a running stack and frees its ports, through `stim stop` when Stim's own dev
  * server holds Metro's. `--port <n>` overrides the Metro port; every other argument goes to
@@ -25,7 +25,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-import { APP_DIR, DEFAULT_METRO_PORT, listenerPid, REPO_ROOT, run, stimMetroPort } from './lib';
+import { APP_DIR, DEFAULT_METRO_PORT, listenerPid, NEXT_APP_DIR, REPO_ROOT, run, stimMetroPort } from './lib';
 
 const CONTROL_PORT = 8898;
 const LOG_DIR = path.join(REPO_ROOT, '.mprocs-logs');
@@ -136,14 +136,14 @@ const config = {
     metro: {
       cmd: [node, expoCli, 'start', '--dev-client', '--port', String(metroPort), ...expoArgs],
       cwd: APP_DIR,
-      // The development build's identity (apps/soon2026/app.config.ts) in the manifest it loads.
+      // The development build's identity (apps/expo-app/app.config.ts) in the manifest it loads.
       env: { EXPO_PUBLIC_APP_VARIANT: 'development' },
       stop: 'SIGINT',
     },
     'splat-agent': {
       cmd: [process.execPath, 'src/agent/main.ts'],
-      // Bun loads server/.env.local from here.
-      cwd: path.join(APP_DIR, 'server'),
+      // Bun loads apps/next-app/.env.local from here.
+      cwd: NEXT_APP_DIR,
       stop: 'SIGINT',
     },
   },

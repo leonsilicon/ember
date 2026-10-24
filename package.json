@@ -7,8 +7,7 @@
   ],
   "scripts": {
     "typecheck": "bun run --filter '*' typecheck",
-    "lint": "bun run --filter '*' lint",
-    "postinstall": "bun install --cwd apps/soon2026/server"
+    "lint": "bun run --filter '*' lint"
   },
   "trustedDependencies": [
     "react-native-executorch"

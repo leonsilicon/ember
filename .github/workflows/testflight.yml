@@ -1,7 +1,7 @@
 # Builds the production app (dev.improve.soon2026) on a self-hosted Mac on every push to main and ships it to
 # TestFlight, as Haniverse's staging build does: `eas build --local` signs with the credentials EAS manages for the
 # improvelabs Expo account, and `eas submit` uploads with the App Store Connect API key EAS holds. One-time setup:
-# the "TestFlight" section of apps/soon2026/AGENTS.md.
+# the "TestFlight" section of apps/expo-app/AGENTS.md.
 name: TestFlight
 
 on:
@@ -75,7 +75,7 @@ jobs:
           key: ${{ steps.leaf-detector.outputs.cache-primary-key }}
 
       - name: Build the app
-        working-directory: apps/soon2026
+        working-directory: apps/expo-app
         env:
           # The runner empties its temp directory after every job, so a failed or cancelled build leaves nothing behind.
           TMPDIR: ${{ runner.temp }}
@@ -94,7 +94,7 @@ jobs:
       # Internal testers only, which needs no Beta App Review: the internal "SOON" group distributes every build
       # automatically once App Store Connect has processed it (5–15 minutes after the upload).
       - name: Upload to TestFlight
-        working-directory: apps/soon2026
+        working-directory: apps/expo-app
         env:
           WHAT_TO_TEST: ${{ github.event.head_commit.message }}
         run: >-

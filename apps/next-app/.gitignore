@@ -1,0 +1,12 @@
+# The Mac agent's captures and training output, the downloaded Brush binary, and the live
+# reconstruction's depth worker and Core ML model (scripts/install-*.sh)
+/data
+/bin
+/models
+
+# Next.js build output, and the Vercel project link and pulled environment
+/.next
+/next-env.d.ts
+*.tsbuildinfo
+/.vercel
+.env*.local
