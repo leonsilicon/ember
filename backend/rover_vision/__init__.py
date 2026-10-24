@@ -1,3 +1,2 @@
-"""Rover perception: dataset preparation, training, live detection and CoreML
-export for the hazards model, the OWL-ViT leaf detector, and the navigation
-layer that fuses them."""
+"""Rover perception on the Mac: the OWL-ViT leaf detector, depth-based
+obstacle mapping, and an HTTP service mirroring the iPhone app's rover brain."""

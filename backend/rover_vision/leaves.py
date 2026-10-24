@@ -6,9 +6,6 @@ import numpy as np
 
 from rover_vision import leaf_detector
 from rover_vision.detection import Detection
-from rover_vision.tasks import Role
-
-TASK_NAME = "leaves"
 
 
 class LeafDetector:
@@ -62,15 +59,5 @@ def to_detections(raw: dict, threshold: float, frame_shape: tuple, limit: int = 
         x1, y1, x2, y2 = (int(round(v)) for v in raw["boxes"][i].tolist())
         x1, x2 = max(0, min(x1, w - 1)), max(0, min(x2, w - 1))
         y1, y2 = max(0, min(y1, h - 1)), max(0, min(y2, h - 1))
-        detections.append(
-            Detection(
-                task=TASK_NAME,
-                label=query_label(int(raw["labels"][i])),
-                role=Role.TARGET,
-                confidence=float(scores[i]),
-                box_xyxy=(x1, y1, x2, y2),
-                point_px=((x1 + x2) // 2, (y1 + y2) // 2),
-                polygon_px=None,
-            )
-        )
+        detections.append(Detection.from_box(query_label(int(raw["labels"][i])), float(scores[i]), (x1, y1, x2, y2)))
     return detections

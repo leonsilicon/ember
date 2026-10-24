@@ -12,13 +12,14 @@ import {
   isPose,
   LeafMap,
   locateDetections,
+  ObstacleMemory,
   scanDepth,
   stepAutopilot,
   toRover,
   type AutopilotState,
   type Corridor,
-  type DepthScan,
   type Heading,
+  type RejectedDetection,
   type RoverPoint,
   type TrackedLeaf,
 } from '@/lib/rover-brain';
@@ -56,6 +57,22 @@ export function caption(point: RoverPoint) {
   return `${point.distance.toFixed(1)} m · ${direction}`;
 }
 
+/** Why LiDAR ruled a detection out, for its box. */
+function rejectionCaption(r: RejectedDetection): string | undefined {
+  switch (r.reason) {
+    case 'off_ground':
+      return `✕ ${(r.heightAboveFloorM ?? 0).toFixed(1)} m off the ground`;
+    case 'too_big':
+      return `✕ too big (${(r.sizeM ?? 0).toFixed(1)} m)`;
+    case 'too_small':
+      return '✕ too small';
+    case 'too_far':
+      return `✕ too far (${(r.rover?.distance ?? 0).toFixed(0)} m)`;
+    default:
+      return undefined;
+  }
+}
+
 /**
  * The rover's brain on the phone: places each leaf detection in the AR world, keeps a map of
  * them, scans LiDAR depth for where it can't drive, and, with the autopilot on, drives the rover
@@ -65,7 +82,8 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
   const rover = useRover();
   const connected = rover.connection.state === 'connected';
   const map = useRef(new LeafMap());
-  const scan = useRef<DepthScan | null>(null);
+  // Recent LiDAR points, so obstacles stay known after they leave the camera's narrow view.
+  const memory = useRef(new ObstacleMemory());
   const heading = useRef<Heading | null>(null);
   // Reset with the real time whenever the autopilot starts.
   const autopilotState = useRef<AutopilotState>(initialAutopilotState(0));
@@ -107,11 +125,13 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
       publish({ captions: [], captionsFor: result });
       return;
     }
-    const floorY = scan.current?.floorY ?? (headingFromPose(camera.pose)?.origin[1] ?? 0) - DEFAULT_ROVER.cameraHeightM;
-    const located = locateDetections(result.detections, result.frameSize, camera, floorY);
+    const floorY = memory.current.floorY ?? (headingFromPose(camera.pose)?.origin[1] ?? 0) - DEFAULT_ROVER.cameraHeightM;
+    // LiDAR checks each box (on the ground? leaf-sized?) before it reaches the leaf map.
+    const { leaves: located, rejected } = locateDetections(result.detections, result.frameSize, camera, floorY);
     map.current.observe(located, Date.now());
     const captions: (string | undefined)[] = result.detections.map(() => undefined);
     for (const leaf of located) captions[leaf.index] = caption(leaf.rover);
+    for (const r of rejected) captions[r.index] = rejectionCaption(r);
     publish({ captions, captionsFor: result });
   }, [enabled, result, publish]);
 
@@ -127,11 +147,11 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
           if (cancelled) break;
           const tracking = camera != null && camera.trackingNormal && isPose(camera.pose);
           heading.current = tracking && camera ? headingFromPose(camera.pose) : null;
+          const now = Date.now();
           const fresh = camera ? scanDepth(camera) : null;
-          if (fresh) scan.current = fresh;
-          const lanes = heading.current ? corridorsFrom(scan.current, heading.current) : [];
-          const scanAgeMs =
-            camera && scan.current ? Math.max(0, (camera.timestamp - scan.current.timestamp) * 1000) : Infinity;
+          if (fresh) memory.current.add(fresh, now);
+          const lanes = heading.current ? corridorsFrom(memory.current.scan(now), heading.current) : [];
+          const scanAgeMs = memory.current.ageMs(now);
 
           let message = '';
           if (autopilotOnRef.current) {

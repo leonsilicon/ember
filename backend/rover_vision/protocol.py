@@ -37,7 +37,6 @@ import numpy as np
 from rover_vision.detection import Detection
 from rover_vision.perception import FrameInput, rotate_points_back
 from rover_vision.spatial import Intrinsics, Mount, up_from_arkit_pose, up_from_mount
-from rover_vision.tasks import Role
 
 
 class ProtocolError(ValueError):
@@ -99,17 +98,7 @@ def _leaves(header: dict, image_size: tuple[int, int]) -> list[Detection] | None
         (a, b), (c, d) = corners
         box = tuple(int(round(v)) for v in (min(a, c), min(b, d), max(a, c), max(b, d)))
         box = (max(0, box[0]), max(0, box[1]), min(w - 1, box[2]), min(h - 1, box[3]))
-        leaves.append(
-            Detection(
-                task="leaves",
-                label=str(item.get("label", "leaf")),
-                role=Role.TARGET,
-                confidence=float(item.get("score", 1.0)),
-                box_xyxy=box,
-                point_px=((box[0] + box[2]) // 2, (box[1] + box[3]) // 2),
-                polygon_px=None,
-            )
-        )
+        leaves.append(Detection.from_box(str(item.get("label", "leaf")), float(item.get("score", 1.0)), box))
     return leaves
 
 

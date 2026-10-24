@@ -15,9 +15,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from rover_vision.occupancy import DROP, FREE, HAZARD_BASE, OBSTACLE, Corridor, OccupancyGrid
-from rover_vision.render import ROLE_COLORS, draw_detections
-from rover_vision.tasks import Role
+from rover_vision.occupancy import DROP, FREE, OBSTACLE, Corridor, OccupancyGrid
+from rover_vision.render import LEAF_COLOR, REJECTED_COLOR, draw_detections
 
 
 @dataclass(frozen=True)
@@ -54,7 +53,6 @@ def suggest(leaves, lanes: list[Corridor], min_explore_m: float = 0.8) -> Sugges
 
 # BGR
 CELL_COLORS = {0: (45, 45, 45), FREE: (70, 150, 70), OBSTACLE: (40, 40, 220), DROP: (160, 40, 160)}
-HAZARD_COLORS = {"water": (200, 120, 30)}  # hazards not listed use the obstacle red
 
 
 def grid_image(grid: OccupancyGrid, cell_px: int = 5) -> np.ndarray:
@@ -62,11 +60,7 @@ def grid_image(grid: OccupancyGrid, cell_px: int = 5) -> np.ndarray:
     rows, cols = grid.codes.shape
     image = np.zeros((rows, cols, 3), np.uint8)
     for code in np.unique(grid.codes):
-        if code >= HAZARD_BASE:
-            color = HAZARD_COLORS.get(grid.kind(int(code)), (30, 30, 180))
-        else:
-            color = CELL_COLORS[int(code)]
-        image[grid.codes == code] = color
+        image[grid.codes == code] = CELL_COLORS[int(code)]
     image = np.flipud(image)  # row 0 (nearest) to the bottom
     return cv2.resize(image, (cols * cell_px, rows * cell_px), interpolation=cv2.INTER_NEAREST)
 
@@ -88,9 +82,8 @@ def draw_minimap(result, cell_px: int = 5) -> np.ndarray:
         end = to_px(lane.clearance_m * math.sin(b), lane.clearance_m * math.cos(b))
         cv2.line(image, origin, end, (200, 200, 200) if lane.blocked_by is None else (90, 90, 255), 1, cv2.LINE_AA)
     for leaf in result.leaves:
-        if leaf.position is not None:
-            color = ROLE_COLORS[Role.TARGET] if leaf.reachable else (150, 150, 150)
-            cv2.circle(image, to_px(leaf.position.x_m, leaf.position.z_m), 4, color, -1, cv2.LINE_AA)
+        color = LEAF_COLOR if leaf.reachable else REJECTED_COLOR
+        cv2.circle(image, to_px(leaf.position.x_m, leaf.position.z_m), 4, color, -1, cv2.LINE_AA)
     s = result.suggestion
     if s.bearing_deg is not None:
         reach = min(s.distance_m or 1.5, spec.z_max_m)
@@ -104,17 +97,18 @@ def draw_minimap(result, cell_px: int = 5) -> np.ndarray:
 
 def draw_perception(frame: np.ndarray, result) -> np.ndarray:
     """Camera view with detections, the suggestion, and the minimap inset."""
-    leaves = [leaf.detection for leaf in result.leaves]
-    hazards = [h.detection for h in result.hazards]
-    out = draw_detections(frame, hazards + leaves)
+    out = draw_detections(frame, [r.detection for r in result.rejected], REJECTED_COLOR)
+    out = draw_detections(out, [leaf.detection for leaf in result.leaves])
     h, w = out.shape[:2]
 
-    for leaf in result.leaves:
-        if leaf.position is not None:
-            x, y = leaf.detection.box_xyxy[0], leaf.detection.box_xyxy[3] + 14
-            text = f"{leaf.position.distance_m:.1f}m {leaf.position.bearing_deg:+.0f}deg" + ("" if leaf.reachable else " X")
-            cv2.putText(out, text, (x, min(y, h - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(out, text, (x, min(y, h - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+    captions = [
+        (leaf.detection, f"{leaf.position.distance_m:.1f}m {leaf.position.bearing_deg:+.0f}deg" + ("" if leaf.reachable else " X"))
+        for leaf in result.leaves
+    ] + [(r.detection, "x " + r.reason.replace("_", " ")) for r in result.rejected]
+    for det, text in captions:
+        x, y = det.box_xyxy[0], min(det.box_xyxy[3] + 14, h - 4)
+        cv2.putText(out, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(out, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
     minimap = draw_minimap(result)
     mh, mw = minimap.shape[:2]

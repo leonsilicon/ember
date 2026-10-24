@@ -64,7 +64,7 @@ def test_missing_intrinsics_and_short_depth_raise():
 
 def test_server_endpoints():
     client = TestClient(create_app(Perception()))
-    assert client.get("/v1/health").json()["schema"] == "rover-perception/1"
+    assert client.get("/v1/health").json()["schema"] == "rover-perception/2"
     r = client.post("/v1/perceive", content=message(leaves=[{"box": [70, 100, 90, 115]}]))
     assert r.status_code == 200
     body = r.json()

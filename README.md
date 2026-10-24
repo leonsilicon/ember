@@ -19,7 +19,7 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
 | `packages/owlvit` | Builds the on-device OWL-ViT leaf detector the app embeds. |
 | `packages/dev` | The `vpx _dev` and `vpx _ios` scripts, and the TestFlight workflow's group step. |
 | `.github/workflows/testflight.yml` | Ships every push to `main` to TestFlight from a self-hosted Mac; see "TestFlight" in [`apps/soon2026/AGENTS.md`](apps/soon2026/AGENTS.md). |
-| `backend` | Python on the Mac: the same leaf detector, a trained **hazard** model (water, rocks, logs…), and an HTTP perception service. See [`backend/README.md`](backend/README.md). |
+| `backend` | Python on the Mac: the same leaf detector and depth logic as the app, for testing with a webcam, photo or RealSense, plus an HTTP perception service. See [`backend/README.md`](backend/README.md). |
 
 ---
 
@@ -27,15 +27,17 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
 
 ```
  camera frame ──► OWL-ViT ("dry brown leaf", ...) ──► boxes
-                                                        │  box centre + LiDAR depth (or ray onto the floor)
+                                                        │  LiDAR depth over the box (or ray onto the floor)
  ARKit pose + intrinsics ───────────────────────────────┤
                                                         ▼
                                    leaf placed in the AR world (x, y, z metres)
+                                                        │  LiDAR check: on the ground? leaf-sized?
                                                         │  merged with earlier sightings
                                                         ▼
                                    LEAF MAP: tentative → confirmed (seen 3×) → collected
                                                         │
- LiDAR depth (5 Hz) ──► world points ──► floor fit ──► corridors: how far the rover can drive
+ LiDAR depth (5 Hz) ──► world points ──► floor fit ──► obstacle memory (last 4 s)
+                                                        │  corridors: how far the rover can drive
                                                         │  along each of 13 bearings (−45°…+45°)
                                                         ▼
                      AUTOPILOT: search ─► approach nearest reachable leaf ─► collect ─► repeat
@@ -50,19 +52,24 @@ frame. And as the rover closes in, the leaf drops out of the bottom of the view.
 driving are decoupled:
 
 1. **Detect and place.** Each leaf box is turned into a fixed point in ARKit's world, using the
-   LiDAR depth at its centre (accurate to a few cm within about 5 m). Beyond LiDAR range, or on
-   phones without LiDAR, the box centre's ray is intersected with the floor instead: leaves lie on
-   the ground, so that's a good estimate on flat terrain.
-2. **Remember.** Sightings within 25 cm are the same leaf. A leaf is only *confirmed* after three
+   median LiDAR depth over the middle of the box (accurate to a few cm within about 5 m). Beyond
+   LiDAR range, or on phones without LiDAR, the box centre's ray is intersected with the floor
+   instead: leaves lie on the ground, so that's a good estimate on flat terrain.
+2. **Check with LiDAR.** OWL-ViT also fires on brown things that aren't leaves on the ground. LiDAR
+   knows where each box really is, so it's rejected if it's more than 25 cm off the ground (bark,
+   a fence, furniture), more than 1.5 m across (a hillside rather than a pile), under 2 cm, or more
+   than 8 m away. Rejected boxes show the reason, e.g. `✕ 0.6 m off the ground`.
+3. **Remember.** Sightings within 25 cm are the same leaf. A leaf is only *confirmed* after three
    sightings, which filters out one-off false detections. Collected leaves are never revisited.
-3. **Drive on pose, not on pixels.** The autopilot steers to the leaf's *world* position using the
+4. **Drive on pose, not on pixels.** The autopilot steers to the leaf's *world* position using the
    phone's live AR pose, polled 5 times a second independently of detection. It reaches the leaf
    even after the leaf has left the frame.
-4. **Never into an obstacle.** LiDAR points are classified by height above the fitted floor:
+5. **Never into an obstacle.** LiDAR points are classified by height above the fitted floor:
    higher than 8 cm (and below 60 cm, so branches overhead don't count) is an **obstacle**, and
    more than 10 cm below the floor is a **drop**. For 13 steering bearings, a rover-wide strip says
-   how far it is clear. The points are kept in world coordinates, so the corridors stay correct as
-   the rover turns between scans.
+   how far it is clear. The phone only sees about 50° side to side, so points from the last 4 s
+   are remembered in world coordinates. A rock the rover just turned away from stays blocked, while
+   whatever the camera sees now always replaces what it remembered there.
 
 **Safety.** The autopilot stops when:
 - AR tracking isn't normal;
@@ -139,9 +146,9 @@ much easier.
 
 | Module | Use |
 |---|---|
-| `perceive.ts` | `locateDetections(detections, frameSize, camera, floorY)` → each leaf's world point, distance and bearing |
+| `perceive.ts` | `locateDetections(detections, frameSize, camera, floorY)` → `{ leaves, rejected }`: each leaf's world point, distance, bearing, height above the floor and size; rejected boxes with the reason |
 | `leaf-map.ts` | `LeafMap.observe(...)`, `.snapshot()`, `.markCollected(id)` |
-| `obstacles.ts` | `scanDepth(camera)` → world points + floor; `corridors(scan, heading)` → clearance per bearing |
+| `obstacles.ts` | `scanDepth(camera)` → world points + floor; `ObstacleMemory` keeps the last few seconds; `corridors(scan, heading)` → clearance per bearing |
 | `autopilot.ts` | `stepAutopilot(state, input)` → `{ left, right, message, collectedId }` for `drive()` |
 | `geometry.ts` | pose maths, `headingFromPose`, `toRover`, upright↔sensor pixel mapping |
 
@@ -152,15 +159,22 @@ much easier.
 - The pick-up moment is the `collecting` state in `autopilot.ts`, where the rover holds still for
   2.5 s. That's where the arm command goes once the arm exists.
 
-**Tuning:** `DEFAULT_ROVER` (width, step height, drop depth, camera height) in `obstacles.ts`, and
-`DEFAULT_AUTOPILOT` (arrival distance, speeds, stop distance) in `autopilot.ts`.
+**Tuning:**
+- `DEFAULT_ROVER` (width, step height, drop depth, camera height) and `DEFAULT_OBSTACLE_MEMORY`
+  in `obstacles.ts`;
+- `DEFAULT_LEAF_CHECK` (height off the ground, size, range) in `perceive.ts`;
+- `DEFAULT_AUTOPILOT` (arrival distance, speeds, stop distance) in `autopilot.ts`.
 
-**Water and labelled hazards:** LiDAR can't see water reliably, and depth alone doesn't say *what*
-an obstacle is. `backend/` has a hazard segmentation model (water, rock, log, tree, bush, person,
-structure) and `python -m rover_vision serve`, which accepts the app's existing live-keyframe
-message format. Post a frame (optionally with the phone's leaf boxes) to `/v1/perceive` and get
-back leaf positions, hazards, a top-down occupancy grid and corridors. See
-[`backend/README.md`](backend/README.md).
+**Mac service:** `python -m rover_vision serve` (in `backend/`) accepts the app's existing
+live-keyframe message. Post a frame, optionally with the phone's leaf boxes, to `/v1/perceive` and
+get back the same result computed on the Mac: leaf positions, depth-rejected boxes, a top-down
+occupancy grid and corridors. See [`backend/README.md`](backend/README.md).
+
+**The leaf model for the phone** is built by `packages/owlvit` into `packages/owlvit/dist/`
+(gitignored), and the splat server serves it. Leon's default fp16 build currently fails his own
+drift check by a hair (16.8 px against a 16 px limit, on a candidate scoring a few percent), so use
+`uv run export.py --precision fp32` from `packages/owlvit` (358 MB, exact, runs on the GPU rather
+than the Neural Engine) until that limit is revisited.
 
 **Checks:**
 
@@ -208,7 +222,8 @@ something landowners, fire departments and municipalities would pay for.
   - the app type-check (only the two pre-existing CSS-module typing errors remain, and Expo
     generates those typings at dev-server start);
   - lint on all new and changed files;
-  - the backend's 60 tests.
+  - the backend's 37 tests;
+  - the iOS JavaScript bundle (`expo export --platform ios`).
 - **Not verified here:** the Swift changes and the app on a phone. This machine has no Xcode. The
   native change is small and follows the existing `LiveStreamer` patterns, but the first device
   build should be checked.
@@ -217,5 +232,6 @@ something landowners, fire departments and municipalities would pay for.
 - **Leaf detection quality is the main limit.** OWL-ViT is general-purpose. Expect misses on leaves
   that blend into soil, and false hits on bark and pine cones. Fine-tuning on our own footage is the
   biggest single improvement.
-- **The hazard model is still training** on RUGD, a daytime US off-road dataset. Indoors and at
-  night, rely on LiDAR.
+- **Obstacles are LiDAR-only.** That catches anything solid within about 5 m, but not water, glass
+  or thin wire. A trained hazard model (`backend/archive/hazard-model`, gitignored) was dropped: it
+  scored 0.47 mAP50 on trees, but 0.05 on water and 0.00 on rocks.
