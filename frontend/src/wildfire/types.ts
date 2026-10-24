@@ -25,8 +25,20 @@ export interface Coverage {
   screening_distance_m: number
   source: Categories['source']
   buildings_source: string
-  stats: { total: number; hazard_overlap: number; hazard_within_30m: number; needs_evaluation: number; incomplete: number }
+  stats: { total: number; hazard_overlap: number; hazard_within_30m: number; needs_evaluation: number; incomplete: number; exposure_60?: number }
   tiles: { buildings: string; hazard: string; leafoff?: string }
+  files?: { buildings: string }
+  grid?: {
+    file: string
+    width: number
+    height: number
+    cell_m: number
+    crs: string
+    origin: [number, number]
+    res: number
+    codes: { index: number; code: number; fuel: string; cat: CategoryKey }[]
+  }
+  risk?: { weights: { fuel: number; leafoff: number; neighbours: number }; neighbour_cap: number; formula: string }
   leafoff?: {
     leaf_on?: { id: string; date: string; cloud_cover: number }
     leaf_off?: { id: string; date: string; cloud_cover: number }
@@ -36,8 +48,19 @@ export interface Coverage {
   } | null
 }
 
-export interface BuildingProps {
+/** Compact per-building rows from buildings.json (same order as `fields`). */
+export interface BuildingRow {
   fid: number
+  lon: number
+  lat: number
+  exposure: number
+  f_fuel: number
+  l_leafoff: number
+  n_neighbours: number
+  area_m2: number
+}
+
+export interface BuildingProps extends BuildingRow {
   gers_id: string | null
   hazard_overlap: boolean
   hazard_within_30m: boolean
@@ -50,28 +73,8 @@ export interface BuildingProps {
   fuel_codes_footprint: string
   fuel_codes_30m: string
   footprint_source: string | null
-  lon: number
-  lat: number
-  area_m2: number
   leafoff_30m: number | null
-  scan_priority: number | null
 }
-
-export type Verdict = 'overlap' | 'within' | 'none'
-
-export function verdictOf(b: BuildingProps): Verdict {
-  if (b.hazard_overlap) return 'overlap'
-  if (b.hazard_within_30m) return 'within'
-  return 'none'
-}
-
-export const VERDICT_STYLE: Record<Verdict, { label: string; color: string; badge: string }> = {
-  overlap: { label: 'High/Extreme hazard overlaps footprint', color: '#dc2626', badge: 'bg-red-600 text-white' },
-  within: { label: 'High/Extreme hazard within 30 m', color: '#d97706', badge: 'bg-amber-500 text-zinc-950' },
-  none: { label: 'No High/Extreme hazard detected within 30 m', color: '#64748b', badge: 'bg-slate-200 text-slate-800' },
-}
-
-export type ListFilter = 'all' | 'flagged' | 'priority' | 'eval' | 'incomplete'
 
 export function parseCodes(s: string | undefined): number[] {
   if (!s) return []
@@ -85,6 +88,7 @@ export function parseCodes(s: string | undefined): number[] {
 
 export function normalizeProps(p: Record<string, unknown>, id?: string | number): BuildingProps {
   const bool = (v: unknown) => v === true || v === 1 || v === 'true'
+  const num = (v: unknown, d = 0) => (v == null ? d : Number(v))
   return {
     ...(p as unknown as BuildingProps),
     fid: Number(p.fid ?? id),
@@ -97,22 +101,10 @@ export function normalizeProps(p: Record<string, unknown>, id?: string | number)
     highest_category_footprint: (p.highest_category_footprint as CategoryKey) ?? null,
     highest_category_30m: (p.highest_category_30m as CategoryKey) ?? null,
     leafoff_30m: p.leafoff_30m == null ? null : Number(p.leafoff_30m),
-    scan_priority: p.scan_priority == null ? null : Number(p.scan_priority),
-  }
-}
-
-export function applyFilter(items: BuildingProps[], f: ListFilter, dryness = 0.5) {
-  switch (f) {
-    case 'flagged':
-      return items.filter((b) => b.hazard_overlap || b.hazard_within_30m)
-    case 'priority':
-      return items.filter((b) => (liveScore(b, dryness) ?? 0) >= SCAN_SOON)
-    case 'eval':
-      return items.filter((b) => b.needs_evaluation)
-    case 'incomplete':
-      return items.filter((b) => !b.coverage_complete)
-    default:
-      return items
+    exposure: num(p.exposure),
+    f_fuel: num(p.f_fuel),
+    l_leafoff: num(p.l_leafoff, 0.5),
+    n_neighbours: num(p.n_neighbours),
   }
 }
 
@@ -123,17 +115,31 @@ export function fmtM(m: number): string {
   return `${Math.round(m)} m`
 }
 
-/** Scan priority shown in the UI: the static hazard x litter score scaled by today's fine-fuel dryness (0.4-1). */
-export function liveScore(b: BuildingProps, dryness: number): number | null {
-  if (b.scan_priority == null) return null
-  return Math.round(b.scan_priority * (0.4 + 0.6 * dryness))
+// ---- Ignition Risk: one number per home ------------------------------------------------------
+// risk = 100 × exposure × (0.4 + 0.6 × dryness)
+// exposure = 0.55 F (fuel in the 30 m zone) + 0.25 L (fresh leaf litter) + 0.20 N (neighbouring structures), from the pipeline
+// dryness  = today's CWFIS FFMC mapped 70..95 → 0..1, fetched live in the browser
+
+export const CRITICAL = 70
+export const ELEVATED = 40
+
+export type Band = 'critical' | 'elevated' | 'low'
+
+export function riskOf(exposure: number, dryness: number): number {
+  return Math.round(100 * exposure * (0.4 + 0.6 * dryness))
 }
 
-export const SCAN_SOON = 40
-
-export function scoreTone(score: number): { label: string; color: string } {
-  if (score >= 70) return { label: 'Scan now', color: '#f43f5e' }
-  if (score >= SCAN_SOON) return { label: 'Scan soon', color: '#fb923c' }
-  if (score >= 20) return { label: 'Monitor', color: '#facc15' }
-  return { label: 'Low', color: '#64748b' }
+export function bandOf(risk: number): Band {
+  if (risk >= CRITICAL) return 'critical'
+  if (risk >= ELEVATED) return 'elevated'
+  return 'low'
 }
+
+export const BAND: Record<Band, { label: string; color: string; intent: 'danger' | 'warning' | 'none'; blurb: string }> = {
+  critical: { label: 'Critical', color: '#ff7373', intent: 'danger', blurb: 'Likely to ignite if fire reaches this lot' },
+  elevated: { label: 'Elevated', color: '#ffb366', intent: 'warning', blurb: 'Ignites if the 30 m zone is not cleared' },
+  low: { label: 'Low', color: '#8abbff', intent: 'none', blurb: 'Little fuel within 30 m' },
+}
+
+/** Multiplier the live dryness applies to every static exposure today. */
+export const drynessMultiplier = (dryness: number) => 0.4 + 0.6 * dryness

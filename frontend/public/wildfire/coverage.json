@@ -50,7 +50,7 @@
     "hazard_within_30m": 7732,
     "needs_evaluation": 1220,
     "incomplete": 23,
-    "scan_priority_60": 4180
+    "exposure_60": 376
   },
   "hazard_features": 147694,
   "tiles": {
@@ -70,9 +70,9 @@
       "cloud_cover": 3.681026
     },
     "source": "Copernicus Sentinel-2 L2A via Microsoft Planetary Computer",
-    "valid_fraction": 0.9994390324512762,
-    "drop_p50": 0.19603312015533447,
-    "drop_p90": 0.30627596378326416,
+    "valid_fraction": 0.9994665248680153,
+    "drop_p50": 0.19601696729660034,
+    "drop_p90": 0.30574241280555725,
     "classes": [
       {
         "min_drop": 0.25,
@@ -89,5 +89,114 @@
     ],
     "full_drop": 0.35
   },
-  "scan_priority": "static 0-100 = hazard (overlap 1.0; within 30 m 0.55-1.0 by distance; else 0.1) x litter (0.5 + 0.5 x leaf-off/0.35); the UI multiplies by live CWFIS fine-fuel dryness"
+  "files": {
+    "buildings": "buildings.json"
+  },
+  "grid": {
+    "file": "fuel.bin",
+    "width": 1044,
+    "height": 928,
+    "cell_m": 30,
+    "crs": "EPSG:3857",
+    "origin": [
+      -8833201.594446259,
+      5692645.178123247
+    ],
+    "res": 42.669124949354035,
+    "codes": [
+      {
+        "index": 1,
+        "code": 1,
+        "fuel": "C-1 Spruce-Lichen Woodland",
+        "cat": "extreme"
+      },
+      {
+        "index": 2,
+        "code": 2,
+        "fuel": "C-2 Boreal Spruce",
+        "cat": "extreme"
+      },
+      {
+        "index": 3,
+        "code": 3,
+        "fuel": "C-3 Mature Jack/Lodgepole Pine",
+        "cat": "high"
+      },
+      {
+        "index": 4,
+        "code": 4,
+        "fuel": "C-4 Immature Jack/Lodgepole Pine",
+        "cat": "extreme"
+      },
+      {
+        "index": 5,
+        "code": 5,
+        "fuel": "C-5 Red and White Pine",
+        "cat": "pine_eval"
+      },
+      {
+        "index": 6,
+        "code": 11,
+        "fuel": "D-1 Leafless Aspen",
+        "cat": "low"
+      },
+      {
+        "index": 7,
+        "code": 13,
+        "fuel": "D-1/D-2 Aspen",
+        "cat": "low"
+      },
+      {
+        "index": 8,
+        "code": 31,
+        "fuel": "O-1a Matted Grass",
+        "cat": "not_rated"
+      },
+      {
+        "index": 9,
+        "code": 101,
+        "fuel": "Non-fuel",
+        "cat": "not_rated"
+      },
+      {
+        "index": 10,
+        "code": 102,
+        "fuel": "Water",
+        "cat": "water"
+      },
+      {
+        "index": 11,
+        "code": 415,
+        "fuel": "M-1 Leafless Mixedwood, 15% conifer",
+        "cat": "not_rated"
+      },
+      {
+        "index": 12,
+        "code": 625,
+        "fuel": "M-1/M-2 Mixedwood, 25% conifer",
+        "cat": "low"
+      },
+      {
+        "index": 13,
+        "code": 650,
+        "fuel": "M-1/M-2 Mixedwood, 50% conifer",
+        "cat": "moderate"
+      },
+      {
+        "index": 14,
+        "code": 675,
+        "fuel": "M-1/M-2 Mixedwood, 75% conifer",
+        "cat": "high"
+      }
+    ]
+  },
+  "risk": {
+    "weights": {
+      "fuel": 0.55,
+      "leafoff": 0.25,
+      "neighbours": 0.2
+    },
+    "neighbour_cap": 4,
+    "formula": "risk = 100 x exposure x (0.4 + 0.6 x dryness); exposure = 0.55 F + 0.25 L + 0.20 N (static, here); dryness = live CWFIS FFMC 70-95 -> 0-1 (browser)"
+  }
 }

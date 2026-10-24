@@ -1,5 +1,0 @@
-export const PANEL = 'rounded-2xl border border-white/10 bg-slate-950/80 text-slate-100 shadow-2xl shadow-black/50 backdrop-blur-md'
-export const MICRO = 'text-[10px] font-semibold tracking-[0.18em] text-slate-400 uppercase'
-export const BTN = 'rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5 text-xs font-semibold text-slate-100 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-800'
-export const CHIP_ON = 'bg-cyan-400 text-slate-950'
-export const CHIP_OFF = 'bg-white/5 text-slate-300 hover:bg-white/10'

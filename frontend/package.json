@@ -15,12 +15,15 @@
     "lint": "oxlint"
   },
   "dependencies": {
+    "@blueprintjs/core": "^6.21.0",
+    "@blueprintjs/icons": "^6.14.1",
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",
     "@sparkjsdev/spark": "2.3.1",
     "@vercel/blob": "^2.8.2",
     "@vercel/functions": "^3.10.3",
     "bonjour-service": "^1.4.4",
     "camera-controls": "^3.1.2",
+    "d3-contour": "^4.0.2",
     "ioredis": "^5.8.2",
     "maplibre-gl": "^6.15.0",
     "next": "16.4.3",
@@ -33,6 +36,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@types/bun": "^1.4.4",
+    "@types/d3-contour": "^3.0.6",
     "@types/geojson": "^7946.0.16",
     "@types/node": "^24.0.0",
     "@types/react": "~19.3.0",

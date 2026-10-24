@@ -93,3 +93,30 @@ export function useImageryInfo(lon: number, lat: number, zoom: number) {
   }, [key])
   return info
 }
+
+export interface Wind {
+  speedKmh: number
+  fromDeg: number
+  source: 'open-meteo' | 'default'
+}
+
+export const DEFAULT_WIND: Wind = { speedKmh: 15, fromDeg: 270, source: 'default' }
+
+/** Current 10 m wind at a point from Open-Meteo (free, no key). Falls back to a westerly 15 km/h. */
+export function useWind(lon: number, lat: number) {
+  const [wind, setWind] = useState<Wind>(DEFAULT_WIND)
+  useEffect(() => {
+    const c = new AbortController()
+    const u = new URL('https://api.open-meteo.com/v1/forecast')
+    u.searchParams.set('latitude', lat.toFixed(3)); u.searchParams.set('longitude', lon.toFixed(3))
+    u.searchParams.set('current', 'wind_speed_10m,wind_direction_10m'); u.searchParams.set('wind_speed_unit', 'kmh')
+    fetch(u, { signal: c.signal })
+      .then((r) => r.json())
+      .then((j: { current?: { wind_speed_10m: number; wind_direction_10m: number } }) => {
+        if (j.current) setWind({ speedKmh: j.current.wind_speed_10m, fromDeg: j.current.wind_direction_10m, source: 'open-meteo' })
+      })
+      .catch(() => {})
+    return () => c.abort()
+  }, [lon, lat])
+  return wind
+}

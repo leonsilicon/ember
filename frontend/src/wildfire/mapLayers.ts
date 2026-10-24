@@ -1,57 +1,26 @@
-import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl'
-import type { Categories, CategoryKey } from './types'
-import { VERDICT_STYLE } from './types'
-import { CWFIS_WMS, ESRI_IMAGERY } from './live'
+import type { ExpressionSpecification, LayerSpecification, Map as MLMap, StyleSpecification } from 'maplibre-gl'
+import { ESRI_IMAGERY } from './live'
+import { BAND, CRITICAL, ELEVATED } from './types'
 
 export const BASEMAP = 'https://tiles.openfreemap.org/styles/dark'
-export const HAZARD_SOURCE = 'wf-hazard'
 export const BUILDINGS_SOURCE = 'wf-buildings'
-export const SELECTED_SOURCE = 'wf-selected'
 export const SATELLITE_SOURCE = 'wf-satellite'
-export const DRYNESS_SOURCE = 'wf-dryness'
-export const LEAFOFF_SOURCE = 'wf-leafoff'
+export const ISO_SOURCE = 'wf-isochrones'
+export const BREAKS_SOURCE = 'wf-breaks'
 export const L = {
   satellite: 'wf-satellite',
-  dryness: 'wf-dryness',
-  leafoff: 'wf-leafoff-fill',
-  hazardFill: 'wf-hazard-fill',
   buildingsFill: 'wf-buildings-fill',
   buildingsLine: 'wf-buildings-line',
+  buildingsGlow: 'wf-buildings-glow',
   selectedRing: 'wf-selected-ring',
-  selectedOutline: 'wf-selected-outline',
+  isoLine: 'wf-iso-line',
+  isoLabel: 'wf-iso-label',
+  breaksLine: 'wf-breaks-line',
+  fire: 'wf-fire',
 } as const
 
-const MUTED: CategoryKey[] = ['not_rated', 'unknown', 'nodata']
-
-export function hazardColor(cats: Categories): ExpressionSpecification {
-  const pairs = Object.entries(cats.categories).flatMap(([k, v]) => [k, v.color])
-  return ['match', ['get', 'cat'], ...pairs, '#6b7280'] as unknown as ExpressionSpecification
-}
-
-/** Hazard classes at full strength; lower classes fade so High/Extreme stay legible. Over imagery the
- * not-rated/unknown cells go fully transparent — a grey slab over satellite hides more than it tells. */
-export function hazardOpacity(opacity: number, satellite = false): ExpressionSpecification {
-  return ['*', opacity, ['match', ['get', 'cat'], MUTED, satellite ? 0 : 0.25, 'low', satellite ? 0.25 : 0.35, 'moderate', 0.5, 'pine_eval', 0.7, 1]] as ExpressionSpecification
-}
-
-export const buildingColor: ExpressionSpecification = [
-  'case',
-  ['==', ['get', 'hazard_overlap'], true], VERDICT_STYLE.overlap.color,
-  ['==', ['get', 'hazard_within_30m'], true], VERDICT_STYLE.within.color,
-  VERDICT_STYLE.none.color,
-]
-
-export const buildingOutline: ExpressionSpecification = [
-  'case',
-  ['==', ['get', 'coverage_complete'], false], '#e2e8f0',
-  ['==', ['get', 'needs_evaluation'], true], '#c084fc',
-  '#0f172a',
-]
-
-export const LEAFOFF_COLORS = ['#e7c9a0', '#b07a3a', '#6b3f12'] // class 1..3, earthy so it never reads as a hazard class
-
 export function satelliteLayer(): LayerSpecification {
-  return { id: L.satellite, type: 'raster', source: SATELLITE_SOURCE, paint: { 'raster-saturation': -0.25, 'raster-brightness-max': 0.9 } }
+  return { id: L.satellite, type: 'raster', source: SATELLITE_SOURCE, paint: { 'raster-saturation': -0.35, 'raster-brightness-max': 0.8, 'raster-contrast': 0.1 } }
 }
 
 export function satelliteSource() {
@@ -64,62 +33,57 @@ export function satelliteSource() {
   }
 }
 
-export function drynessSource() {
-  const q = `service=WMS&version=1.1.1&request=GetMap&layers=fwi_current&styles=&srs=EPSG:3857&bbox={bbox-epsg-3857}&width=256&height=256&format=image/png&transparent=true`
-  return { type: 'raster' as const, tiles: [`${CWFIS_WMS}?${q}`], tileSize: 256, attribution: 'Fire weather © Natural Resources Canada (CWFIS)' }
+/** Today's Ignition Risk from the static exposure baked into the tiles: 100 × exposure × multiplier. */
+export const riskExpr = (multiplier: number): ExpressionSpecification => ['round', ['*', 100 * multiplier, ['to-number', ['get', 'exposure'], 0]]]
+
+export function riskColor(multiplier: number): ExpressionSpecification {
+  return ['step', riskExpr(multiplier), BAND.low.color, ELEVATED, BAND.elevated.color, CRITICAL, BAND.critical.color]
 }
 
-export function drynessLayer(): LayerSpecification {
-  return { id: L.dryness, type: 'raster', source: DRYNESS_SOURCE, layout: { visibility: 'none' }, paint: { 'raster-opacity': 0.35 } }
-}
+/** Homes the simulation has ignited get a feature-state `ignited` flag; the footprint turns black-orange. */
+const IGNITED = ['boolean', ['feature-state', 'ignited'], false] as ExpressionSpecification
+const CLEARED = ['boolean', ['feature-state', 'cleared'], false] as ExpressionSpecification
+const SELECTED = ['boolean', ['feature-state', 'selected'], false] as ExpressionSpecification
+const lineColor = (multiplier: number): ExpressionSpecification => ['case', SELECTED, '#48aff0', IGNITED, '#ff6e00', CLEARED, '#3dcc91', riskColor(multiplier)]
 
-export function leafoffLayer(): LayerSpecification {
-  return {
-    id: L.leafoff,
-    type: 'fill',
-    source: LEAFOFF_SOURCE,
-    'source-layer': 'leafoff',
-    layout: { visibility: 'none' },
-    paint: {
-      'fill-color': ['match', ['get', 'drop_class'], 1, LEAFOFF_COLORS[0], 2, LEAFOFF_COLORS[1], LEAFOFF_COLORS[2]],
-      'fill-opacity': ['match', ['get', 'drop_class'], 1, 0.3, 2, 0.45, 0.6],
-      'fill-antialias': false,
-    },
-  }
-}
-
-export function hazardLayer(cats: Categories, opacity: number, satellite = false): LayerSpecification {
-  return {
-    id: L.hazardFill,
-    type: 'fill',
-    source: HAZARD_SOURCE,
-    'source-layer': 'hazard',
-    paint: { 'fill-color': hazardColor(cats), 'fill-opacity': hazardOpacity(opacity, satellite), 'fill-antialias': false },
-  }
-}
-
-export function buildingLayers(): LayerSpecification[] {
+export function buildingLayers(multiplier: number): LayerSpecification[] {
   return [
+    {
+      id: L.buildingsGlow,
+      type: 'line',
+      source: BUILDINGS_SOURCE,
+      'source-layer': 'buildings',
+      minzoom: 12,
+      filter: ['>=', riskExpr(multiplier), ELEVATED],
+      paint: { 'line-color': riskColor(multiplier), 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 16, 8], 'line-blur': 6, 'line-opacity': 0.55 },
+    },
     {
       id: L.buildingsFill,
       type: 'fill',
       source: BUILDINGS_SOURCE,
       'source-layer': 'buildings',
-      paint: { 'fill-color': buildingColor, 'fill-opacity': 0.9 },
+      paint: {
+        'fill-color': ['case', IGNITED, '#1a0a05', CLEARED, '#3dcc91', riskColor(multiplier)],
+        'fill-opacity': ['case', IGNITED, 0.95, ['interpolate', ['linear'], ['zoom'], 11, 0.55, 15, 0.9]],
+      },
     },
     {
       id: L.buildingsLine,
       type: 'line',
       source: BUILDINGS_SOURCE,
       'source-layer': 'buildings',
-      minzoom: 14,
-      paint: {
-        'line-color': buildingOutline,
-        'line-width': ['case', ['==', ['get', 'coverage_complete'], false], 1.5, ['==', ['get', 'needs_evaluation'], true], 1.5, 0.6],
-        'line-dasharray': ['case', ['==', ['get', 'coverage_complete'], false], ['literal', [2, 1.5]], ['literal', [1, 0]]],
-      },
+      minzoom: 13,
+      paint: { 'line-color': lineColor(multiplier), 'line-width': ['case', SELECTED, 3, IGNITED, 1.5, 0.7], 'line-opacity': 0.9 },
     },
   ]
+}
+
+export function restyleBuildings(map: MLMap, multiplier: number) {
+  if (!map.getLayer(L.buildingsFill)) return
+  map.setFilter(L.buildingsGlow, ['>=', riskExpr(multiplier), ELEVATED])
+  map.setPaintProperty(L.buildingsGlow, 'line-color', riskColor(multiplier))
+  map.setPaintProperty(L.buildingsFill, 'fill-color', ['case', IGNITED, '#1a0a05', CLEARED, '#3dcc91', riskColor(multiplier)])
+  map.setPaintProperty(L.buildingsLine, 'line-color', lineColor(multiplier))
 }
 
 export const NO_SELECTION: ExpressionSpecification = ['==', ['id'], -1]
@@ -128,20 +92,47 @@ export function selectedLayers(): LayerSpecification[] {
   return [
     {
       id: L.selectedRing,
-      type: 'fill',
+      type: 'line',
       source: BUILDINGS_SOURCE,
       'source-layer': 'rings',
       filter: NO_SELECTION,
-      paint: { 'fill-color': '#22d3ee', 'fill-opacity': 0.2, 'fill-outline-color': '#67e8f9' },
-    },
-    {
-      id: L.selectedOutline,
-      type: 'line',
-      source: SELECTED_SOURCE,
-      layout: { 'line-join': 'round' },
-      paint: { 'line-color': '#22d3ee', 'line-width': 3 },
+      paint: { 'line-color': '#48aff0', 'line-width': 1.5, 'line-dasharray': [3, 2], 'line-opacity': 0.9 },
     },
   ]
+}
+
+export function isochroneLayers(): LayerSpecification[] {
+  return [
+    {
+      id: L.isoLine,
+      type: 'line',
+      source: ISO_SOURCE,
+      layout: { 'line-join': 'round' },
+      paint: {
+        'line-color': ['interpolate', ['linear'], ['get', 'minutes'], 60, '#ffe39f', 180, '#ffb366', 360, '#ff7373', 720, '#c22762'],
+        'line-width': 1.5,
+        'line-opacity': 0.35,
+        'line-dasharray': [4, 3],
+      },
+    },
+    {
+      id: L.isoLabel,
+      type: 'symbol',
+      source: ISO_SOURCE,
+      layout: { 'symbol-placement': 'line', 'text-field': ['get', 'label'], 'text-size': 11, 'text-font': ['Noto Sans Regular'], 'symbol-spacing': 400 },
+      paint: { 'text-color': '#f6f7f9', 'text-halo-color': '#10161a', 'text-halo-width': 1.2 },
+    },
+  ]
+}
+
+export function breaksLayer(): LayerSpecification {
+  return {
+    id: L.breaksLine,
+    type: 'line',
+    source: BREAKS_SOURCE,
+    layout: { 'line-cap': 'round' },
+    paint: { 'line-color': '#3dcc91', 'line-width': ['interpolate', ['exponential', 2], ['zoom'], 12, 2, 18, 40], 'line-opacity': 0.75 },
+  }
 }
 
 export function firstSymbolLayer(layers: LayerSpecification[]): string | undefined {
@@ -150,5 +141,5 @@ export function firstSymbolLayer(layers: LayerSpecification[]): string | undefin
 
 /** Basemap layers that should hide under satellite imagery (everything except labels). */
 export function basemapLayerIds(style: StyleSpecification): string[] {
-  return style.layers.filter((l) => l.type !== 'symbol' && !l.id.startsWith('wf-')).map((l) => l.id)
+  return style.layers.filter((l) => l.type !== 'symbol' && l.type !== 'background').map((l) => l.id)
 }

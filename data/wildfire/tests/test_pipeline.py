@@ -97,22 +97,37 @@ def test_every_legend_code_in_categories_has_known_category():
         assert entry["category"] in pipeline.CATEGORIES["categories"], code
 
 
-def test_scan_priority_orders_inputs_sensibly():
-    from pipeline import BuildingResult, scan_priority
+def test_exposure_orders_inputs_sensibly():
+    from pipeline import BuildingResult, exposure_of, fuel_exposure, leafoff_exposure
 
     def res(overlap, within, dist):
         return BuildingResult(overlap, within, None, None, False, False, True, dist, [], [])
 
-    on_hazard = scan_priority(res(True, True, 0.0), 0.4)
-    near = scan_priority(res(False, True, 5.0), 0.4)
-    far_in_ring = scan_priority(res(False, True, 28.0), 0.4)
-    clear = scan_priority(res(False, False, 300.0), 0.4)
-    assert on_hazard == 100
-    assert on_hazard > near > far_in_ring > clear
-    # fresh litter raises the score, no satellite view falls back to neutral (0.5 litter weight)
-    assert scan_priority(res(True, True, 0.0), 0.0) == 50
-    assert scan_priority(res(True, True, 0.0), None) == 50
-    assert 0 <= clear <= 10
+    on_hazard = fuel_exposure(res(True, True, 0.0), 1.0)
+    near = fuel_exposure(res(False, True, 5.0), 0.6)
+    far_in_ring = fuel_exposure(res(False, True, 28.0), 0.3)
+    clear = fuel_exposure(res(False, False, 300.0), 0.0)
+    assert on_hazard == 1.0
+    assert on_hazard > near > far_in_ring > clear == 0.0
+    assert leafoff_exposure(None) == 0.5
+    assert leafoff_exposure(0.0) == 0.0
+    assert leafoff_exposure(0.7) == 1.0
+    assert abs(exposure_of(1.0, 1.0, 4) - 1.0) < 1e-9
+    assert abs(exposure_of(1.0, 1.0, 8) - 1.0) < 1e-9  # neighbours saturate at the cap
+    assert exposure_of(0.0, 0.5, 0) == 0.125
+    assert exposure_of(1.0, 0.5, 0) > exposure_of(0.5, 1.0, 0)  # fuel weighs more than leaf-off
+
+
+def test_fuel_cover_is_rank_weighted_share():
+    from pipeline import fuel_cover
+
+    arr = make_raster()
+    # 2x2 cells fully inside the Extreme block
+    assert fuel_cover(box(930, 300, 990, 360), arr, TRANSFORM, NODATA) == 1.0
+    # non-fuel only
+    assert fuel_cover(box(300, 300, 360, 360), arr, TRANSFORM, NODATA) == 0.0
+    # half Extreme (x >= 900), half non-fuel
+    assert abs(fuel_cover(box(870, 300, 930, 360), arr, TRANSFORM, NODATA) - 0.5) < 1e-9
 
 
 def test_mean_under_ignores_nan_and_outside():

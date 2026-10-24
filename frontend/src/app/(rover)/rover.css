@@ -1,6 +1,8 @@
 /* Tailwind for the laptop pages. Classes are read from everything under src/ (the path is relative to
    this file); the splat pages have their own root layout and CSS, so this never applies to them. */
 @import 'tailwindcss' source('../..');
+@import '@blueprintjs/core/lib/css/blueprint.css';
+@import '@blueprintjs/icons/lib/css/blueprint-icons.css';
 
 body {
   @apply bg-zinc-950 text-zinc-100 antialiased;
@@ -8,3 +10,65 @@ body {
   user-select: none;
   touch-action: manipulation;
 }
+
+/* ---- Wildfire ops console (Blueprint dark, Palantir-ish) ---- */
+.ops {
+  --ops-bg: #10161a;
+  --ops-panel: #1c2127;
+  --ops-panel-2: #252a31;
+  --ops-border: #394b59;
+  --ops-text: #f6f7f9;
+  --ops-muted: #abb3bf;
+  --ops-cyan: #48aff0;
+  --ops-amber: #ffb366;
+  --ops-red: #ff7373;
+  --ops-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  background: var(--ops-bg);
+  color: var(--ops-text);
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+}
+.ops .mono { font-family: var(--ops-mono); font-variant-numeric: tabular-nums; }
+.ops .label {
+  font-family: var(--ops-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ops-muted);
+}
+.ops .panel { background: var(--ops-panel); border: 1px solid var(--ops-border); }
+.ops .hair { border-color: var(--ops-border); }
+.ops .grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(72, 175, 240, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(72, 175, 240, 0.06) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.ops .scan::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, 0.12) 2px 3px);
+}
+.ops .row-hover:hover { background: var(--ops-panel-2); }
+.ops .selected { background: rgba(72, 175, 240, 0.12); box-shadow: inset 2px 0 0 var(--ops-cyan); }
+
+@keyframes ops-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.ops .blink { animation: ops-blink 1.2s steps(1) infinite; }
+@keyframes ops-sweep { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+.ops .sweep { position: relative; overflow: hidden; }
+.ops .sweep::before {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(72, 175, 240, 0.25), transparent);
+  animation: ops-sweep 1.6s linear infinite;
+}
+@keyframes ops-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.ops .rise { animation: ops-rise 0.25s ease-out both; }
+.ops ::-webkit-scrollbar { width: 6px; height: 6px; }
+.ops ::-webkit-scrollbar-thumb { background: var(--ops-border); }
+.ops .bp6-tab { font-family: var(--ops-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
+.ops .bp6-tab-indicator { background-color: var(--ops-cyan); }
+.ops input.bp6-input { background: #10161a; box-shadow: inset 0 0 0 1px var(--ops-border); }
