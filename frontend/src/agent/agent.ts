@@ -67,6 +67,8 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
     close: (peer, code, reason) => publish({ kind: 'close', peer: peer.id, code, reason }),
   };
   const hub = new LiveHub(config.live, transport, startEstimator ?? (() => startDepthWorker(config)));
+  // The first keyframe would otherwise wait for the depth model to load.
+  hub.warm();
   const store = new JobStore(redis, k.jobs);
   const trainer = new Trainer(store, storage, config);
 

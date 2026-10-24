@@ -48,6 +48,10 @@ public class SplatCaptureModule: Module {
     }
 
     // The Wi-Fi camera: an MJPEG stream of the preview for the web app's live mode (CameraStreamServer).
+    Function("setLiveServer") { (url: String?, token: String?) in
+      CaptureController.shared.setLiveServer(url: url.flatMap { URL(string: $0) }, token: token)
+    }
+
     Function("startCameraStream") { (port: Int) -> [String: Any] in
       CaptureController.shared.startCameraStream(port: port)
       return CaptureController.shared.cameraStreamStatus()

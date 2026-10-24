@@ -71,7 +71,13 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
   // frameQueue state
   private var recording: Recording?
+  /// The stream to the splat server's live reconstruction: connected ahead of a recording (standing
+  /// by, see `armStandby`) so the recording streams from its first frame, then carrying it.
   private var live: LiveStreamer?
+  /// Where live streaming goes, as the app last said (`setLiveServer`); nil turns it off.
+  private var liveServer: (url: URL, token: String?)?
+  /// `previewVisible`, for the frame queue.
+  private var previewShown = false
   private var detectionRequest: DetectionRequest?
   /// The newest frame's camera, for `currentCamera` (the rover's steering loop polls it).
   private var latestCamera: DetectionCamera?
@@ -121,12 +127,50 @@ final class CaptureController: NSObject, ARSessionDelegate {
     previewVisible = visible
     if visible {
       runSession()
+      frameQueue.async {
+        self.previewShown = true
+        self.armStandby()
+      }
     } else {
       frameQueue.async {
+        self.previewShown = false
         guard self.recording == nil else { return }
+        self.disarmStandby()
         DispatchQueue.main.async { self.pauseIfHidden() }
       }
     }
+  }
+
+  /// Any thread. Where recordings stream for live reconstruction, from now on; nil for nowhere. A
+  /// connection is made straight away while the viewfinder is on screen, so a recording starts
+  /// streaming the moment it starts.
+  func setLiveServer(url: URL?, token: String?) {
+    frameQueue.async {
+      self.liveServer = url.map { ($0, token) }
+      if url == nil {
+        self.disarmStandby()
+      } else {
+        self.armStandby()
+      }
+    }
+  }
+
+  /// Frame queue only. Connects to the splat server ahead of a recording, unless already connected
+  /// there, no recording can start (viewfinder hidden, front camera) or one is in progress.
+  private func armStandby() {
+    guard let liveServer, recording == nil, previewShown, !frontCamera, Self.supportsARKit else { return }
+    if let live, !live.closed, live.sessionId == nil, live.serverURL == liveServer.url, live.token == liveServer.token {
+      return
+    }
+    live?.close()
+    live = LiveStreamer(serverURL: liveServer.url, token: liveServer.token, frameQueue: frameQueue, ciContext: ciContext)
+  }
+
+  /// Frame queue only. Drops a standby connection (never a recording's).
+  private func disarmStandby() {
+    guard let live, live.sessionId == nil else { return }
+    live.close()
+    self.live = nil
   }
 
   /// Main thread only. Switches the preview's camera, restarting a running session on it. The front
@@ -137,7 +181,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
     camera = position
     frameQueue.async {
       self.frontCamera = position == .front
-      guard self.frontCamera, let recording = self.recording else { return }
+      guard self.frontCamera else { return self.armStandby() }
+      self.disarmStandby()
+      guard let recording = self.recording else { return }
       recording.frozen = true
       self.live?.close(reason: "Switched to the front camera, so live streaming stopped")
     }
@@ -197,9 +243,18 @@ final class CaptureController: NSObject, ARSessionDelegate {
         let mode: CaptureMode = Self.supportsLiDAR && !settings.forceFeaturePoints ? .lidar : .features
         let recording = try Recording(settings: settings, mode: mode)
         self.recording = recording
-        self.live = settings.liveServerURL.flatMap {
-          LiveStreamer(serverURL: $0, token: settings.serverToken, sessionId: recording.id, mode: mode,
-                       frameQueue: self.frameQueue, ciContext: self.ciContext)
+        if let url = settings.liveServerURL {
+          // The standby connection, if it's to this server; otherwise a new one, which streams once it connects.
+          if let live = self.live, !live.closed, live.sessionId == nil, live.serverURL == url, live.token == settings.serverToken {
+            live.begin(sessionId: recording.id, mode: mode)
+          } else {
+            self.live?.close()
+            self.live = LiveStreamer(serverURL: url, token: settings.serverToken, frameQueue: self.frameQueue, ciContext: self.ciContext)
+            self.live?.begin(sessionId: recording.id, mode: mode)
+          }
+        } else {
+          self.live?.close()
+          self.live = nil
         }
         self.emitStatus()
         completion(.success(["captureId": recording.id, "mode": mode.rawValue]))
@@ -214,8 +269,11 @@ final class CaptureController: NSObject, ARSessionDelegate {
       guard let recording = self.recording else { return completion(.failure(CaptureError.notRecording)) }
       recording.stopping = true
       self.recording = nil
+      // The server marks the recording's session finished when its socket closes; the next recording
+      // gets a connection of its own, made now so it too starts at once.
       self.live?.close()
       self.live = nil
+      self.armStandby()
       self.emitStatus()
       DispatchQueue.main.async { self.pauseIfHidden() }
       // Every frame accepted before `stopping` was already queued here, so this runs after them.
@@ -453,7 +511,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
     // A restarted session has a new world origin, so frames after it can't join a
     // recording made before it: freeze the recording at what it has.
     recording?.frozen = true
-    live?.close(reason: "Tracking was lost, so live streaming stopped")
+    if live?.sessionId != nil { live?.close(reason: "Tracking was lost, so live streaming stopped") }
     recoveringFromFailure = true
     emitStatus(error: error.localizedDescription)
     DispatchQueue.main.async { self.restartAfterFailure() }

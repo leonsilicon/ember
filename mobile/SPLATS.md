@@ -169,7 +169,12 @@ bun scripts/live-replay.ts data/captures/<id>/<id>   # try it without the phone
 ```
 
 In the app it's *Live 3D while recording* in the camera options (the ⋯ menu beside the record
-button), on unless turned off, sent to the server address under All Captures; while recording, the cube in the status rail says how
+button), on unless turned off, sent to the server address under All Captures. So that a recording
+shows up at once, the socket to the server is opened while the viewfinder is on screen (standing
+by; a recording announces itself over it) and the floating view's page is loaded then too, following
+the newest session until it's locked onto the recording; until the server has fused a keyframe, the
+phone sends one every 0.3 s rather than every second, since the first few are often skipped for
+having too few feature points in view. While recording, the cube in the status rail says how
 many keyframes the server has fused (tap it), and the reconstruction floats top left of the
 viewfinder. Tap it to swap it with the camera, FaceTime style (drag the full-screen one to orbit;
 it follows the phone again a few seconds later), and tap the floating camera to swap back. That view is the same page
