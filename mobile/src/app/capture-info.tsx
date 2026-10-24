@@ -5,18 +5,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
 
-import { SplatPreview } from '@/components/splat-preview';
+import { SplatStatus } from '@/components/splat-status';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import { useDebugSettings } from '@/hooks/use-debug-settings';
+import { useSplatSettings } from '@/hooks/use-splat-settings';
 import { compact, describeTime, formatBytes, formatDuration } from '@/lib/captures';
 
-/** A capture's details, in a sheet over the gallery like the Photos app's Info, with its debug splat preview. */
+/** A capture's details, in a sheet over the gallery like the Photos app's Info, with its splat's progress. */
 export default function CaptureInfoScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
-  const debug = useDebugSettings();
+  const splat = useSplatSettings();
   /** Undefined while loading; null if it's gone. */
   const [capture, setCapture] = useState<SavedCapture | null>();
 
@@ -78,7 +78,7 @@ export default function CaptureInfoScreen() {
           </ThemedText>
         </ThemedView>
 
-        {debug.splatPreview && <SplatPreview capture={capture} serverUrl={debug.serverUrl} />}
+        <SplatStatus capture={capture} serverUrl={splat.serverUrl} />
       </ScrollView>
     </ThemedView>
   );

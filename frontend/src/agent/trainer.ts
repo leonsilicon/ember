@@ -28,6 +28,8 @@ export class Trainer {
   private queue: string[] = [];
   private active: string | null = null;
   private brush: ChildProcess | null = null;
+  /** Jobs the app cancelled while they were training: their Brush is stopped, and nothing is kept. */
+  private cancelled = new Set<string>();
   private closed = false;
   private idle: Promise<void> = Promise.resolve();
 
@@ -71,8 +73,33 @@ export class Trainer {
   async close() {
     this.closed = true;
     this.queue = [];
-    this.brush?.kill();
+    this.stopBrush();
     await this.idle;
+  }
+
+  /** Pauses the job if Brush is on it (a queued one is held back by the app, see control/route.ts). */
+  pause(id: string) {
+    if (this.active === id) this.brush?.kill('SIGSTOP');
+  }
+
+  /** Lets Brush carry on with the job, or trains it from the start if it isn't on it (the agent restarted). */
+  resume(id: string) {
+    if (this.active === id) this.brush?.kill('SIGCONT');
+    else this.enqueue(id);
+  }
+
+  /** Drops the job: stops Brush if it's on it, and keeps none of its output. */
+  cancel(id: string) {
+    this.queue = this.queue.filter((queued) => queued !== id);
+    if (this.active !== id) return;
+    this.cancelled.add(id);
+    this.stopBrush();
+  }
+
+  /** A paused process doesn't see a termination signal until it runs again. */
+  private stopBrush() {
+    this.brush?.kill('SIGCONT');
+    this.brush?.kill();
   }
 
   private async pump() {
@@ -97,7 +124,8 @@ export class Trainer {
     // The queue can repeat a job (it is also re-queued when the agent starts); train it only once.
     if (stored?.state !== 'queued' && stored?.state !== 'training') return;
     let job: StoredJob = stored;
-    const save = async (patch: Partial<StoredJob>) => (job = await this.store.put({ ...job, ...patch }));
+    // On top of what's stored now: the app may have paused or cancelled the job meanwhile.
+    const save = async (patch: Partial<StoredJob>) => (job = await this.store.put({ ...((await this.store.get(id)) ?? job), ...patch }));
     const { brushBin, dataDir, steps, exportEvery, maxResolution, shDegree, growthFraction, maxSplats } = this.config;
     if (!brushBin) {
       await save({ state: 'failed', error: 'Brush is not installed on the Mac; run frontend/scripts/install-brush.sh' });
@@ -172,12 +200,18 @@ export class Trainer {
     await log.close();
     while (!done) {
       await Promise.race([exit, sleep(1000)]);
-      if (this.closed) break;
+      if (this.closed || this.cancelled.has(id)) break;
       if (!done) await this.publishSnapshot(job, false, save);
     }
 
     const code = await exit;
     if (this.closed) return;
+    if (this.cancelled.delete(id)) {
+      await rm(runDir, { recursive: true, force: true });
+      await this.storage.remove([...job.snapshots.map((step) => blobPath.snapshot(id, step)), blobPath.zip(id)]);
+      await save({ state: 'cancelled', step: 0, snapshots: [], gaussians: null, trainSeconds: null, error: null });
+      return;
+    }
     // Brush may have written its last snapshots while an upload was still going.
     await this.publishSnapshot(job, true, save);
     const trainSeconds = Math.round((performance.now() - started) / 100) / 10;

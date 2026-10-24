@@ -2,8 +2,12 @@ import type Redis from 'ioredis';
 
 import type { CaptureMode } from './dataset';
 
-/** `uploading` until the phone's zip is in Blob, then `queued` until the Mac agent trains it. */
-export type JobState = 'uploading' | 'queued' | 'training' | 'done' | 'failed';
+/**
+ * `uploading` until the phone's zip is in Blob, then `queued` until the Mac agent trains it. The
+ * app can pause a queued or training job (`paused`) and cancel one (`cancelled`: nothing is kept,
+ * and it trains again only when asked).
+ */
+export type JobState = 'uploading' | 'queued' | 'training' | 'paused' | 'done' | 'failed' | 'cancelled';
 
 /** One capture and the splat being trained from it. This is the API's public shape. */
 export type Job = {
@@ -27,9 +31,13 @@ export type Job = {
  * The job as stored: also the steps whose snapshots are in Blob. That is the newest, and the one
  * before it while training, so a viewer mid-download of it when a newer one lands still gets it.
  */
-export type StoredJob = Job & { snapshots: number[] };
+export type StoredJob = Job & {
+  snapshots: number[];
+  /** While paused: what it was, so resuming queues it again or lets Brush carry on. */
+  pausedFrom?: 'queued' | 'training';
+};
 
-export function publicJob({ snapshots: _, ...job }: StoredJob): Job {
+export function publicJob({ snapshots: _, pausedFrom: __, ...job }: StoredJob): Job {
   return job;
 }
 

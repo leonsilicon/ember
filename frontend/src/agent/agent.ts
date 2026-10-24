@@ -116,6 +116,15 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
     }
   }
 
+  /** A queue entry: a capture id to train, or `pause:`, `resume:` or `cancel:` and the id (see control/route.ts). */
+  function act(entry: string) {
+    const [, verb, id] = /^(pause|resume|cancel):(.+)$/.exec(entry) ?? [];
+    if (verb === 'pause') trainer.pause(id);
+    else if (verb === 'resume') trainer.resume(id);
+    else if (verb === 'cancel') trainer.cancel(id);
+    else trainer.enqueue(entry);
+  }
+
   async function readQueue() {
     // Anything queued or interrupted while the agent was away trains now.
     for (const job of await store.list()) {
@@ -124,7 +133,7 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
     while (running) {
       try {
         const popped = await queueReader.blpop(k.queue, BLOCK_SECONDS);
-        if (popped) trainer.enqueue(popped[1]);
+        if (popped) act(popped[1]);
       } catch (error) {
         if (!running) return;
         console.error('queue', error);

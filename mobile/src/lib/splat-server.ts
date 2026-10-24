@@ -1,7 +1,7 @@
 /**
- * Debug splat preview: a capture goes to the splat server (frontend, a Next.js app on Vercel), a
- * Mac running its agent trains it into a splat with Brush, and it is viewed in a browser, so the
- * result can be compared with the production reconstruction.
+ * The splat server (frontend, a Next.js app on Vercel): a capture goes there, a Mac running its
+ * agent trains it into a splat with Brush, and the splat is viewed in a browser. While recording,
+ * the same server rebuilds the scene live from the stream the phone sends it.
  */
 import Constants from 'expo-constants';
 import { Platform, TurboModuleRegistry, type TurboModule } from 'react-native';
@@ -9,8 +9,11 @@ import { Platform, TurboModuleRegistry, type TurboModule } from 'react-native';
 /** A capture's training job, as the splat server reports it. */
 export type SplatJob = {
   id: string;
-  /** `uploading` until the zip is in, `queued` until the Mac agent picks it up. */
-  state: 'uploading' | 'queued' | 'training' | 'done' | 'failed';
+  /**
+   * `uploading` until the zip is in, `queued` until the Mac agent picks it up; `paused` and
+   * `cancelled` by the app (a cancelled one keeps nothing).
+   */
+  state: 'uploading' | 'queued' | 'training' | 'paused' | 'done' | 'failed' | 'cancelled';
   steps: number;
   /** Training step of the newest viewable snapshot (0 = nothing to view yet). */
   step: number;
@@ -79,6 +82,18 @@ export async function getJob(serverUrl: string, captureId: string): Promise<Spla
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as SplatJob;
+}
+
+/** Pauses, resumes or cancels a capture's training; resolves with the job as it is now. */
+export async function controlJob(serverUrl: string, captureId: string, action: 'pause' | 'resume' | 'cancel'): Promise<SplatJob> {
+  const res = await fetch(endpoint(serverUrl, `/api/captures/${encodeURIComponent(captureId)}/control`), {
+    method: 'POST',
+    headers: { ...authorization, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
+  const body = (await res.json().catch(() => ({}))) as SplatJob & { error?: string };
+  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  return body;
 }
 
 /** The browser page that shows recordings being reconstructed live (to show; it asks for the token). */

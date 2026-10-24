@@ -49,13 +49,13 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useCameraZoom, useZoomLevel, zoomTo } from '@/hooks/use-camera-zoom';
-import { useDebugSettings } from '@/hooks/use-debug-settings';
 import { useDetections, type Detection, type Detections } from '@/hooks/use-detections';
 import { useCameraStream } from '@/hooks/use-camera-stream';
 import { useRoverBrain } from '@/hooks/use-rover-brain';
+import { updateSplatSettings, useSplatSettings } from '@/hooks/use-splat-settings';
 import { compact } from '@/lib/captures';
 import { useRover } from '@/lib/rover';
-import { liveEmbedUrl, SPLAT_TOKEN } from '@/lib/splat-preview';
+import { liveEmbedUrl, SPLAT_TOKEN } from '@/lib/splat-server';
 
 type Phase =
   | { kind: 'ready' }
@@ -210,7 +210,7 @@ export default function CameraScreen() {
   // The web app's live mode watches this camera over the Wi-Fi while the screen is open.
   const cameraStream = useCameraStream(capabilities.arkit && focused);
   const { stopAutopilot } = brain;
-  const debug = useDebugSettings();
+  const splat = useSplatSettings();
   const [caption, showCaption] = useCaption();
   // Like the Camera app, a sideways swipe across the viewfinder moves to the next or previous mode.
   // Only with one finger: two pinch to zoom.
@@ -245,7 +245,7 @@ export default function CameraScreen() {
   async function startRecording() {
     try {
       // With Live 3D on, the server rebuilds the scene as it records, shown here and at <server>/live.
-      const liveServerUrl = debug.splatPreview && debug.liveStream ? debug.serverUrl : undefined;
+      const liveServerUrl = splat.liveStream ? splat.serverUrl : undefined;
       const { captureId } = await SplatCapture.startCapture({
         liveServerUrl,
         serverToken: SPLAT_TOKEN,
@@ -359,6 +359,8 @@ export default function CameraScreen() {
       onDetectionChange={setDetection}
       featurePoints={featurePoints}
       onFeaturePointsChange={setFeaturePoints}
+      liveStream={splat.liveStream}
+      onLiveStreamChange={(liveStream) => updateSplatSettings({ liveStream })}
       debug={debugOverlay}
       onDebugChange={setDebugOverlay}
       detectionInfo={detections.status ?? detections.model}

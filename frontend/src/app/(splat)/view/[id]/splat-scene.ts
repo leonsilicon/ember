@@ -14,8 +14,12 @@ function describe(job: Job) {
       return 'Queued for training on the Mac…';
     case 'training':
       return `Training ${job.step.toLocaleString()} / ${job.steps.toLocaleString()} steps${count} · ${seed}`;
+    case 'paused':
+      return `Paused at ${job.step.toLocaleString()} / ${job.steps.toLocaleString()} steps${count} · ${seed}`;
     case 'failed':
       return `Failed: ${job.error}`;
+    case 'cancelled':
+      return 'Cancelled from the phone; nothing was kept.';
     case 'done':
       return `Done in ${job.trainSeconds} s${count} · ${seed}`;
   }
@@ -133,7 +137,7 @@ export class SplatScene {
       this.render();
       // One download at a time; a newer snapshot is picked up on the next poll.
       if (job.step > this.shownStep && !this.loading) await this.show(job.step);
-      const pending = job.state === 'uploading' || job.state === 'queued' || job.state === 'training';
+      const pending = job.state === 'uploading' || job.state === 'queued' || job.state === 'training' || job.state === 'paused';
       if (pending || job.step > this.shownStep) this.timer = setTimeout(() => this.poll(), 2000);
     } catch (error) {
       this.viewerError = error instanceof Error ? error.message : String(error);

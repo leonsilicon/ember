@@ -2,17 +2,17 @@ import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
-import { updateDebugSettings, useDebugSettings } from '@/hooks/use-debug-settings';
+import { updateSplatSettings, useSplatSettings } from '@/hooks/use-splat-settings';
 import { useTheme } from '@/hooks/use-theme';
 import { describeDay, describeTime, formatDuration } from '@/lib/captures';
-import { checkServer, liveViewerUrl } from '@/lib/splat-preview';
+import { checkServer, liveViewerUrl } from '@/lib/splat-server';
 
 const COLUMNS = 3;
 const GAP = 2;
@@ -92,26 +92,25 @@ export default function AllCapturesScreen() {
             in).
           </ThemedText>
 
-          <DebugCard />
+          <ServerCard />
         </View>
       </ScrollView>
     </ThemedView>
   );
 }
 
-/** Debug-only: preview splats trained on a Mac (frontend) to compare with the real reconstruction. */
-function DebugCard() {
+/** The splat server: where captures train and recordings stream live, and whether its Mac is ready. */
+function ServerCard() {
   const theme = useTheme();
-  const debug = useDebugSettings();
+  const splat = useSplatSettings();
   // Only set while the field is being edited; otherwise it shows the shared URL.
   const [draftUrl, setDraftUrl] = useState<string | null>(null);
   const [server, setServer] = useState<string>('Checking…');
 
   useFocusEffect(
     useCallback(() => {
-      if (!debug.splatPreview) return;
       let alive = true;
-      checkServer(debug.serverUrl)
+      checkServer(splat.serverUrl)
         .then(
           (h) =>
             alive &&
@@ -130,48 +129,33 @@ function DebugCard() {
       return () => {
         alive = false;
       };
-    }, [debug.splatPreview, debug.serverUrl]),
+    }, [splat.serverUrl]),
   );
 
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
-      <View style={styles.cardHeader}>
-        <ThemedText type="smallBold">Debug: splat preview</ThemedText>
-        <Switch value={debug.splatPreview} onValueChange={(splatPreview) => updateDebugSettings({ splatPreview })} />
-      </View>
+      <ThemedText type="smallBold">Splat server</ThemedText>
       <ThemedText type="small" themeColor="textSecondary">
-        Sends a capture to the splat server, where a Mac running its agent trains it into a splat (Brush), and opens it
-        in the browser, to compare with the real reconstruction. The viewer link works on any device. Each
-        capture&apos;s Info has its preview.
+        A capture is turned into a splat the first time it&apos;s opened in the gallery: it goes to the server, where a
+        Mac running its agent trains it (Brush), and the gallery shows how it&apos;s going, with pause and cancel.
+        While Live 3D (in the camera options) is on, each recording streams there as well, and any browser can watch
+        it at <ThemedText type="code">{liveViewerUrl(splat.serverUrl)}</ThemedText>
       </ThemedText>
-      {debug.splatPreview && (
-        <>
-          <TextInput
-            value={draftUrl ?? debug.serverUrl}
-            onChangeText={setDraftUrl}
-            onEndEditing={() => {
-              if (draftUrl !== null) updateDebugSettings({ serverUrl: draftUrl.trim() });
-              setDraftUrl(null);
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
-          />
-          <ThemedText type="small" themeColor="textSecondary">
-            {server}
-          </ThemedText>
-          <View style={styles.cardHeader}>
-            <ThemedText type="smallBold">Live 3D while recording</ThemedText>
-            <Switch value={debug.liveStream} onValueChange={(liveStream) => updateDebugSettings({ liveStream })} />
-          </View>
-          <ThemedText type="small" themeColor="textSecondary">
-            Streams each recording to the server, which rebuilds the scene as you move. It floats over the camera while
-            you record (tap it to swap the two), and any browser can watch it at{' '}
-            <ThemedText type="code">{liveViewerUrl(debug.serverUrl)}</ThemedText>
-          </ThemedText>
-        </>
-      )}
+      <TextInput
+        value={draftUrl ?? splat.serverUrl}
+        onChangeText={setDraftUrl}
+        onEndEditing={() => {
+          if (draftUrl !== null) updateSplatSettings({ serverUrl: draftUrl.trim() });
+          setDraftUrl(null);
+        }}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
+      />
+      <ThemedText type="small" themeColor="textSecondary">
+        {server}
+      </ThemedText>
     </ThemedView>
   );
 }

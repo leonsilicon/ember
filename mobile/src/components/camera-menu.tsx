@@ -17,6 +17,9 @@ export type CameraMenuProps = {
   onDetectionChange: (detection: boolean) => void;
   featurePoints: boolean;
   onFeaturePointsChange: (featurePoints: boolean) => void;
+  /** Stream each recording to the splat server, which rebuilds it live in 3D, floating over the camera. */
+  liveStream: boolean;
+  onLiveStreamChange: (liveStream: boolean) => void;
   /** Shows timings over the viewfinder. */
   debug: boolean;
   onDebugChange: (debug: boolean) => void;
@@ -30,6 +33,8 @@ export function CameraMenu({
   onDetectionChange,
   featurePoints,
   onFeaturePointsChange,
+  liveStream,
+  onLiveStreamChange,
   debug,
   onDebugChange,
   detectionInfo,
@@ -70,6 +75,7 @@ export function CameraMenu({
           isOn={featurePoints}
           onIsOnChange={onFeaturePointsChange}
         />
+        <Toggle label="Live 3D while recording" systemImage="cube" isOn={liveStream} onIsOnChange={onLiveStreamChange} />
         <Toggle label="Debug" systemImage="ladybug" isOn={debug} onIsOnChange={onDebugChange} />
       </Menu>
     </Host>

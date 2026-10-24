@@ -22,7 +22,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
 
 import { Glass } from '@/components/glass';
+import { SplatStatus } from '@/components/splat-status';
 import { Spacing } from '@/constants/theme';
+import { useSplatSettings } from '@/hooks/use-splat-settings';
 import { describeDay, describeTime, formatDuration, shareCapture } from '@/lib/captures';
 
 function message(error: unknown) {
@@ -40,6 +42,7 @@ export default function GalleryScreen() {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();
+  const splat = useSplatSettings();
   /** Oldest first, so the newest is on the right, as in Photos. */
   const [captures, setCaptures] = useState<SavedCapture[] | null>(null);
   const [chrome, setChrome] = useState(true);
@@ -200,6 +203,10 @@ export default function GalleryScreen() {
           <Pressable accessibilityRole="button" onPress={() => setError(null)} style={styles.errorPanel}>
             <Text style={styles.errorText}>{error}</Text>
           </Pressable>
+        )}
+        {current && (
+          // Its splat: sent to the Mac to train the first time the capture is opened here, with pause and cancel.
+          <SplatStatus key={current.captureId} capture={current} serverUrl={splat.serverUrl} autoStart onDark />
         )}
         {current?.videoUri && (
           <PlaybackBar key={current.captureId} player={player} fallbackDuration={current.durationSeconds} />

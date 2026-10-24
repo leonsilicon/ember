@@ -5,6 +5,8 @@
 
 # JS
 node_modules/
+# `vercel pull` at the repo root, as the deploy workflow does it
+.vercel/
 
 # `vpx _dev` pane logs, and the crash log mprocs writes to its working directory
 .mprocs-logs/
@@ -38,3 +40,4 @@ __pycache__/
 # leaf_detector.py output next to input images
 *-detections.jpg
 *-detections.png
+.vercel

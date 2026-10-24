@@ -26,8 +26,8 @@ export async function POST(request: Request) {
   const id = CAPTURE_ID.test(requested) ? requested : `cap-${Date.now().toString(36)}`;
   const store = jobStore();
   const existing = await store.get(id);
-  if (existing?.state === 'queued' || existing?.state === 'training') {
-    return json({ error: `capture ${id} is already training` }, 409);
+  if (existing?.state === 'queued' || existing?.state === 'training' || existing?.state === 'paused') {
+    return json({ error: `capture ${id} is already ${existing.state}; cancel it first` }, 409);
   }
   // Uploading a capture again trains it from scratch.
   if (existing?.snapshots.length) await del(existing.snapshots.map((step) => blobPath.snapshot(id, step)));
