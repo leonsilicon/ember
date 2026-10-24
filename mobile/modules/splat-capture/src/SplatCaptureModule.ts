@@ -40,6 +40,8 @@ declare class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> 
   setLiveServer(url: string | null, token: string | null): void;
   startCameraStream(port: number): CameraStreamStatus;
   stopCameraStream(): void;
+  /** Hands the Wi-Fi camera's viewers the leaf detector's boxes: one JSON line, streamed at `/detections`. */
+  publishCameraDetections(json: string): void;
   cameraStreamStatus(): CameraStreamStatus;
   /**
    * Looks on the Wi-Fi for the other phones' camera servers (Bonjour `_rovercam._tcp`), leaving this

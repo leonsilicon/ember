@@ -63,6 +63,20 @@ export function formatDistance(metres: number | null | undefined) {
   return cm < 100 ? `${cm} cm` : `${metres.toFixed(1)} m`;
 }
 
+/**
+ * A box's tag: its label, then its LiDAR distance (or the detector's confidence without one), then the
+ * rover brain's note, e.g. "dry leaf 1.4 m · ✕ too big". The web app's live view shows the same text.
+ */
+export function detectionTag(
+  label: string,
+  confidence: number,
+  distance: number | null | undefined,
+  hasDistances: boolean,
+  caption: string | undefined,
+) {
+  return `${label} ${hasDistances ? formatDistance(distance) : `${Math.round(confidence * 100)}%`}${caption ? ` · ${caption}` : ''}`;
+}
+
 function rotateBox(box: Box, size: Size): Box {
   return {
     xmin: size.width - box.xmax,
@@ -122,9 +136,7 @@ export function DetectionOverlay({
             <View
               style={[styles.tag, top < 24 ? styles.tagInside : styles.tagAbove, { backgroundColor: color }]}>
               <ThemedText type="smallBold" style={styles.tagText} numberOfLines={1}>
-                {detection.label}{' '}
-                {distances ? formatDistance(distances[index]) : `${Math.round(detection.confidence * 100)}%`}
-                {captions?.[index] ? ` · ${captions[index]}` : ''}
+                {detectionTag(detection.label, detection.confidence, distances?.[index], distances != null, captions?.[index])}
               </ThemedText>
             </View>
           </Animated.View>

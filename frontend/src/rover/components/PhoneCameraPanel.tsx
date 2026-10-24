@@ -2,10 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DiscoveredPhone } from '../../phone-discovery'
 import { useFrameCapture } from '../hooks/useFrameCapture'
 import { CaptureControls } from './CaptureControls'
+import { useDetectionStream } from '../hooks/useDetectionStream'
+import { DetectionBoxes } from './DetectionBoxes'
 import { MjpegView } from './MjpegView'
-import { PHONE_CAMERA_PORT, phoneCameraOrigin } from '../phoneCamera'
+import { PHONE_CAMERA_PORT, phoneCameraOrigin, pickPhone } from '../phoneCamera'
 
 const STORAGE_KEY = 'rover.phoneCameraAddress'
+/** The id of the phone used last: how it's recognised after the Wi-Fi gives it a new address. */
+const ID_KEY = 'rover.phoneCameraId'
 const STATUS_TIMEOUT_MS = 3000
 const POLL_MS = 2000
 /** Missed status checks in a row before the phone counts as gone (an ended stream leaves its last frame up). */
@@ -16,13 +20,21 @@ const AUTO_RETRY_MS = 5000
 const CAPTURE_SIZE = 1920
 const CAPTURE_TIMEOUT_MS = 4000
 
-type PhoneStatus = { device: string; viewers: number; frames: number; width: number; height: number }
+type PhoneStatus = { id?: string; device: string; viewers: number; frames: number; width: number; height: number }
 
 type State =
   | { kind: 'idle' }
   | { kind: 'checking' }
   | { kind: 'streaming'; device: string }
   | { kind: 'error'; message: string }
+
+function readSavedId(): string | null {
+  try {
+    return localStorage.getItem(ID_KEY)
+  } catch {
+    return null
+  }
+}
 
 function readSaved(): string {
   try {
@@ -50,11 +62,14 @@ const displayAddress = (origin: string) => origin.replace(/^https?:\/\//, '').re
 /**
  * Capture from the camera of the iPhone riding on the rover, streamed over the Wi-Fi by the leaf detector
  * app while its camera screen is open. The live view is the MJPEG stream; captured frames are
- * full-resolution stills the phone encodes on request (`/frame.jpg?size=1920`). `discovered` is a phone the dev server
- * found on the Wi-Fi (usePhoneDiscovery): the panel links up with it by itself, unless the user stopped.
+ * full-resolution stills the phone encodes on request (`/frame.jpg?size=1920`). `phones` are the ones the dev server
+ * found on the Wi-Fi (usePhoneDiscovery): the panel links up by itself with the only one, or the one used last;
+ * with a choice to make (a shared Wi-Fi), it lists them to pick from. Not after the user pressed Stop.
  */
-export function PhoneCameraPanel({ discovered = null }: { discovered?: DiscoveredPhone | null }) {
+export function PhoneCameraPanel({ phones = [] }: { phones?: readonly DiscoveredPhone[] }) {
   const [address, setAddress] = useState(readSaved)
+  const [lastId, setLastId] = useState(readSavedId)
+  const discovered = pickPhone(phones, { id: lastId, origin: phoneCameraOrigin(address) })
   // A remembered phone is reconnected to as the panel opens.
   const [initialOrigin] = useState(() => phoneCameraOrigin(address))
   const [state, setState] = useState<State>(() => (initialOrigin ? { kind: 'checking' } : { kind: 'idle' }))
@@ -88,6 +103,14 @@ export function PhoneCameraPanel({ discovered = null }: { discovered?: Discovere
       shownFrames.current = 0
       lastFrames.current = null
       setState({ kind: 'streaming', device: status.device })
+      if (status.id) {
+        setLastId(status.id)
+        try {
+          localStorage.setItem(ID_KEY, status.id)
+        } catch {
+          // Private mode: it's just not remembered.
+        }
+      }
       // A fresh query each time, so reconnecting never reuses a stalled stream.
       setStreamUrl(`${target}/camera.mjpg?v=${Date.now()}`)
     } catch {
@@ -172,6 +195,11 @@ export function PhoneCameraPanel({ discovered = null }: { discovered?: Discovere
 
   const busy = state.kind === 'checking'
   const streaming = state.kind === 'streaming'
+
+  // The leaf detector's boxes, while linked: drawn over the picture, never into captured frames.
+  const [showBoxes, setShowBoxes] = useState(true)
+  const detections = useDetectionStream(streaming && showBoxes ? origin : null)
+  const frameAspect = detections && detections.width > 0 ? detections.width / detections.height : 3 / 4
 
   const capture = useFrameCapture(async () => {
     if (!origin) return null
@@ -262,22 +290,71 @@ export function PhoneCameraPanel({ discovered = null }: { discovered?: Discovere
         )}
       </form>
 
+      {(phones.length > 1 || (phones.length > 0 && !discovered)) && (
+        <div className="mt-3">
+          <p className="mb-1.5 text-xs text-zinc-400">
+            {phones.length === 1 ? 'A camera' : `${phones.length} cameras`} on this Wi-Fi{discovered ? '' : ': pick yours'}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {phones.map((phone) => {
+              const current = phone.origin === origin && (streaming || busy)
+              return (
+                <button
+                  key={phone.origin}
+                  type="button"
+                  aria-pressed={current}
+                  onClick={() => {
+                    setAddress(displayAddress(phone.origin))
+                    try {
+                      localStorage.setItem(STORAGE_KEY, displayAddress(phone.origin))
+                    } catch {
+                      // Private mode: the choice just isn't remembered.
+                    }
+                    setStopped(false)
+                    setStreamUrl(null)
+                    setState({ kind: 'checking' })
+                    void check(phone.origin)
+                  }}
+                  className={`rounded-md px-2.5 py-1 text-xs focus-visible:outline-2 focus-visible:outline-sky-400 ${
+                    current ? 'bg-sky-500 font-semibold text-zinc-950' : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+                  }`}
+                >
+                  {phone.device} <span className={current ? 'text-zinc-800' : 'text-zinc-500'}>· {displayAddress(phone.origin)}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="relative mt-3 flex aspect-[3/4] max-h-[420px] w-full items-center justify-center overflow-hidden rounded-lg bg-zinc-950">
         {streamUrl ? (
-          <MjpegView
-            url={streamUrl}
-            alt="Live view from the rover's iPhone"
-            className="h-full w-full object-contain"
-            onFrame={(jpeg) => {
-              shownFrames.current += 1
-              latestFrame.current = jpeg
-            }}
-            onEnd={() => {
-              setStreamUrl(null)
-              setFps(null)
-              setState({ kind: 'error', message: 'The phone stopped streaming. Is the rover app still open on its camera screen?' })
-            }}
-          />
+          // Sized to the frame, so the boxes' fractions land on the picture, not the letterbox.
+          <div className="relative h-full max-w-full" style={{ aspectRatio: frameAspect }}>
+            <MjpegView
+              url={streamUrl}
+              alt="Live view from the rover's iPhone"
+              className="h-full w-full object-fill"
+              onFrame={(jpeg) => {
+                shownFrames.current += 1
+                latestFrame.current = jpeg
+              }}
+              onEnd={() => {
+                setStreamUrl(null)
+                setFps(null)
+                setState({ kind: 'error', message: 'The phone stopped streaming. Is the rover app still open on its camera screen?' })
+              }}
+            />
+            {showBoxes && detections && <DetectionBoxes boxes={detections.boxes} />}
+            <button
+              type="button"
+              aria-pressed={showBoxes}
+              onClick={() => setShowBoxes((v) => !v)}
+              className="absolute right-2 bottom-2 rounded-md bg-zinc-950/80 px-2 py-1 text-[11px] font-semibold text-zinc-200 hover:bg-zinc-900 focus-visible:outline-2 focus-visible:outline-sky-400"
+            >
+              {showBoxes ? `Boxes on${detections ? ` · ${detections.boxes.length}` : ''}` : 'Boxes off'}
+            </button>
+          </div>
         ) : (
           <p className="max-w-[30ch] px-4 text-center text-xs leading-relaxed text-zinc-500">
             {state.kind === 'error'

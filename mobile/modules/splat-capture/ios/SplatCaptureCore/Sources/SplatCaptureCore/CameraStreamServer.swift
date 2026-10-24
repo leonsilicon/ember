@@ -9,7 +9,9 @@ import Network
 /// - `GET /frame.jpg`: the newest frame once (503 before the first); with `?size=N`, a still encoded fresh
 ///   from the camera, its longer side N pixels, at high quality (via `stillProvider`), for capturing;
 /// - `GET /status`: JSON `{ id, device, recording, viewers, frames, width, height }`, to check the phone
-///   is reachable (and, for a phone in remote mode, whether this one is the one recording).
+///   is reachable (and, for a phone in remote mode, whether this one is the one recording);
+/// - `GET /detections`: the leaf detector's boxes as they come (newline-delimited JSON, one line per
+///   detector frame, the newest first on connect), for drawing over the picture as the phone does.
 ///
 /// While running it advertises itself on the network with Bonjour as `_rovercam._tcp` (see `serviceType`),
 /// so the web app's dev server, and the app on another phone in remote mode (`CameraStreamBrowser`), can
@@ -28,6 +30,9 @@ public final class CameraStreamServer {
     case stopped
     case starting
     case ready(port: UInt16)
+    /// iOS's Local Network privacy setting is off for the app: nothing on the Wi-Fi can find or reach
+    /// it. Clears by itself (back to `ready`) once the user turns it on.
+    case blocked
     case failed(String)
   }
 
@@ -41,9 +46,14 @@ public final class CameraStreamServer {
 
   private let queue = DispatchQueue(label: "soon2026.camera-stream-server")
   private let device: String
+  /// Stays the same for this install while its address changes (Wi-Fi hands out new ones), so the web app
+  /// can recognise the phone it used last. In the Bonjour TXT record and `/status`.
+  public let id: String
   private var listener: NWListener?
   private var viewers: [ObjectIdentifier: Viewer] = [:]
   private var latest: Data?
+  /// The newest detections line (JSON, no newline), sent first to each `/detections` viewer.
+  private var latestDetections: Data?
   private var latestSize: (width: Int, height: Int) = (0, 0)
   private var frames = 0
   private var _state = State.stopped
@@ -51,11 +61,8 @@ public final class CameraStreamServer {
   private let watching = ManagedAtomicFlag()
   private let recordingFlag = ManagedAtomicFlag()
 
-  /// Tells this app's server from the others on the network: a new one each launch.
-  public let id: String
-
   /// `device` is reported by `/status` (e.g. "iPhone 15 Pro").
-  public init(device: String, id: String = UUID().uuidString) {
+  public init(device: String, id: String) {
     self.device = device
     self.id = id
   }
@@ -88,6 +95,7 @@ public final class CameraStreamServer {
           guard let self, let listener, listener === self.listener else { return }
           switch state {
           case .ready: self.setState(.ready(port: listener.port?.rawValue ?? port))
+          case .waiting(let error): self.setState(Self.state(waitingOn: error))
           case .failed(let error):
             self.setState(.failed(error.localizedDescription))
             self.stopListening()
@@ -108,6 +116,13 @@ public final class CameraStreamServer {
       self.stopListening()
       self.setState(.stopped)
     }
+  }
+
+  /// What a listener stuck waiting on `error` means for the UI. Bonjour refusing to advertise with
+  /// kDNSServiceErr_PolicyDenied is iOS's Local Network privacy setting being off for the app.
+  static func state(waitingOn error: NWError) -> State {
+    if case .dns(let code) = error, code == -65570 { return .blocked }
+    return .failed(error.localizedDescription)
   }
 
   /// A new camera frame: kept for `/frame.jpg` and sent to every viewer that's ready for one.
@@ -144,6 +159,16 @@ public final class CameraStreamServer {
     return found.sorted { rank($0.name) < rank($1.name) }.map(\.address)
   }
 
+  /// The leaf detector's newest boxes, as one line of JSON: sent to every `/detections` viewer.
+  public func publishDetections(json: Data) {
+    queue.async {
+      self.latestDetections = json
+      for viewer in self.viewers.values where viewer.detections && !viewer.sending {
+        self.sendLine(json, to: viewer)
+      }
+    }
+  }
+
   /// Viewers with the stream open, for the UI.
   public var viewerCount: Int { queue.sync { viewers.values.filter(\.streaming).count } }
 
@@ -153,6 +178,8 @@ public final class CameraStreamServer {
     let connection: NWConnection
     var request = Data()
     var streaming = false
+    /// Has `/detections` open.
+    var detections = false
     var sending = false
     init(_ connection: NWConnection) { self.connection = connection }
   }
@@ -220,6 +247,16 @@ public final class CameraStreamServer {
         if error != nil { return viewer.connection.cancel() }
         if let latest = self.latest { self.send(latest, to: viewer) }
       })
+    case "/detections":
+      viewer.detections = true
+      viewer.sending = true
+      viewer.connection.send(content: HTTPResponse.streamHead(contentType: "application/x-ndjson"),
+                             completion: .contentProcessed { [weak self] error in
+        guard let self else { return }
+        viewer.sending = false
+        if error != nil { return viewer.connection.cancel() }
+        if let latest = self.latestDetections { self.sendLine(latest, to: viewer) }
+      })
     case "/frame.jpg":
       if let size = head.query["size"].flatMap(Int.init), let stillProvider {
         var answered = false
@@ -262,6 +299,14 @@ public final class CameraStreamServer {
   private func send(_ jpeg: Data, to viewer: Viewer) {
     viewer.sending = true
     viewer.connection.send(content: HTTPResponse.mjpegPart(jpeg), completion: .contentProcessed { error in
+      viewer.sending = false
+      if error != nil { viewer.connection.cancel() }
+    })
+  }
+
+  private func sendLine(_ json: Data, to viewer: Viewer) {
+    viewer.sending = true
+    viewer.connection.send(content: json + Data("\n".utf8), completion: .contentProcessed { error in
       viewer.sending = false
       if error != nil { viewer.connection.cancel() }
     })
@@ -313,6 +358,11 @@ enum HTTPResponse {
 
   static func text(_ status: Int, _ message: String) -> Data {
     make(status, contentType: "text/plain; charset=utf-8", body: Data((message + "\n").utf8))
+  }
+
+  /// The head of an open-ended response: its body runs until the connection closes.
+  static func streamHead(contentType: String) -> Data {
+    Data("HTTP/1.1 200 OK\r\nContent-Type: \(contentType)\r\n\(common)\r\n".utf8)
   }
 
   static func mjpegHead() -> Data {
