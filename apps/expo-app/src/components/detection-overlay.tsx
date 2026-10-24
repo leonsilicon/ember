@@ -1,21 +1,28 @@
 import { StyleSheet, View } from 'react-native';
-import type { ObjectDetection } from 'react-native-executorch';
-import type { SharedValue } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, type SharedValue } from 'react-native-reanimated';
 
 import { ThemedText } from './themed-text';
 
 import { Spacing } from '@/constants/theme';
 import { useZoomLevel } from '@/hooks/use-camera-zoom';
+import type { Box } from '@/lib/detection-tracker';
 
 export type Size = {
   width: number;
   height: number;
 };
 
-type Box = ObjectDetection<'xyxy', string>['box'];
+/** A box to draw, in `inputSize`'s pixels. */
+export type OverlayDetection = {
+  box: Box;
+  label: string;
+  confidence: number;
+  /** Keeps the same view (and its fade) on the same leaf from frame to frame. */
+  id?: number;
+};
 
 type DetectionOverlayProps = {
-  detections: readonly ObjectDetection<'xyxy', string>[];
+  detections: readonly OverlayDetection[];
   /** Size of the model input the boxes are expressed in. */
   inputSize: Size;
   /** Upright size of the camera frame that was letterboxed into the model input. */
@@ -37,6 +44,10 @@ type DetectionOverlayProps = {
 
 const PALETTE = ['#FF453A', '#FF9F0A', '#FFD60A', '#30D158', '#64D2FF', '#0A84FF', '#BF5AF2', '#FF375F'];
 
+// A box comes and goes with a short fade rather than popping, which reads as a glitch.
+const APPEAR = FadeIn.duration(150);
+const VANISH = FadeOut.duration(200);
+
 export function labelColor(label: string) {
   let hash = 0;
   for (let i = 0; i < label.length; i++) {
@@ -54,7 +65,6 @@ export function formatDistance(metres: number | null | undefined) {
 
 function rotateBox(box: Box, size: Size): Box {
   return {
-    ...box,
     xmin: size.width - box.xmax,
     xmax: size.width - box.xmin,
     ymin: size.height - box.ymax,
@@ -95,8 +105,10 @@ export function DetectionOverlay({
         const top = offsetY + box.ymin * scale;
 
         return (
-          <View
-            key={index}
+          <Animated.View
+            key={detection.id ?? index}
+            entering={APPEAR}
+            exiting={VANISH}
             style={[
               styles.box,
               {
@@ -115,7 +127,7 @@ export function DetectionOverlay({
                 {captions?.[index] ? ` · ${captions[index]}` : ''}
               </ThemedText>
             </View>
-          </View>
+          </Animated.View>
         );
       })}
     </View>

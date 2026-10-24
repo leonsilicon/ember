@@ -122,6 +122,15 @@ phone and in `backend/rover_vision/leaf_detector.py` for the Mac.
   2×2 tiling (better for small, distant leaves).
 - **Scores are low in absolute terms** (0.05–0.3 is normal for OWL-ViT). Keep the threshold low
   and let the three-sighting confirmation filter out noise.
+- **The boxes on screen are tracked, not raw.** The detector runs about nine times a second and
+  scores each frame on its own, so a leaf scoring around the threshold blinks on and off, jitters,
+  and swaps between synonymous labels. `src/lib/detection-tracker.ts` matches each frame's
+  detections to the boxes already being tracked (as fractions of the whole frame, so zooming
+  doesn't break a track): a box shows after two sightings at the threshold (or one strong one),
+  stays through 400 ms without a sighting and on sightings down to 60% of the threshold, moves
+  halfway towards each new sighting, and keeps its label until another clearly wins. The rover
+  brain places only the frame's actual sightings in the world, never a coasting box. Tuning:
+  `trackerOptions` there.
 
 **What we tried first** (`backend/archive/`, gitignored): a YOLOv8-seg model trained on a
 beet/rye leaf-disease dataset (green leaves 0.54 mAP50, but dead leaves only 0.04 because that data

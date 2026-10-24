@@ -130,14 +130,17 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
       return;
     }
     const floorY = memory.current.floorY ?? (headingFromPose(camera.pose)?.origin[1] ?? 0) - DEFAULT_ROVER.cameraHeightM;
+    // A coasting box is where the detector last saw the leaf, which may not be where this frame's
+    // camera and depth would put it, so only this frame's sightings are placed in the world.
+    const seen = result.detections.map((d, index) => ({ d, index })).filter(({ d }) => !d.coasting);
     // LiDAR checks each box (on the ground? leaf-sized?) before it reaches the leaf map.
-    const { leaves: located, rejected } = locateDetections(result.detections, result.frameSize, camera, floorY);
+    const { leaves: located, rejected } = locateDetections(seen.map(({ d }) => d), result.frameSize, camera, floorY);
     map.current.observe(located, Date.now());
     const captions: (string | undefined)[] = result.detections.map(() => undefined);
     for (const leaf of located) {
-      if (leaf.source === 'floor') captions[leaf.index] = `~${caption(leaf.rover)}`;
+      if (leaf.source === 'floor') captions[seen[leaf.index].index] = `~${caption(leaf.rover)}`;
     }
-    for (const r of rejected) captions[r.index] = rejectionCaption(r);
+    for (const r of rejected) captions[seen[r.index].index] = rejectionCaption(r);
     publish({ captions, captionsFor: result });
   }, [enabled, result, publish]);
 
