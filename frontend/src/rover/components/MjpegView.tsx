@@ -5,8 +5,8 @@ type Props = {
   url: string
   alt: string
   className?: string
-  /** Each frame shown. */
-  onFrame?: () => void
+  /** Each frame shown, as its JPEG. */
+  onFrame?: (jpeg: Blob) => void
   /** The stream ended or failed (not called when it's closed by a new `url` or unmounting). */
   onEnd?: () => void
 }
@@ -39,11 +39,12 @@ export function MjpegView({ url, alt, className, onFrame, onEnd }: Props) {
           // Only the newest of a burst is worth decoding.
           const frame = parser.push(value).at(-1)
           if (!frame || !imgRef.current) continue
-          const next = URL.createObjectURL(new Blob([frame], { type: 'image/jpeg' }))
+          const jpeg = new Blob([frame], { type: 'image/jpeg' })
+          const next = URL.createObjectURL(jpeg)
           imgRef.current.src = next
           if (shown) URL.revokeObjectURL(shown)
           shown = next
-          callbacks.current.onFrame?.()
+          callbacks.current.onFrame?.(jpeg)
         }
         if (!controller.signal.aborted) callbacks.current.onEnd?.()
       } catch {

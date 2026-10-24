@@ -58,9 +58,11 @@ drop, click **Connect** again. No motion command is ever re-sent on reconnect.
 - **Scene panel** — "Leaf floor" (the bundled sample, `public/splats/leaf-floor.splat`, made by
   `scripts/make-leaf-splat.mjs`), "Open .splat / .ply…" for a local file, or a URL such as `/splats/scene.splat`
   for pipeline output dropped into `public/splats/`.
-- **Capture panel** — webcam stand-in: Start camera → Choose folder (Chrome's File System Access API) → Record 1 fps
-  writes `frame_0001.jpg…` into that folder; "Snap one" takes a single frame. Feed the folder to
-  `pipeline/reconstruct.py`.
+- **Capture panel** — frames for the pipeline, from the rover's iPhone when its app is open (see below), otherwise
+  from the laptop webcam ("Use laptop webcam"). Choose folder (Chrome's File System Access API) → Record 1 fps
+  writes `frame_0001.jpg…` into that folder; "Snap one" takes a single frame. From the iPhone, each frame is a
+  full-resolution still (1920 px, `/frame.jpg?size=1920`) encoded fresh on the phone, not a stream frame. Feed the
+  folder to `pipeline/reconstruct.py`.
 - **iPhone camera** — the capture panel switches to the rover's iPhone as soon as its app is open on the same Wi-Fi:
   the app announces its camera with Bonjour (`_rovercam._tcp`) and the dev server finds it (`src/phone-discovery.ts`,
   `GET /api/phone-camera`; on Vercel there's no local network, so it finds none). Without discovery, enter the

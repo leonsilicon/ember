@@ -33,8 +33,9 @@ viewers = 0
 lock = threading.Lock()
 
 
-def render(t: float) -> bytes:
-    """A lawn with a leaf circling a pile, and the time, so motion and latency are easy to see."""
+def render(t: float, size: int | None = None) -> bytes:
+    """A lawn with a leaf circling a pile, and the time, so motion and latency are easy to see. With
+    `size`, a still that big (longer side), as the app sends for capturing."""
     image = Image.new("RGB", (WIDTH, HEIGHT), (70, 105, 45))
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, WIDTH, HEIGHT * 0.3), fill=(150, 185, 215))
@@ -44,8 +45,12 @@ def render(t: float) -> bytes:
     y = cy + math.sin(t) * 60
     draw.ellipse((x - 14, y - 9, x + 14, y + 9), fill=(212, 162, 76))
     draw.text((16, 16), f"MOCK iPhone  {time.strftime('%H:%M:%S')}.{int(t * 10) % 10}", fill=(20, 20, 20))
+    if size:
+        draw.text((16, 32), f"STILL {size}px", fill=(20, 20, 20))
+        scale = size / max(WIDTH, HEIGHT)
+        image = image.resize((round(WIDTH * scale), round(HEIGHT * scale)))
     out = io.BytesIO()
-    image.save(out, "JPEG", quality=70)
+    image.save(out, "JPEG", quality=92 if size else 70)
     return out.getvalue()
 
 
@@ -64,14 +69,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         global viewers
-        path = self.path.split("?")[0]
+        path, _, query = self.path.partition("?")
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
         if path == "/status":
             frames = int((time.time() - START) * FPS)
             body = json.dumps({"device": "Mock iPhone", "viewers": viewers, "frames": frames, "width": WIDTH, "height": HEIGHT}).encode()
             self.headers_common(200, "application/json", len(body))
             self.wfile.write(body)
         elif path == "/frame.jpg":
-            body = render(time.time())
+            size = int(params["size"]) if params.get("size", "").isdigit() else None
+            body = render(time.time(), max(160, min(size, 4096)) if size else None)
             self.headers_common(200, "image/jpeg", len(body))
             self.wfile.write(body)
         elif path == "/camera.mjpg":

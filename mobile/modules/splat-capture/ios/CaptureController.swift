@@ -82,6 +82,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
   /// One stream frame encodes at a time; a frame arriving meanwhile is skipped.
   private var streamEncoding = false
   private var lastStreamAt: TimeInterval = 0
+  /// Stills the web app asked for (`/frame.jpg?size=N`, for capturing), answered from the next frame.
+  private var stillRequests: [(maxSize: Int, done: (Data?) -> Void)] = []
 
   static var supportsARKit: Bool { ARWorldTrackingConfiguration.isSupported }
   static var supportsLiDAR: Bool { ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) }
@@ -323,6 +325,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
   private static let streamMaxSize: CGFloat = 640
 
   func startCameraStream(port: Int) {
+    cameraServer.stillProvider = { [weak self] maxSize, done in
+      self?.frameQueue.async { self?.stillRequests.append((maxSize, done)) }
+    }
     cameraServer.start(port: UInt16(clamping: port))
   }
 
@@ -347,11 +352,12 @@ final class CaptureController: NSObject, ARSessionDelegate {
     return status
   }
 
-  /// The frame upright (mirrored for the front camera, as its preview is), its longer side
-  /// `streamMaxSize`, as a JPEG with its size.
-  private func streamJPEG(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> (Data, Int, Int)? {
+  /// The frame upright (mirrored for the front camera, as its preview is), its longer side `maxSize`
+  /// (never upscaled), as a JPEG with its size.
+  private func streamJPEG(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
+                          maxSize: CGFloat = streamMaxSize, quality: Double = 0.6) -> (Data, Int, Int)? {
     let upright = CIImage(cvPixelBuffer: buffer).oriented(orientation)
-    let scale = Self.streamMaxSize / max(upright.extent.width, upright.extent.height)
+    let scale = min(1, maxSize / max(upright.extent.width, upright.extent.height))
     let width = (upright.extent.width * scale).rounded(.down)
     let height = (upright.extent.height * scale).rounded(.down)
     let image = upright
@@ -361,7 +367,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
     guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
           let jpeg = ciContext.jpegRepresentation(
             of: image, colorSpace: colorSpace,
-            options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.6])
+            options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality])
     else { return nil }
     return (jpeg, Int(width), Int(height))
   }
@@ -411,6 +417,17 @@ final class CaptureController: NSObject, ARSessionDelegate {
     }
     if let live, let recording, !recording.frozen {
       live.offer(frame, trackingNormal: tracking.0 == "normal")
+    }
+    if !stillRequests.isEmpty {
+      let requests = stillRequests
+      stillRequests = []
+      let image = frame.capturedImage
+      let orientation: CGImagePropertyOrientation = frontCamera ? .leftMirrored : .right
+      streamQueue.async {
+        for request in requests {
+          request.done(self.streamJPEG(image, orientation: orientation, maxSize: CGFloat(request.maxSize), quality: 0.92)?.0)
+        }
+      }
     }
     if cameraServer.wantsFrames, !streamEncoding, frame.timestamp - lastStreamAt >= 1 / Self.streamFPS {
       lastStreamAt = frame.timestamp

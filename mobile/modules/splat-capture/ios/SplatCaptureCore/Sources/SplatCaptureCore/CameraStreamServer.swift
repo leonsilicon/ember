@@ -6,7 +6,8 @@ import Network
 ///
 /// - `GET /camera.mjpg`: the live picture as MJPEG (`multipart/x-mixed-replace`), which an `<img>`
 ///   plays as it arrives;
-/// - `GET /frame.jpg`: the newest frame once (503 before the first);
+/// - `GET /frame.jpg`: the newest frame once (503 before the first); with `?size=N`, a still encoded fresh
+///   from the camera, its longer side N pixels, at high quality (via `stillProvider`), for capturing;
 /// - `GET /status`: JSON `{ device, viewers, frames, width, height }`, to check the phone is reachable.
 ///
 /// While running it advertises itself on the network with Bonjour as `_rovercam._tcp` (see `serviceType`),
@@ -29,6 +30,11 @@ public final class CameraStreamServer {
 
   /// Called on the server's queue whenever `state` changes.
   public var onStateChange: ((State) -> Void)?
+  /// Encodes a still of the current camera frame, its longer side the given size, and calls back with
+  /// the JPEG (nil if there's no frame). Serves `/frame.jpg?size=N`. Called on the server's queue.
+  public var stillProvider: ((_ maxSize: Int, _ done: @escaping (Data?) -> Void) -> Void)?
+  /// A still request answered by nobody in this long gets a 503 (the camera isn't running).
+  public static let stillTimeout: TimeInterval = 3
 
   private let queue = DispatchQueue(label: "soon2026.camera-stream-server")
   private let device: String
@@ -201,7 +207,23 @@ public final class CameraStreamServer {
         if let latest = self.latest { self.send(latest, to: viewer) }
       })
     case "/frame.jpg":
-      if let latest {
+      if let size = head.query["size"].flatMap(Int.init), let stillProvider {
+        var answered = false
+        let answer = { [weak self] (data: Data?) -> Void in
+          guard let self else { return }
+          self.queue.async {
+            guard !answered else { return }
+            answered = true
+            if let data {
+              self.finish(viewer, HTTPResponse.make(200, contentType: "image/jpeg", body: data))
+            } else {
+              self.finish(viewer, HTTPResponse.text(503, "No camera frame: is the camera screen open?"))
+            }
+          }
+        }
+        stillProvider(min(max(size, 160), 4096), answer)
+        queue.asyncAfter(deadline: .now() + Self.stillTimeout) { answer(nil) }
+      } else if let latest {
         finish(viewer, HTTPResponse.make(200, contentType: "image/jpeg", body: latest))
       } else {
         finish(viewer, HTTPResponse.text(503, "No camera frame yet: is the camera screen open?"))
@@ -239,6 +261,8 @@ struct HTTPRequestHead: Equatable {
   let method: String
   /// Without the query string.
   let path: String
+  /// The query string's parameters (`?size=1920` → ["size": "1920"]).
+  let query: [String: String]
 
   /// Nil until `data` holds the blank line that ends the headers, or if the request line is malformed.
   init?(_ data: Data) {
@@ -248,7 +272,16 @@ struct HTTPRequestHead: Equatable {
     let parts = line.split(separator: " ")
     guard parts.count == 3, parts[2].hasPrefix("HTTP/") else { return nil }
     method = String(parts[0])
-    path = String(parts[1].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0])
+    let target = parts[1].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+    path = String(target[0])
+    var query: [String: String] = [:]
+    if target.count > 1 {
+      for pair in target[1].split(separator: "&") {
+        let kv = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        query[String(kv[0])] = kv.count > 1 ? String(kv[1]).removingPercentEncoding ?? String(kv[1]) : ""
+      }
+    }
+    self.query = query
   }
 }
 

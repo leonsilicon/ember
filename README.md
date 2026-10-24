@@ -162,7 +162,8 @@ While its camera screen is open, the rover app serves the camera on the Wi-Fi as
 (`frontend/src/phone-discovery.ts`, `GET /api/phone-camera`), so opening the app on the iPhone is enough: the
 Control page's camera panel switches to the **iPhone camera** and links up by itself, in either mode. If
 discovery can't help (another subnet, a static build), type the address from the cast icon at the top
-of the camera screen, e.g. `192.168.1.23` (port 8787).
+of the camera screen, e.g. `192.168.1.23` (port 8787). The same panel's **Record 1 fps** / **Snap one**
+capture from the phone too, as full-resolution stills it encodes on request (`/frame.jpg?size=1920`).
 Frames are only encoded while someone watches. The server is `CameraStreamServer` in
 `modules/splat-capture/ios/SplatCaptureCore` (routes `/camera.mjpg`, `/frame.jpg`, `/status`), fed by
 `CaptureController`; `swift test` covers it. Phone and laptop must share a network.
