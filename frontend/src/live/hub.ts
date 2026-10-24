@@ -105,6 +105,7 @@ export class LiveHub {
   /** A phone or viewer connected. A viewer asks for one session, or follows the newest without one. */
   open(id: string, role: Role, wanted: string | null = null) {
     this.close(id);
+    console.log(`${role} ${id.slice(0, 8)} connected${wanted ? ` for ${wanted}` : ''}`);
     const peer: Peer = {
       id,
       data: role === 'phone' ? { role, session: null } : { role, session: wanted, wanted, follow: !wanted },
@@ -119,7 +120,13 @@ export class LiveHub {
   /** A message from a phone. Anything malformed is reported back to it. */
   message(id: string, message: Uint8Array) {
     const peer = this.peers.get(id);
-    if (peer?.data.role !== 'phone') return;
+    if (!peer) {
+      // Its `open` never arrived (or the agent started after it): the phone is told, so it reconnects.
+      console.warn(`message from unknown peer ${id.slice(0, 8)}; asking it to reconnect`);
+      this.transport.close({ id, data: { role: 'phone', session: null } }, 4001, 'unknown connection; reconnect');
+      return;
+    }
+    if (peer.data.role !== 'phone') return;
     try {
       this.onPhoneMessage(peer, message);
     } catch (error) {
@@ -141,6 +148,7 @@ export class LiveHub {
     this.peers.delete(id);
     this.viewers.delete(peer);
     if (peer.data.role !== 'phone') return;
+    console.log(`phone ${id.slice(0, 8)} disconnected`);
     const session = this.sessions.get(peer.data.session ?? '');
     if (session?.phone === peer) {
       session.phone = null;
