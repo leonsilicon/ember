@@ -135,7 +135,7 @@ export default function WildfireApp() {
       const aboveBackground = style.layers.find((l) => l.type !== 'background')?.id
       map.addSource(SATELLITE_SOURCE, satelliteSource())
       map.addLayer(satelliteLayer(), aboveBackground)
-      map.addSource(BUILDINGS_SOURCE, { type: 'vector', url: `pmtiles://${abs(coverage.tiles.buildings)}`, promoteId: 'fid' })
+      map.addSource(BUILDINGS_SOURCE, { type: 'vector', url: `pmtiles://${abs(coverage.tiles.buildings)}` })
       map.addSource('wf-coverage', { type: 'geojson', data: coverage.coverage })
       map.addSource(ISO_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       map.addSource(BREAKS_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
@@ -452,7 +452,7 @@ export default function WildfireApp() {
   const risks = buildings.map((b) => riskOf(b.exposure, dry))
   const critical = risks.filter((r) => bandOf(r) === 'critical').length
   const ignitedNow = sim.run ? lowerBound(Float32Array.from(ignitionSorted.map(([, m]) => m)), t + 1e-6) : 0
-  const burnedHaNow = sim.run ? (lowerBound(sim.run.times, t) * sim.run.result.burnedHa) / Math.max(1, sim.run.cells.length) : 0
+  const burnedHaNow = sim.run && data?.grid ? (lowerBound(sim.run.times, t + 1e-6) * data.grid.cellM ** 2) / 10_000 : 0
 
   return (
     <div className={`ops bp6-dark relative h-full w-full overflow-hidden ${sim.run ? 'sim-on' : ''}`}>

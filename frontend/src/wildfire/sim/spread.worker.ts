@@ -145,6 +145,8 @@ function run(req: SimRequest): SimResult {
       }
     }
   }
+  // tentative arrivals pushed past the horizon are not burned cells; drop them so every consumer agrees
+  for (let i = 0; i < n; i++) if (arrival[i] > horizonMin) arrival[i] = Infinity
 
   // Homes: ignite when the front reaches their cell, after a delay that shrinks with exposure.
   const ignition = new Float32Array(req.buildingCell.length).fill(Infinity)
