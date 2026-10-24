@@ -1,6 +1,6 @@
 import { useEventListener } from 'expo';
 import * as WebBrowser from 'expo-web-browser';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
@@ -19,6 +19,14 @@ type State =
   | { kind: 'error'; message: string };
 
 const POLL_MS = 2000;
+
+/**
+ * Captures `autoStart` has sent, for the session: the gallery mounts a page more than once (and the
+ * Info sheet shows the same capture), and each must not send it again. And the ones being sent
+ * right now, so two views of one capture can't upload it twice.
+ */
+const autoStarted = new Set<string>();
+const uploading = new Set<string>();
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -43,8 +51,6 @@ export function SplatStatus({
 }) {
   const theme = useTheme();
   const [state, setState] = useState<State>({ kind: 'checking' });
-  /** Whether `autoStart` has had its go, so a cancel isn't followed by another upload. */
-  const started = useRef(false);
 
   useEventListener(SplatCapture, 'onUploadProgress', (p) => {
     if (p.captureId !== capture.captureId) return;
@@ -52,15 +58,20 @@ export function SplatStatus({
   });
 
   async function upload() {
-    started.current = true;
+    const { captureId } = capture;
+    if (uploading.has(captureId)) return;
+    uploading.add(captureId);
+    autoStarted.add(captureId);
     setState({ kind: 'uploading', sent: 0, total: capture.bytes });
     try {
-      const res = await SplatCapture.uploadCapture(capture.captureId, serverUrl, SPLAT_TOKEN);
+      const res = await SplatCapture.uploadCapture(captureId, serverUrl, SPLAT_TOKEN);
       const body = JSON.parse(res.body || '{}');
       if (res.status !== 201) throw new Error(body.error ?? `server replied ${res.status}`);
       setState({ kind: 'job', job: body as SplatJob });
     } catch (error) {
       setState({ kind: 'error', message: `Upload failed: ${message(error)}` });
+    } finally {
+      uploading.delete(captureId);
     }
   }
 
@@ -75,7 +86,8 @@ export function SplatStatus({
         const job = await getJob(serverUrl, capture.captureId);
         if (!alive) return;
         if (job) setState({ kind: 'job', job });
-        else if (autoStart && !started.current) upload();
+        else if (uploading.has(capture.captureId)) setState({ kind: 'uploading', sent: 0, total: capture.bytes });
+        else if (autoStart && !autoStarted.has(capture.captureId)) upload();
         else setState({ kind: 'idle' });
       } catch (error) {
         if (alive) setState({ kind: 'error', message: `Server unreachable: ${message(error)}` });

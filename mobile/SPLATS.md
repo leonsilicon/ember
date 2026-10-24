@@ -85,10 +85,10 @@ LiDAR captures are good either way; without LiDAR, 0.5 is the difference between
 (median |Δrgb| ≈ 11 for LiDAR, ≈ 26 for feature points) versus ≈ 41–78 for a deliberately wrong
 axis convention — i.e. poses, intrinsics and depth unprojection line up.
 
-## Debug: preview the splat from the phone
+## Train and preview the splat from the phone
 
-To compare against the production reconstruction, the app can train a capture with the reference
-pipeline and show the result. It has two halves, so a phone only ever needs the public URL:
+The app trains each capture into a splat with the reference pipeline and shows the result, the first
+time the capture is opened in the gallery. It has two halves, so a phone only ever needs the public URL:
 
 - **The splat server** (`frontend`): a Next.js app on Vercel, https://soon2026.vercel.app (project
   `improvelabs/soon2026`, root directory `frontend`, region `yul1`; every push to `main` deploys
@@ -125,11 +125,14 @@ EAS environment variables for EAS builds).
 A browser signs in once by opening any page with `?token=<SPLAT_TOKEN>` (or entering it on the page);
 it keeps it in a cookie. API clients send `Authorization: Bearer <SPLAT_TOKEN>`.
 
-In the app, **Captures** → *Debug: splat preview* (on by default in development builds) → **Preview
-splat** on a capture. The phone asks the server for an upload URL, uploads the zip straight to Blob,
-and the agent picks it up; the app shows training progress, and **Open splat** renders it. The viewer
-page, `<server>/view/<capture id>`, works in any signed-in browser, so it can sit next to the
-teammate's viewer. **Retrain splat** uploads it again, e.g. after changing the agent's settings.
+In the app, the first time a capture is opened in the gallery it's sent off: the phone asks the
+server for an upload URL, uploads the zip straight to Blob, and the agent picks it up. The gallery
+(and the capture's Info sheet) shows how it's going, with **Pause** / **Resume** (Brush is stopped and
+continued on the Mac) and **Cancel** (nothing is kept; **Make splat** sends it again when wanted), and
+**Open splat** renders it. The viewer page, `<server>/view/<capture id>`, works in any signed-in
+browser, so it can sit next to the teammate's viewer. **Train again** uploads it again, e.g. after
+changing the agent's settings. The server address and whether its Mac is ready are under
+**All Captures**.
 
 | Server request | Returns |
 |---|---|
@@ -165,8 +168,8 @@ bun run agent                         # or `vpx _dev` from anywhere
 bun scripts/live-replay.ts data/captures/<id>/<id>   # try it without the phone
 ```
 
-In the app it's *Live 3D while recording* in the debug card under the gallery's All Captures grid (on by default in development
-builds, sent to the same server address); while recording, the cube in the status rail says how
+In the app it's *Live 3D while recording* in the camera options (the ⋯ menu beside the record
+button), on unless turned off, sent to the server address under All Captures; while recording, the cube in the status rail says how
 many keyframes the server has fused (tap it), and the reconstruction floats top left of the
 viewfinder. Tap it to swap it with the camera, FaceTime style (drag the full-screen one to orbit;
 it follows the phone again a few seconds later), and tap the floating camera to swap back. That view is the same page
