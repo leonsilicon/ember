@@ -92,7 +92,7 @@ export class Brain {
 
   /** Corridors from the current heading and, with the autopilot on, its next step. */
   tick(nowMs: number, heading: Heading | null): BrainTick {
-    const lanes = heading ? corridors(this.obstacles.scan(nowMs), heading, this.options.rover) : [];
+    const lanes = heading ? corridors(this.obstacles.scan(nowMs, heading?.origin), heading, this.options.rover) : [];
     const scanAgeMs = this.obstacles.ageMs(nowMs);
     if (!this.running) return { corridors: lanes, scanAgeMs };
     const step = stepAutopilot(
@@ -104,6 +104,7 @@ export class Brain {
     for (const id of step.collectedIds ?? []) this.leaves.markCollected(id, nowMs);
     if (step.missingId != null) this.leaves.markCollected(step.missingId, nowMs);
     if (step.failedId != null) this.leaves.markFailed(step.failedId);
+    if (step.checkedId != null) this.leaves.markChecked(step.checkedId);
     if (step.dumped) this.dumped += step.dumped;
     return { corridors: lanes, scanAgeMs, step };
   }

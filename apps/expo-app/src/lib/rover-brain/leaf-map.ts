@@ -43,6 +43,8 @@ export type TrackedLeaf = {
   collectedAtMs?: number;
   /** Sightings since then, which mean the scoop missed it. */
   missHits: number;
+  /** Since it was collected, the rover has looked at the spot and seen it empty. */
+  checked?: boolean;
 };
 
 export type LeafMapOptions = {
@@ -131,6 +133,13 @@ export class LeafMap {
     leaf.attempts += 1;
     leaf.collectedAtMs = nowMs;
     leaf.missHits = 0;
+    leaf.checked = false;
+  }
+
+  /** The rover looked at a collected leaf's spot and it was empty: the scoop really got it. */
+  markChecked(id: number) {
+    const leaf = this.leaves.find((l) => l.id === id);
+    if (leaf && leaf.state === 'collected') leaf.checked = true;
   }
 
   /** Gives up on a leaf, e.g. one the rover can't get its scoop to. */

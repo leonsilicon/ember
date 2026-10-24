@@ -1,6 +1,6 @@
 import { Brain, DEFAULT_AUTOPILOT, RoverSim } from '@rover-brain'
 import type { Pile, SimFrame, Vec3 } from '@rover-brain'
-import { DEFAULT_SPEED, DEFAULT_WORLD, HARSH_SENSORS, PILE, VIEW, WORLDS } from './worlds'
+import { DEFAULT_SPEED, DEFAULT_WORLD, ftToM, HARSH_SENSORS, PILE, VIEW, WORK_RADIUS_FT, WORLDS } from './worlds'
 
 /** The longest real-time gap one animation frame may advance (a background tab doesn't fast-forward). */
 const MAX_DT_MS = 100
@@ -25,14 +25,15 @@ export class SimController {
   worldName = DEFAULT_WORLD
   /** Scoops that go into the bin before a trip to the pile: the brain's `capacity`. */
   capacity = DEFAULT_AUTOPILOT.capacity
+  /** The work circle round the pile, in whole feet: the brain's `workRadiusM`. */
+  workRadiusFt = WORK_RADIUS_FT.default
   /** Where the user put the pile, overriding the yard's own; cleared when the yard changes. */
   pileOverride: Pile | null = null
   /** The next click on the ground (in either view) places the pile. */
   placingPile = false
   /** Bumped on every reset, so views can rebuild world geometry (obstacles). */
   resets = 0
-  /** Bumped whenever the pile moves, so views can redraw it. */
-  pileMoves = 0
+
   private version = 0
   private carry = 0
   private listeners = new Set<() => void>()
@@ -46,8 +47,9 @@ export class SimController {
   reset() {
     const world = structuredClone(WORLDS[this.worldName] ?? WORLDS[DEFAULT_WORLD])
     if (this.pileOverride) world.pile = structuredClone(this.pileOverride)
-    // The rover's own brain, as the phone runs it, with only the bin size changed.
-    const brain = new Brain({ autopilot: { ...DEFAULT_AUTOPILOT, capacity: this.capacity } })
+    // The rover's own brain, as the phone runs it, with only the bin size and work circle changed. The
+    // rover starts on the pile (RoverSim's default when the yard gives no start).
+    const brain = new Brain({ autopilot: { ...DEFAULT_AUTOPILOT, capacity: this.capacity, workRadiusM: ftToM(this.workRadiusFt) } })
     this.sim = new RoverSim(world, { seed: this.seed || 1, ...(this.noisy ? HARSH_SENSORS : {}) }, brain)
     this.sim.start()
     this.frame = this.sim.frame()
@@ -73,6 +75,15 @@ export class SimController {
     this.emit()
   }
 
+  /** Changes the work circle on the running brain: leaves now outside it are left alone, ones now inside get fetched. */
+  setWorkRadiusFt(ft: number) {
+    this.workRadiusFt = Math.min(WORK_RADIUS_FT.max, Math.max(WORK_RADIUS_FT.min, Math.round(ft)))
+    const brain = this.sim.brain
+    brain.options.autopilot = { ...brain.options.autopilot, workRadiusM: ftToM(this.workRadiusFt) }
+    this.frame = this.sim.frame()
+    this.emit()
+  }
+
   setPlacingPile(placing: boolean) {
     this.placingPile = placing
     this.emit()
@@ -85,31 +96,24 @@ export class SimController {
   }
 
   /**
-   * Moves the pile to (x, z) for the running sim and future restarts of this yard. Leaves already piled
-   * at the old spot are back on the ground, so the rover fetches them too. Returns false if blocked.
+   * Puts the pile at (x, z) for this yard and restarts the run from it: the rover starts on the pile and
+   * works the circle round it. Returns false (and keeps placing) where it can't go.
    */
   setPile(x: number, z: number): boolean {
     const cx = clamp(x, VIEW.x0, VIEW.x1)
     const cz = clamp(z, VIEW.z0, VIEW.z1)
     if (this.pileBlocked(cx, cz)) return false
     this.pileOverride = { center: [cx, 0, cz], radiusM: PILE.radiusM }
-    this.applyPile(this.pileOverride)
+    this.placingPile = false
+    this.reset()
     return true
   }
 
-  /** Puts the pile back where the yard has it. */
+  /** Puts the pile back where the yard has it, and restarts from there. */
   resetPile() {
     this.pileOverride = null
-    this.applyPile(structuredClone((WORLDS[this.worldName] ?? WORLDS[DEFAULT_WORLD]).pile ?? PILE))
-  }
-
-  private applyPile(pile: Pile) {
     this.placingPile = false
-    this.sim.setPile(structuredClone(pile))
-    this.frame = this.sim.frame()
-    this.prevFrame = { ...this.prevFrame, leaves: this.frame.leaves, pile: this.frame.pile }
-    this.pileMoves += 1
-    this.emit()
+    this.reset()
   }
 
   setSeed(seed: number) {
@@ -242,8 +246,9 @@ export class SimController {
   }
 }
 
+/** Every leaf in the work circle is on the pile (leaves outside the circle are left where they are). */
 export function isDone(frame: SimFrame) {
-  return frame.stats.onGround === 0 && frame.stats.inScoop === 0
+  return frame.stats.inRange === 0 && frame.stats.inScoop === 0
 }
 
 /** Where the rover is heading (the reference viewer's dashed goal line): the pile, the target leaf, or nowhere. */

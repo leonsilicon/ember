@@ -8,7 +8,7 @@ export default function SimApp() {
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3 lg:px-6">
         <div>
           <h1 className="text-lg font-bold tracking-tight">Autopilot sim</h1>
-          <p className="text-xs text-zinc-500">The phone's rover brain, scooping leaves into the pile on a virtual lawn</p>
+          <p className="text-xs text-zinc-500">The rover's own brain, clearing a circle round the pile on a virtual lawn</p>
         </div>
         <AppNav current="#/sim" />
       </header>

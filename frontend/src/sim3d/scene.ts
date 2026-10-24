@@ -13,9 +13,9 @@ import { RoverModel } from './rover'
 
 const SKY = '#a9c3dd'
 const VIEW_CENTER_Z = (VIEW.z0 + VIEW.z1) / 2
-/** Behind and above the start, looking out over the yard. */
-const HOME_POSITION = new THREE.Vector3(0, 2.6, 3.1)
-const HOME_TARGET = new THREE.Vector3(0, 0, -1.4)
+/** Behind and above the pile (where the rover starts), looking out over the work circle. */
+const HOME_POSITION = new THREE.Vector3(0, 3.1, 4.3)
+const HOME_TARGET = new THREE.Vector3(0, 0, -0.6)
 
 /**
  * The 3D view of a SimController's sim. It never steps the sim: each animation frame it reads
@@ -41,7 +41,9 @@ export class SimScene3D {
   private overlays: Overlays = DEFAULT_OVERLAYS
   private follow = false
   private resets = -1
-  private pileMoves = -1
+  /** The work circle round the pile: a dashed ring, rebuilt when its radius or the pile changes. */
+  private workCircle = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: '#7dd3fc', dashSize: 0.16, gapSize: 0.1, transparent: true, opacity: 0.9 }))
+  private workCircleKey = ''
   /** Where the pile would go, following the pointer while placing it. */
   private ghost = new THREE.Group()
   private ghostMaterials: THREE.MeshBasicMaterial[] = []
@@ -103,6 +105,9 @@ export class SimScene3D {
     this.ghost.renderOrder = 2
     this.ghost.visible = false
     this.world.add(this.ghost)
+    this.workCircle.raycast = () => {}
+    this.workCircle.renderOrder = 2
+    this.world.add(this.workCircle)
 
     // Leaf drag listeners go on before OrbitControls', so a press on a leaf can stop the orbit.
     const el = r.domElement
@@ -228,11 +233,7 @@ export class SimScene3D {
       this.resets = c.resets
       this.rebuildWorld()
     }
-    if (c.pileMoves !== this.pileMoves) {
-      this.pileMoves = c.pileMoves
-      this.pile.setPile(c.frame.pile)
-      this.pile.zone.visible = this.overlays.pileZone && c.frame.pile != null
-    }
+    this.updateWorkCircle()
     if (!c.placingPile) this.ghost.visible = false
     const frame = c.frame
     const pose = c.roverPose()
@@ -331,6 +332,23 @@ export class SimScene3D {
     this.setPointer(e)
     const p = this.raycaster.ray.intersectPlane(this.groundPlane, this.tmp)
     if (p && !this.controller.moveLeaf(this.dragging, p.x, p.z)) this.endDrag(e)
+  }
+
+  private updateWorkCircle() {
+    const { pile, workRadiusM } = this.controller.frame
+    const key = pile ? `${pile.center[0]},${pile.center[2]},${workRadiusM}` : ''
+    if (key === this.workCircleKey) return
+    this.workCircleKey = key
+    this.workCircle.visible = pile != null && Number.isFinite(workRadiusM)
+    if (!this.workCircle.visible || !pile) return
+    const points: THREE.Vector3[] = []
+    for (let i = 0; i < 128; i++) {
+      const a = (i / 128) * Math.PI * 2
+      points.push(new THREE.Vector3(pile.center[0] + Math.sin(a) * workRadiusM, 0.012, pile.center[2] + Math.cos(a) * workRadiusM))
+    }
+    this.workCircle.geometry.dispose()
+    this.workCircle.geometry = new THREE.BufferGeometry().setFromPoints(points)
+    this.workCircle.computeLineDistances()
   }
 
   private onLeave = () => {

@@ -78,11 +78,29 @@ export function TopDownView({ controller, overlays }: Props) {
       // Pile.
       if (frame.pile) {
         const c = frame.pile.center
+        // The work circle, labelled with its size where it crosses the top.
+        if (Number.isFinite(frame.workRadiusM)) {
+          ctx.setLineDash([7, 5])
+          circle(c[0], c[2], frame.workRadiusM, 'rgba(125,211,252,.05)', C.work, 1.5)
+          ctx.setLineDash([])
+          const label = `${controller.workRadiusFt} ft`
+          ctx.font = '600 11px system-ui'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          const lx = px(c[0])
+          const ly = py(c[2] - frame.workRadiusM)
+          const w = ctx.measureText(label).width + 10
+          ctx.fillStyle = C.background
+          ctx.fillRect(lx - w / 2, ly - 8, w, 16)
+          ctx.fillStyle = C.work
+          ctx.fillText(label, lx, ly)
+          ctx.textBaseline = 'alphabetic'
+        }
         circle(c[0], c[2], frame.pile.radiusM, o.pileZone ? C.pileFill : undefined, C.pile, 1.5)
         ctx.fillStyle = C.pile
-        ctx.font = '600 12px system-ui'
+        ctx.font = '600 11px system-ui'
         ctx.textAlign = 'center'
-        ctx.fillText('PILE', px(c[0]), py(c[2] + frame.pile.radiusM) - 8)
+        ctx.fillText('PILE', px(c[0]), py(c[2] + frame.pile.radiusM) - 6)
       }
 
       // Obstacles.
@@ -127,9 +145,15 @@ export function TopDownView({ controller, overlays }: Props) {
       }
 
       // True leaves (filled) and what the brain believes (rings).
+      // Leaves outside the work circle are faded: the rover leaves them alone.
+      const pile = frame.pile
       for (const l of frame.leaves) {
         if (l.where === 'scoop') continue
+        const outside =
+          l.where === 'ground' && pile != null && Math.hypot(l.position[0] - pile.center[0], l.position[2] - pile.center[2]) > frame.workRadiusM
+        ctx.globalAlpha = outside ? 0.35 : 1
         circle(l.position[0], l.position[2], 0.06, l.where === 'pile' ? C.leafPiled : C.leaf)
+        ctx.globalAlpha = 1
       }
       const target = frame.tick.step?.state.targetId
       if (o.belief) {

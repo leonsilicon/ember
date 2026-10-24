@@ -36,4 +36,6 @@ export const PALETTE = {
   trail: 'rgba(96,165,250,.35)',
   fov: 'rgba(96,165,250,.08)',
   muted: '#8f8c85',
+  /** The work circle round the pile. */
+  work: '#7dd3fc',
 }

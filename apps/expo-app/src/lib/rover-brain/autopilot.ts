@@ -3,10 +3,16 @@
  * current heading, the leaf map, the corridors and the pile; it returns wheel speeds for `drive()`
  * and where the scoop should be.
  *
+ * The rover works the circle of `workRadiusM` round the pile (6 ft by default) and starts on the
+ * pile; leaves outside the circle are left alone.
+ *
  * - **searching**: no leaf to go for. Turn in place to look around, pausing while an unconfirmed
- *   leaf is in view so it can be confirmed. After a full turn with nothing found, **explore**:
- *   drive a short way along the straightest open corridor, then search again (or, with leaves in
- *   the scoop, take them to the pile).
+ *   leaf is in view so it can be confirmed. After a full turn with nothing found, empty a
+ *   part-full bin at the pile; with an empty bin, **check** each scooped spot it hasn't seen since
+ *   (a missed leaf can lie right under the rover, out of the camera's view): look at it from
+ *   `checkViewM` away, and if the leaf is still there the leaf map's miss count sends the rover back
+ *   for it. Then **park** (the circle is clear) and look round again every `parkLookMs`. Without a pile there's no circle, so it **explores** instead: drives
+ *   a short way along the straightest open corridor, then searches again.
  * - **approaching**: steer to the best confirmed leaf: the nearest, nudged towards ones near the
  *   pile so the trips stay short, and away from ones with something in the way. Leaves in the
  *   pile are never targets.
@@ -75,6 +81,12 @@ export type AutopilotConfig = {
   stickM: number;
   /** Give up on a leaf not reached in this long. */
   approachMaxMs: number;
+  /** Only leaves within this distance of the pile's centre are collected. Infinity: no limit. */
+  workRadiusM: number;
+  /** Parked with the circle clear, look round again this often. */
+  parkLookMs: number;
+  /** Look at a scooped spot from this far away (in view, not under the camera). */
+  checkViewM: number;
   /** Wheel speeds, -100..100. */
   maxSpeed: number;
   minSpeed: number;
@@ -105,6 +117,8 @@ export type AutopilotConfig = {
   maxScanAgeMs: number;
 };
 
+export const FOOT_M = 0.3048;
+
 export const DEFAULT_AUTOPILOT: AutopilotConfig = {
   alignM: 0.5,
   alignDeg: 5,
@@ -125,6 +139,9 @@ export const DEFAULT_AUTOPILOT: AutopilotConfig = {
   blockedPenaltyM: 2,
   stickM: 2.5,
   approachMaxMs: 90_000,
+  workRadiusM: 6 * FOOT_M,
+  parkLookMs: 20_000,
+  checkViewM: 0.9,
   maxSpeed: 55,
   minSpeed: 28,
   turnSpeed: 35,
@@ -146,7 +163,12 @@ export const DEFAULT_AUTOPILOT: AutopilotConfig = {
 /** Where the leaves go, set by the user. Leaves within `radiusM` of `center` are in it. */
 export type Pile = { center: Vec3; radiusM: number };
 
-export const DEFAULT_PILE_RADIUS_M = 1;
+/**
+ * Leaves this close to the pile's centre are in it (2.5 ft). Big enough for what the bin tips out,
+ * which lands 0.4 to 0.6 m from the centre (further when a grown pile stops the rover early), and
+ * small enough to leave most of the work circle to work.
+ */
+export const DEFAULT_PILE_RADIUS_M = 0.75;
 
 /** `down`: lowered to scoop. `up`: raised (emptying into the bin). `dump`: tip the bin out onto the pile. */
 export type ScoopPosition = 'up' | 'down' | 'dump';
@@ -160,7 +182,8 @@ export type AutopilotMode =
   | 'lifting'
   | 'returning'
   | 'dumping'
-  | 'backing';
+  | 'backing'
+  | 'checking';
 
 export type AutopilotState = {
   mode: AutopilotMode;
@@ -182,6 +205,8 @@ export type AutopilotState = {
   detourUntilMs?: number;
   /** Boxed in: reversing until then, before the detour. */
   reverseUntilMs?: number;
+  /** Searched the circle and found nothing: holding still since then. */
+  parkedAtMs?: number;
 };
 
 export const initialAutopilotState = (nowMs: number, load = 0): AutopilotState => ({
@@ -215,6 +240,8 @@ export type AutopilotStep = {
   missingId?: number;
   /** A leaf the rover can't get its scoop to; the caller marks it failed. */
   failedId?: number;
+  /** A collected leaf whose spot the rover looked at and found empty; the caller marks it checked. */
+  checkedId?: number;
   /** Scoops just tipped onto the pile with the bin. */
   dumped?: number;
 };
@@ -286,6 +313,11 @@ export function inPile(world: Vec3, pile: Pile | null) {
   return pile != null && horizontal(world, pile.center) <= pile.radiusM;
 }
 
+/** Inside the circle the rover works: within `workRadiusM` of the pile (anywhere, without a pile). */
+export function inWorkArea(world: Vec3, pile: Pile | null, cfg: AutopilotConfig = DEFAULT_AUTOPILOT) {
+  return pile == null || horizontal(world, pile.center) <= cfg.workRadiusM;
+}
+
 /**
  * The best leaf to go for: a confirmed one outside the pile, the nearest after adding
  * `pileWeight` × its distance from the pile, and `blockedPenaltyM` if its corridor is blocked
@@ -301,7 +333,7 @@ export function chooseTarget(
 ): { leaf: TrackedLeaf; distance: number; bearingDeg: number } | null {
   let best: { leaf: TrackedLeaf; distance: number; bearingDeg: number; cost: number } | null = null;
   for (const leaf of leaves) {
-    if (leaf.state !== 'confirmed' || inPile(leaf.world, pile)) continue;
+    if (leaf.state !== 'confirmed' || inPile(leaf.world, pile) || !inWorkArea(leaf.world, pile, cfg)) continue;
     const r = toRover(leaf.world, heading);
     // A leaf behind the rover is fine (it turns), but its path is unknown until it's in view.
     const lane = Math.abs(r.bearingDeg) <= 50 ? corridorAt(lanes, r.bearingDeg) : undefined;
@@ -360,6 +392,8 @@ export function stepAutopilot(
       return dump(state, input, heading, cfg);
     case 'backing':
       return backUp(state, input, heading, cfg);
+    case 'checking':
+      return check(state, input, heading, cfg);
     default:
       return seek(state, input, heading, cfg);
   }
@@ -389,6 +423,7 @@ function seek(state: AutopilotState, input: AutopilotInput, heading: Heading, cf
       sinceMs: same ? state.sinceMs : nowMs,
       targetId: leaf.id,
       searchedDeg: 0,
+      parkedAtMs: undefined,
       ...(same ? {} : NO_DETOUR),
     };
     const label = `leaf #${leaf.id} · ${distance.toFixed(1)} m · ${side(bearingDeg)}`;
@@ -412,7 +447,15 @@ function seek(state: AutopilotState, input: AutopilotInput, heading: Heading, cf
     }
   }
 
-  // Searching: turn in place, counting how far, and explore after a full turn.
+  // Parked: the circle was clear. Hold still, and look round again now and then.
+  if (state.mode === 'searching' && state.parkedAtMs != null) {
+    if (nowMs - state.parkedAtMs < cfg.parkLookMs) {
+      return halt({ ...state, lastYawDeg: heading.yawDeg }, 'All clear within the circle; parked');
+    }
+    state = { ...state, parkedAtMs: undefined, searchedDeg: 0, lastYawDeg: heading.yawDeg };
+  }
+
+  // Searching: turn in place, counting how far; after a full turn, empty the bin, park or explore.
   let searched = state.mode === 'searching' ? state.searchedDeg : 0;
   if (state.mode === 'searching' && state.lastYawDeg != null) {
     searched += Math.abs(angleDiffDeg(heading.yawDeg, state.lastYawDeg));
@@ -429,6 +472,16 @@ function seek(state: AutopilotState, input: AutopilotInput, heading: Heading, cf
     if (state.load > 0 && pile) {
       return halt({ ...searching, mode: 'returning', sinceMs: nowMs, searchedDeg: 0 }, 'No more leaves here; emptying the bin');
     }
+    if (pile && Number.isFinite(cfg.workRadiusM)) {
+      const spot = uncheckedSpot(leaves, heading, pile, cfg);
+      if (spot) {
+        return halt(
+          { ...searching, mode: 'checking', sinceMs: nowMs, searchedDeg: 0, targetId: spot.id },
+          `Checking leaf #${spot.id} really went in the bin`,
+        );
+      }
+      return halt({ ...searching, searchedDeg: 0, parkedAtMs: nowMs }, 'All clear within the circle; parked');
+    }
     const open = lanes
       .filter((c) => isOpen(c, cfg.minExploreM, cfg))
       .sort((a, b) => Math.abs(a.bearingDeg) - Math.abs(b.bearingDeg) || b.clearanceM - a.clearanceM)[0];
@@ -440,7 +493,9 @@ function seek(state: AutopilotState, input: AutopilotInput, heading: Heading, cf
     }
     searching.searchedDeg = 0;
   }
-  const pending = leaves.some((l) => l.state === 'tentative' && nowMs - l.lastSeenMs < 1000 && !inPile(l.world, pile));
+  const pending = leaves.some(
+    (l) => l.state === 'tentative' && nowMs - l.lastSeenMs < 1000 && !inPile(l.world, pile) && inWorkArea(l.world, pile, cfg),
+  );
   if (pending) return halt(searching, 'Checking a possible leaf');
   return out(searching, cfg.searchSpeed, -cfg.searchSpeed, `Searching · ${Math.round(searched)}°`);
 }
@@ -613,6 +668,51 @@ function navigate(
     },
     `Boxed in on the way to ${label}; backing up, then ${turn > 0 ? 'right' : 'left'}`,
   );
+}
+
+/** The nearest collected leaf in the circle whose spot hasn't been looked at since. */
+function uncheckedSpot(leaves: readonly TrackedLeaf[], heading: Heading, pile: Pile, cfg: AutopilotConfig) {
+  let best: TrackedLeaf | null = null;
+  let bestD = Infinity;
+  for (const leaf of leaves) {
+    if (leaf.state !== 'collected' || leaf.checked || inPile(leaf.world, pile) || !inWorkArea(leaf.world, pile, cfg)) continue;
+    const d = toRover(leaf.world, heading).distance;
+    if (d < bestD) {
+      best = leaf;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * Look at a scooped spot: back off if it's under the camera, close in if it's far, face it, then
+ * watch for `absentMs`. A leaf still there is seen and goes back to `confirmed` (the leaf map's miss
+ * rule), and the rover goes for it; otherwise the spot is checked.
+ */
+function check(state: AutopilotState, input: AutopilotInput, heading: Heading, cfg: AutopilotConfig): AutopilotStep {
+  const { nowMs, leaves } = input;
+  const leaf = leaves.find((l) => l.id === state.targetId);
+  const done = (extra: Partial<AutopilotStep> = {}) =>
+    halt({ ...initialAutopilotState(nowMs, state.load), lastYawDeg: heading.yawDeg }, 'Looking for leaves', extra);
+  if (!leaf || leaf.state !== 'collected') return done();
+  // Taking too long (e.g. it can't get a view of it): call it checked rather than loop.
+  if (nowMs - state.sinceMs > cfg.approachMaxMs) return done({ checkedId: leaf.id });
+  const r = toRover(leaf.world, heading);
+  const label = `leaf #${leaf.id}'s spot`;
+  if (r.distance < cfg.checkViewM - 0.35) {
+    return out({ ...state, alignedAtMs: undefined }, -cfg.backupSpeed, -cfg.backupSpeed, `Backing up to look at ${label}`);
+  }
+  if (r.distance > cfg.checkViewM + 0.4) {
+    return navigate({ ...state, alignedAtMs: undefined }, leaf.world, cfg.checkViewM, 0, label, input, heading, cfg);
+  }
+  if (Math.abs(r.bearingDeg) > cfg.alignDeg * 2) {
+    const { left, right } = fineTurn(r.bearingDeg, cfg);
+    return out({ ...state, alignedAtMs: undefined }, left, right, `Turning to look at ${label}`);
+  }
+  const since = state.alignedAtMs ?? nowMs;
+  if (nowMs - since < cfg.absentMs) return halt({ ...state, alignedAtMs: since }, `Checking ${label} is empty`);
+  return done({ checkedId: leaf.id });
 }
 
 function dump(state: AutopilotState, input: AutopilotInput, heading: Heading, cfg: AutopilotConfig): AutopilotStep {
