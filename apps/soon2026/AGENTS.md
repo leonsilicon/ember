@@ -23,6 +23,13 @@ npx expo install --fix      # fix incompatible package versions
 
 Run lint and typecheck before declaring any task done.
 
+## Dev stack
+
+The repo is a bun workspace (`apps/*`, `packages/*`, hoisted `node_modules` at the root); run `bun install` from the root. `vpx _dev` (anywhere in the repo, in an interactive terminal) runs everything in mprocs: pane 0 is Metro, on Stim's `metro.port` (pinned to 8082 in `.stim.json`; 8081 without Stim), so `stim ios` reuses it, and pane 1 is the splat server on 8899. `vpx _dev --force` replaces a running stack and frees both ports (through `stim stop` when Stim's own dev server holds Metro's). Extra arguments go to `expo start` (`vpx _dev --clear`); `--port <n>` overrides the Metro port. The script is `packages/dev/_dev.ts`.
+
+- Read pane output from `.mprocs-logs/metro.log` and `.mprocs-logs/splat-server.log` at the repo root instead of the TUI.
+- Restart a pane through the control port: `vpx mprocs --server 127.0.0.1:8898 --ctl '{c: select-proc, index: 0}'`, then `vpx mprocs --server 127.0.0.1:8898 --ctl '{c: restart-proc}'`. Check whether it is up with `lsof -nP -iTCP:8898 -sTCP:LISTEN`, never by connecting: mprocs 0.9 crashes on an empty connection.
+
 ## Navigation & Routing
 
 - Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.

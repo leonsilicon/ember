@@ -1,0 +1,4 @@
+[install]
+# Bun defaults workspaces to its isolated linker, which nests packages under node_modules/.bun.
+# React Native's tooling (CocoaPods autolinking, Gradle, Metro) expects one flat node_modules.
+linker = "hoisted"

@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+
+# `vpx _dev` pane logs, and the crash log mprocs writes to its working directory
+.mprocs-logs/
+mprocs.log

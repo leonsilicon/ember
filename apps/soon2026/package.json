@@ -56,13 +56,5 @@
     "test:native": "swift test --package-path modules/splat-capture/ios/SplatCaptureCore",
     "typecheck": "tsc --noEmit && tsc --noEmit -p server"
   },
-  "trustedDependencies": [
-    "react-native-executorch"
-  ],
-  "react-native-executorch": {
-    "features": [
-      "objectDetection"
-    ]
-  },
   "private": true
 }
