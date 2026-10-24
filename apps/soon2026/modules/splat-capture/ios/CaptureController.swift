@@ -58,6 +58,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
   private var recording: Recording?
   private var live: LiveStreamer?
   private var detectionRequest: DetectionRequest?
+  /// The newest frame's camera, for `currentCamera` (the rover's steering loop polls it).
+  private var latestCamera: DetectionCamera?
   private var recoveringFromFailure = false
   private var lastStatusAt: TimeInterval = 0
   private var tracking = ("notAvailable", nil as String?)
@@ -191,6 +193,15 @@ final class CaptureController: NSObject, ARSessionDelegate {
     }
   }
 
+  /// The newest frame's pose, intrinsics and (with `includeDepth`) LiDAR depth, or nil before
+  /// the first frame. Cheaper than a detection frame: no image.
+  func currentCamera(includeDepth: Bool, completion: @escaping ([String: Any]?) -> Void) {
+    frameQueue.async {
+      let camera = self.latestCamera
+      self.detectionQueue.async { completion(camera?.dictionary(includeDepth: includeDepth)) }
+    }
+  }
+
   /// ARKit delivers the camera image in the sensor's landscape orientation; turn it upright for
   /// the portrait UI and scale it down, as tightly packed RGBA rows.
   private func detectionImage(from buffer: CVPixelBuffer, maxSize: Int) -> [String: Any]? {
@@ -253,6 +264,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
   func session(_ session: ARSession, didUpdate frame: ARFrame) {
     tracking = Self.describe(frame.camera.trackingState)
+    latestCamera = DetectionCamera(frame: frame)
     if recoveringFromFailure && tracking.0 == "normal" {
       recoveringFromFailure = false
       DispatchQueue.main.async { self.consecutiveFailures = 0 }
@@ -260,7 +272,12 @@ final class CaptureController: NSObject, ARSessionDelegate {
     if let request = detectionRequest {
       detectionRequest = nil
       let image = frame.capturedImage
-      detectionQueue.async { request.completion(self.detectionImage(from: image, maxSize: request.maxSize)) }
+      let camera = DetectionCamera(frame: frame)
+      detectionQueue.async {
+        var result = self.detectionImage(from: image, maxSize: request.maxSize)
+        result?["camera"] = camera.dictionary()
+        request.completion(result)
+      }
     }
     if let recording, !recording.stopping, !recording.frozen, recording.inFlight < 2,
        recording.selector.shouldKeep(timestamp: frame.timestamp,
@@ -334,6 +351,65 @@ final class CaptureController: NSObject, ARSessionDelegate {
 private struct DetectionRequest {
   let maxSize: Int
   let completion: ([String: Any]?) -> Void
+}
+
+/// Where the camera was when a detection frame was taken, so JS can place what it detects in
+/// the world: the pose, the intrinsics of the sensor-oriented image (the detection frame is that
+/// image turned upright with `.oriented(.right)` and scaled), and the LiDAR depth when there is
+/// some. Holds the frame's buffers, not the ARFrame, which ARKit warns about retaining.
+private struct DetectionCamera {
+  let timestamp: TimeInterval
+  let cameraToWorld: simd_float4x4
+  let intrinsics: PinholeIntrinsics
+  let trackingNormal: Bool
+  let depth: CVPixelBuffer?
+  let confidence: CVPixelBuffer?
+
+  init(frame: ARFrame) {
+    timestamp = frame.timestamp
+    cameraToWorld = frame.camera.transform
+    intrinsics = PinholeIntrinsics(arkit: frame.camera.intrinsics,
+                                   width: CVPixelBufferGetWidth(frame.capturedImage),
+                                   height: CVPixelBufferGetHeight(frame.capturedImage))
+    if case .normal = frame.camera.trackingState {
+      trackingNormal = true
+    } else {
+      trackingNormal = false
+    }
+    depth = frame.sceneDepth?.depthMap
+    confidence = frame.sceneDepth?.confidenceMap
+  }
+
+  /// The JS shape (`DetectionCamera` in SplatCapture.types.ts). Copies the depth rows, so call it
+  /// off the AR frame queue.
+  func dictionary(includeDepth: Bool = true) -> [String: Any] {
+    var out: [String: Any] = [
+      "timestamp": timestamp,
+      "pose": LiveStreamer.columnMajor(cameraToWorld).map { Double($0) },
+      "intrinsics": [
+        "fx": Double(intrinsics.fx), "fy": Double(intrinsics.fy),
+        "cx": Double(intrinsics.cx), "cy": Double(intrinsics.cy),
+        "width": intrinsics.width, "height": intrinsics.height,
+      ] as [String: Any],
+      "trackingNormal": trackingNormal,
+    ]
+    if includeDepth, let depth {
+      let width = CVPixelBufferGetWidth(depth)
+      let height = CVPixelBufferGetHeight(depth)
+      let metres: [Float32] = copyRows(depth, width: width, height: height)
+      var depthOut: [String: Any] = [
+        "width": width,
+        "height": height,
+        "data": metres.withUnsafeBytes { Data($0) },
+      ]
+      if let confidence {
+        let levels: [UInt8] = copyRows(confidence, width: width, height: height)
+        depthOut["confidence"] = Data(levels)
+      }
+      out["depth"] = depthOut
+    }
+    return out
+  }
 }
 
 /// What the write queue needs from one ARFrame. Holding these buffers (not the

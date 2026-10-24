@@ -17,12 +17,14 @@ import SplatCapture, {
 
 import { CameraMenu } from '@/components/camera-menu';
 import { DetectionOverlay, labelColor, type Size } from '@/components/detection-overlay';
+import { RoverBrainHud } from '@/components/rover-brain-hud';
 import { RoverSheet } from '@/components/rover-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useDebugSettings } from '@/hooks/use-debug-settings';
 import { useDetections, type Detection } from '@/hooks/use-detections';
+import { useRoverBrain } from '@/hooks/use-rover-brain';
 import { compact } from '@/lib/captures';
 import { useRover } from '@/lib/rover';
 
@@ -95,6 +97,8 @@ export default function CameraScreen() {
   const status = useEvent(SplatCapture, 'onStatus', INITIAL_STATUS);
   const detections = useDetections(detection && capabilities.arkit);
   const rover = useRover();
+  // Places leaves in the world, scans LiDAR for obstacles, and runs the drive-to-leaf autopilot.
+  const brain = useRoverBrain(detections.result, detection && capabilities.arkit && focused);
   const debug = useDebugSettings();
 
   // Re-read on every return, since the gallery can delete the newest capture.
@@ -174,6 +178,7 @@ export default function CameraScreen() {
           frameSize={result.frameSize}
           viewSize={viewSize}
           rotated180={false}
+          captions={brain.captionsFor === result ? brain.captions : undefined}
         />
       )}
 
@@ -240,6 +245,10 @@ export default function CameraScreen() {
           </View>
         )}
 
+        {detection && (
+          <RoverBrainHud brain={brain} canDrive={rover.connection.state === 'connected'} />
+        )}
+
         <View style={styles.controls}>
           <GalleryButton
             capture={latest?.capture}
@@ -256,7 +265,11 @@ export default function CameraScreen() {
             icon="car.fill"
             label="Rover controls"
             badge={rover.connection.state === 'connected'}
-            onPress={() => setRoverOpen(true)}
+            onPress={() => {
+              // Manual driving takes over from the autopilot.
+              brain.stopAutopilot();
+              setRoverOpen(true);
+            }}
           />
         </View>
       </View>

@@ -54,8 +54,9 @@
     "lint": "expo lint",
     "splat-server": "bun server/index.ts",
     "test:server": "bun test server",
+    "test:brain": "bun test tests",
     "test:native": "swift test --package-path modules/splat-capture/ios/SplatCaptureCore",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p server"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p server && tsc --noEmit -p tests"
   },
   "private": true
 }

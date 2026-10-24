@@ -79,6 +79,37 @@ export type DetectionFrame = {
   width: number;
   height: number;
   data: Uint8Array;
+  /** Where the camera was for this frame; lets detections be placed in the world (src/lib/rover-brain). */
+  camera?: DetectionCamera;
+};
+
+/** Pinhole intrinsics in pixels, for an image of `width` × `height`. */
+export type PinholeIntrinsics = { fx: number; fy: number; cx: number; cy: number; width: number; height: number };
+
+/**
+ * The AR camera for a detection frame. ARKit conventions: the world is gravity-aligned with +y up;
+ * camera space has +x right, +y up, looking down −z.
+ */
+export type DetectionCamera = {
+  /** ARKit frame timestamp, seconds. */
+  timestamp: number;
+  /** Camera-to-world transform, 16 numbers, column-major. */
+  pose: number[];
+  /**
+   * Of the sensor-oriented (landscape) camera image. The detection frame is that image rotated a
+   * quarter turn clockwise (upright for portrait) and scaled down.
+   */
+  intrinsics: PinholeIntrinsics;
+  trackingNormal: boolean;
+  /** LiDAR depth in the sensor orientation (256×192 on iPhone): float32 metres, row-major. */
+  depth?: {
+    width: number;
+    height: number;
+    /** Little-endian float32 bytes. */
+    data: Uint8Array;
+    /** ARKit confidence per pixel: 0 low, 1 medium, 2 high. */
+    confidence?: Uint8Array;
+  };
 };
 
 export type UploadProgress = {

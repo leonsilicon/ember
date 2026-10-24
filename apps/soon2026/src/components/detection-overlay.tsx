@@ -22,6 +22,8 @@ type DetectionOverlayProps = {
   viewSize: Size;
   /** Whether the model input was upside down, so boxes have to be rotated back. */
   rotated180: boolean;
+  /** Extra text per detection, by index, e.g. how far away it is. */
+  captions?: readonly (string | undefined)[];
 };
 
 const PALETTE = ['#FF453A', '#FF9F0A', '#FFD60A', '#30D158', '#64D2FF', '#0A84FF', '#BF5AF2', '#FF375F'];
@@ -50,6 +52,7 @@ export function DetectionOverlay({
   frameSize,
   viewSize,
   rotated180,
+  captions,
 }: DetectionOverlayProps) {
   if (frameSize.width <= 0 || frameSize.height <= 0) {
     return null;
@@ -87,6 +90,7 @@ export function DetectionOverlay({
               style={[styles.tag, top < 24 ? styles.tagInside : styles.tagAbove, { backgroundColor: color }]}>
               <ThemedText type="smallBold" style={styles.tagText} numberOfLines={1}>
                 {detection.label} {Math.round(detection.confidence * 100)}%
+                {captions?.[index] ? ` · ${captions[index]}` : ''}
               </ThemedText>
             </View>
           </View>

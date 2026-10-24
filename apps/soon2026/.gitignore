@@ -47,3 +47,6 @@ example
 /server/data
 /server/bin
 /server/models
+
+# Burn/CubeCL GPU autotune cache (written by the splat trainer)
+target/

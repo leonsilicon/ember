@@ -40,6 +40,10 @@ public class SplatCaptureModule: Module {
       CaptureController.shared.nextDetectionFrame(maxSize: maxSize) { promise.resolve($0) }
     }
 
+    AsyncFunction("currentCamera") { (includeDepth: Bool, promise: Promise) in
+      CaptureController.shared.currentCamera(includeDepth: includeDepth) { promise.resolve($0) }
+    }
+
     AsyncFunction("listCaptures") {
       CaptureController.listCaptures()
     }

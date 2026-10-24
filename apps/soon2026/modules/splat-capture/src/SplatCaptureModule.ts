@@ -3,6 +3,7 @@ import { NativeModule, requireNativeModule } from 'expo';
 import {
   Capabilities,
   CaptureMode,
+  DetectionCamera,
   DetectionFrame,
   SavedCapture,
   SplatCaptureModuleEvents,
@@ -20,6 +21,11 @@ declare class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> 
    * once the preview is running. Resolves with null if a newer call replaces this one.
    */
   nextDetectionFrame(maxSize: number): Promise<DetectionFrame | null>;
+  /**
+   * The newest AR frame's camera: pose, intrinsics and, with `includeDepth`, LiDAR depth. Null
+   * before the first frame. The rover's steering loop polls this.
+   */
+  currentCamera(includeDepth: boolean): Promise<DetectionCamera | null>;
   /** Saved captures, newest first. */
   listCaptures(): Promise<SavedCapture[]>;
   deleteCapture(captureId: string): Promise<void>;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useObjectDetector, type ObjectDetection, type ObjectDetectorModel } from 'react-native-executorch';
 
-import SplatCapture from '../../modules/splat-capture';
+import SplatCapture, { type DetectionCamera } from '../../modules/splat-capture';
 
 import type { Size } from '@/components/detection-overlay';
 import { useDebugSettings } from '@/hooks/use-debug-settings';
@@ -36,6 +36,8 @@ export type DetectionResult = {
   frameSize: Size;
   /** Inference time, smoothed over recent frames. */
   latencyMs: number;
+  /** Where the camera was for the frame, to place the detections in the world. */
+  camera?: DetectionCamera;
 };
 
 export type Detections = {
@@ -152,6 +154,7 @@ export function useDetections(enabled: boolean): Detections {
           setResult((previous) => ({
             detections,
             frameSize: { width: frame.width, height: frame.height },
+            camera: frame.camera,
             latencyMs: previous ? previous.latencyMs * 0.9 + latencyMs * 0.1 : latencyMs,
           }));
           setError(undefined);
