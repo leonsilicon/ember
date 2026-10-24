@@ -120,7 +120,7 @@ capture's zip is deleted once it's trained; its final splat stays).
 Everything needs the access token, `SPLAT_TOKEN` (a Vercel environment variable, a secret in
 Production and Preview, so it can't be pulled back; `apps/next-app/.env` keeps a copy for scripts
 like `live-replay.ts`): the app has it built in from `EXPO_PUBLIC_SPLAT_TOKEN`, with the server's
-address in `EXPO_PUBLIC_SPLAT_SERVER_URL` (both in `apps/expo-app/.env.local` for local builds, and
+address in `EXPO_PUBLIC_SPLAT_SERVER_URL` (both in `mobile/.env.local` for local builds, and
 EAS environment variables for EAS builds).
 A browser signs in once by opening any page with `?token=<SPLAT_TOKEN>` (or entering it on the page);
 it keeps it in a cookie. API clients send `Authorization: Bearer <SPLAT_TOKEN>`.

@@ -14,12 +14,12 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
 
 | Path | What |
 |---|---|
-| `apps/expo-app` | The Expo / React Native iPhone app: camera, leaf detection, the rover's brain and autopilot, rover controls, 3D splat capture. Plus the ESP32 firmware (`firmware/rover`). |
-| `apps/expo-app/src/lib/rover-brain` | Leaf localisation, obstacle scanning and the drive-to-leaf autopilot (pure TypeScript, unit-tested). |
-| `apps/next-app` | The splat server: a Next.js app on Vercel that trains captures into splats and rebuilds recordings live in 3D, through a Bun agent on a Mac. See "Debug: preview the splat" in [`apps/expo-app/SPLATS.md`](apps/expo-app/SPLATS.md). |
+| `mobile` | The Expo / React Native iPhone app: camera, leaf detection, the rover's brain and autopilot, rover controls, 3D splat capture. Plus the ESP32 firmware (`firmware/rover`). |
+| `mobile/src/lib/rover-brain` | Leaf localisation, obstacle scanning and the drive-to-leaf autopilot (pure TypeScript, unit-tested). |
+| `apps/next-app` | The splat server: a Next.js app on Vercel that trains captures into splats and rebuilds recordings live in 3D, through a Bun agent on a Mac. See "Debug: preview the splat" in [`mobile/SPLATS.md`](mobile/SPLATS.md). |
 | `packages/owlvit` | Builds the on-device OWL-ViT leaf detector the app embeds. |
 | `packages/dev` | The `vpx _dev` and `vpx _ios` scripts. |
-| `.github/workflows/testflight.yml` | Ships every push to `main` to TestFlight from a self-hosted Mac; see "TestFlight" in [`apps/expo-app/AGENTS.md`](apps/expo-app/AGENTS.md). |
+| `.github/workflows/testflight.yml` | Ships every push to `main` to TestFlight from a self-hosted Mac; see "TestFlight" in [`mobile/AGENTS.md`](mobile/AGENTS.md). |
 | `frontend` | Parth's laptop web app (React + Vite + TS + Tailwind): rover remote control, splat viewer, and the wildfire hazard map at `#/wildfire`. |
 | `firmware/rover_ws` | ESP32 Arduino sketch: Wi-Fi access point + WebSocket command endpoint for the web app. |
 | `data/wildfire` | Ontario wildfire hazard pipeline that feeds the web app's map. |
@@ -119,7 +119,7 @@ and the scoop. The brain only gets those sightings and scans, never the true pos
 TypeScript, so a web app can import it directly:
 
 ```ts
-import { RoverSim } from '<repo>/apps/expo-app/src/lib/rover-brain';
+import { RoverSim } from '<repo>/mobile/src/lib/rover-brain';
 
 const sim = new RoverSim({
   leaves: [[0.5, -2], [-1, -1.5]],                                // [x, z] metres, floor at y = 0
@@ -188,7 +188,7 @@ text queries describe, with no training. The queries ("a photo of a dead leaf", 
 phone and in `backend/rover_vision/leaf_detector.py` for the Mac.
 
 - **On the phone:** `packages/owlvit` exports it as an ExecuTorch / Core ML program,
-  `apps/expo-app/plugins/with-leaf-detector.js` embeds it in the app when it's prebuilt, and
+  `mobile/plugins/with-leaf-detector.js` embeds it in the app when it's prebuilt, and
   `src/hooks/use-detections.ts` runs it on the AR camera's frames. To change what it looks for,
   edit `QUERIES`, rebuild the model (`bun run --filter @soon2026/owlvit build`), then rebuild the
   app (`vpx _ios`).
@@ -277,7 +277,7 @@ than the Neural Engine) until that limit is revisited.
 **Checks:**
 
 ```bash
-cd apps/expo-app
+cd mobile
 bun run test:brain      # rover-brain unit tests (synthetic AR scenes with known answers)
 bun run typecheck
 cd ../../backend && .venv/bin/python -m pytest -q

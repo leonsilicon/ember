@@ -5,7 +5,32 @@
     "": {
       "name": "soon2026-monorepo",
     },
-    "apps/expo-app": {
+    "apps/next-app": {
+      "name": "@soon2026/next-app",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sparkjsdev/spark": "2.3.1",
+        "@vercel/blob": "^2.8.2",
+        "@vercel/functions": "^3.10.3",
+        "ioredis": "^5.8.2",
+        "next": "16.4.3",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "three": "0.180.0",
+        "ws": "^8.22.0",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.4.4",
+        "@types/node": "^24.0.0",
+        "@types/react": "~19.3.0",
+        "@types/react-dom": "~19.3.0",
+        "@types/three": "0.180.0",
+        "@types/ws": "^8.18.1",
+        "typescript": "~6.0.3",
+        "vercel": "^65.2.0",
+      },
+    },
+    "mobile": {
       "name": "soon2026",
       "version": "1.0.0",
       "dependencies": {
@@ -55,31 +80,6 @@
         "eslint": "^9.0.0",
         "eslint-config-expo": "~58.0.4",
         "typescript": "~6.0.3",
-      },
-    },
-    "apps/next-app": {
-      "name": "@soon2026/next-app",
-      "version": "0.0.0",
-      "dependencies": {
-        "@sparkjsdev/spark": "2.3.1",
-        "@vercel/blob": "^2.8.2",
-        "@vercel/functions": "^3.10.3",
-        "ioredis": "^5.8.2",
-        "next": "16.4.3",
-        "react": "19.3.0",
-        "react-dom": "19.3.0",
-        "three": "0.180.0",
-        "ws": "^8.22.0",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.4.4",
-        "@types/node": "^24.0.0",
-        "@types/react": "~19.3.0",
-        "@types/react-dom": "~19.3.0",
-        "@types/three": "0.180.0",
-        "@types/ws": "^8.18.1",
-        "typescript": "~6.0.3",
-        "vercel": "^65.2.0",
       },
     },
     "packages/dev": {
@@ -2035,7 +2035,7 @@
 
     "smol-toml": ["smol-toml@1.5.2", "", {}, "sha512-QlaZEqcAH3/RtNyet1IPIYPsEWAaYyXXv1Krsi+1L/QHppjX4Ifm8MQsBISz9vE8cHicIq3clogsheili5vhaQ=="],
 
-    "soon2026": ["soon2026@workspace:apps/expo-app"],
+    "soon2026": ["soon2026@workspace:mobile"],
 
     "source-map": ["source-map@0.5.7", "", {}, "sha512-LbrmJOMUSdEVxIKvdcJzQC+nQhe8FUZQTXQy6+I75skNgn3OoQ0DZA8YnFa7gp8tqtL3KPf1kmo0R5DoApeSGQ=="],
 

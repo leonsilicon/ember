@@ -22,7 +22,7 @@
     /* rover-brain (imported via @rover-brain) uses constructor parameter properties */
     "erasableSyntaxOnly": false,
     "noFallthroughCasesInSwitch": true,
-    "paths": { "@rover-brain": ["../apps/expo-app/src/lib/rover-brain/index.ts"] }
+    "paths": { "@rover-brain": ["../mobile/src/lib/rover-brain/index.ts"] }
   },
   "include": ["src"]
 }

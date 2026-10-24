@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * `vpx _ios` (from anywhere in the repo): build the apps/expo-app development build, install it on the
+ * `vpx _ios` (from anywhere in the repo): build the mobile development build, install it on the
  * iPhone and open it on `vpx _dev`'s Metro. The phone comes first because the camera screen needs ARKit,
  * which the simulator lacks. Expo's `i` key in the Metro pane only ever opens a simulator, so this is the
  * phone's `i`.
@@ -17,7 +17,7 @@
  * the phone shares its hotspot, else at this Mac's LAN address, which the phone must share.
  *
  * The variant, like Haniverse's, is `development` (the default) or `production`. It is EXPO_PUBLIC_APP_VARIANT for
- * the Expo commands, so it picks the app's identity in apps/expo-app/app.config.ts: the development build is
+ * the Expo commands, so it picks the app's identity in mobile/app.config.ts: the development build is
  * `com.leonsilicon.soon2026.development`, and the two install side by side. `production` also builds the Release
  * configuration, which autolinking leaves expo-dev-launcher and expo-dev-menu (`debugOnly`) out of. Every other
  * argument goes to `expo run:ios`.

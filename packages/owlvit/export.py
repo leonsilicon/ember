@@ -8,7 +8,7 @@
   is one candidate per 32 px patch, its box is xyxy in input pixels, and its class indexes the
   labels in the manifest.
 - owlvit-leaves.json, the manifest: the model's file name, labels, preprocessing and thresholds.
-  The app embeds both when it's prebuilt (apps/expo-app/plugins/with-leaf-detector.js).
+  The app embeds both when it's prebuilt (mobile/plugins/with-leaf-detector.js).
 
 OWL-ViT is open-vocabulary: it scores image patches against text embeddings. The queries below
 don't change at runtime, so they are embedded once here and stored in the program. The phone

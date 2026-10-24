@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig, searchForWorkspaceRoot } from 'vite'
 
 // The rover's brain lives in the Expo app (owned there, read-only here); the simulator imports it as-is.
-const roverBrainDir = fileURLToPath(new URL('../apps/expo-app/src/lib/rover-brain', import.meta.url))
+const roverBrainDir = fileURLToPath(new URL('../mobile/src/lib/rover-brain', import.meta.url))
 
 // https://vite.dev/config/
 export default defineConfig({

@@ -26,7 +26,7 @@ fp16, the default, moves boxes by up to ~10 px (of 768) on candidates scoring a 
 
 ## How the app gets it
 
-It's embedded in the iOS app: `apps/expo-app/plugins/with-leaf-detector.js` copies `dist/` into the
+It's embedded in the iOS app: `mobile/plugins/with-leaf-detector.js` copies `dist/` into the
 app bundle whenever the app is prebuilt (`vpx _ios` prebuilds on every build), so the phone has the
 model from the first launch, without the splat server. Prebuild stops with an error until the model
 is built. Core ML compiles the model the first time the app loads it, which takes a while. After

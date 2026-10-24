@@ -3,8 +3,8 @@
  * `vpx _dev` (from anywhere in the repo): the whole dev stack in mprocs, one pane per long-lived
  * process. Pane order is the index mprocs' remote control uses:
  *
- *   0  metro         Expo dev server for apps/expo-app, on Stim's `metro.port` (committed in
- *                    apps/expo-app/.stim.json; 8081 without Stim), so `stim ios` reuses it.
+ *   0  metro         Expo dev server for mobile, on Stim's `metro.port` (committed in
+ *                    mobile/.stim.json; 8081 without Stim), so `stim ios` reuses it.
  *                    Always `--dev-client`: the app runs as a development build, never in Expo Go
  *   1  splat-agent   the splat server's Mac agent (apps/next-app/src/agent): trains captures
  *                    with Brush and runs the live 3D reconstruction for the app on Vercel. It reads
@@ -136,7 +136,7 @@ const config = {
     metro: {
       cmd: [node, expoCli, 'start', '--dev-client', '--port', String(metroPort), ...expoArgs],
       cwd: APP_DIR,
-      // The development build's identity (apps/expo-app/app.config.ts) in the manifest it loads.
+      // The development build's identity (mobile/app.config.ts) in the manifest it loads.
       env: { EXPO_PUBLIC_APP_VARIANT: 'development' },
       stop: 'SIGINT',
     },

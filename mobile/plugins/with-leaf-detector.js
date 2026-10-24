@@ -13,7 +13,7 @@ module.exports = function withLeafDetector(config) {
     // `eas build --local` prebuilds a copy of the repo that leaves out gitignored files, dist/ included,
     // so the TestFlight workflow points LEAF_DETECTOR_DIST at its checkout's dist/.
     const dist =
-      process.env.LEAF_DETECTOR_DIST ?? path.resolve(config.modRequest.projectRoot, '../../packages/owlvit/dist');
+      process.env.LEAF_DETECTOR_DIST ?? path.resolve(config.modRequest.projectRoot, '../packages/owlvit/dist');
     const manifestPath = path.join(dist, MANIFEST);
     if (!fs.existsSync(manifestPath)) {
       throw new Error(
