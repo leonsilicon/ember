@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["ESNext"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "target": "ESNext",
+    "types": ["bun"],
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["**/*.ts"]
+}
