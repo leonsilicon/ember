@@ -10,6 +10,7 @@ import {
   DEFAULT_ROVER,
   headingFromPose,
   inPile,
+  inWorkArea,
   isPose,
   locateDetections,
   scanDepth,
@@ -24,8 +25,6 @@ import {
 
 /** How often the steering loop reads the camera pose and LiDAR depth. */
 const TICK_MS = 200;
-/** "Set pile" puts the pile this far in front of the rover. */
-const PILE_AHEAD_M = 1;
 
 export type BrainLeaf = TrackedLeaf & {
   /** Where it is from the rover now (it moves as the rover does). */
@@ -33,13 +32,14 @@ export type BrainLeaf = TrackedLeaf & {
 };
 
 export type RoverBrain = {
-  /** Tracked leaves, nearest first, without collected, failed or piled ones. */
+  /** Tracked leaves in the work circle, nearest first, without collected, failed or piled ones. */
   leaves: BrainLeaf[];
   collected: number;
   /** Where the leaves go, and where it is from the rover now. */
   pile: (Pile & { rover?: RoverPoint }) | null;
-  /** Scoop loads carried, and tipped onto the pile so far. */
+  /** Scoops in the bin, how many it holds before a trip to the pile, and scoops emptied so far. */
   load: number;
+  capacity: number;
   dumped: number;
   /**
    * Per detection of `captionsFor`: why LiDAR ruled it out, "~1.2 m · 15° R" for a leaf placed
@@ -56,8 +56,10 @@ export type RoverBrain = {
   autopilot: { on: boolean; message: string };
   startAutopilot: () => void;
   stopAutopilot: () => void;
-  /** Puts the pile on the ground PILE_AHEAD_M in front of the rover. */
-  setPileAhead: () => void;
+  /** Puts the pile where the rover is standing, so it starts from the pile and works the circle round it. */
+  setPileHere: () => void;
+  /** The circle round the pile it collects leaves in. */
+  workRadiusM: number;
   /** Forget every leaf (e.g. after moving the rover by hand). */
   reset: () => void;
 };
@@ -101,12 +103,13 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
   /** What the steering loop obeys; a ref so toggling the autopilot doesn't restart the loop. */
   const autopilotOnRef = useRef(false);
   const [view, setView] = useState<
-    Omit<RoverBrain, 'startAutopilot' | 'stopAutopilot' | 'setPileAhead' | 'reset' | 'autopilot'> & { message: string }
+    Omit<RoverBrain, 'startAutopilot' | 'stopAutopilot' | 'setPileHere' | 'reset' | 'autopilot' | 'workRadiusM'> & { message: string }
   >({
     leaves: [],
     collected: 0,
     pile: null,
     load: 0,
+    capacity: 0,
     dumped: 0,
     captions: [],
     corridors: [],
@@ -121,7 +124,12 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
     const all = current.leaves.snapshot();
     const leaves = h
       ? all
-          .filter((l) => (l.state === 'confirmed' || l.state === 'tentative') && !inPile(l.world, current.pile))
+          .filter(
+            (l) =>
+              (l.state === 'confirmed' || l.state === 'tentative') &&
+              !inPile(l.world, current.pile) &&
+              inWorkArea(l.world, current.pile, current.options.autopilot),
+          )
           .map((l) => ({ ...l, rover: toRover(l.world, h) }))
           .sort((a, b) => a.rover.distance - b.rover.distance)
       : [];
@@ -132,6 +140,7 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
       collected: all.filter((l) => l.state === 'collected').length,
       pile: current.pile && { ...current.pile, rover: h ? toRover(current.pile.center, h) : undefined },
       load: current.autopilot.load,
+      capacity: current.options.autopilot.capacity,
       dumped: current.dumped,
     }));
   }, []);
@@ -225,14 +234,11 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
 
   const startAutopilot = useCallback(() => setAutopilotOn(true), []);
 
-  const setPileAhead = useCallback(() => {
+  const setPileHere = useCallback(() => {
     const h = heading.current;
     if (!h) return;
     const floorY = brain.current.obstacles.floorY ?? h.origin[1] - DEFAULT_ROVER.cameraHeightM;
-    brain.current.setPile({
-      center: [h.origin[0] + h.forward[0] * PILE_AHEAD_M, floorY, h.origin[2] + h.forward[2] * PILE_AHEAD_M],
-      radiusM: DEFAULT_PILE_RADIUS_M,
-    });
+    brain.current.setPile({ center: [h.origin[0], floorY, h.origin[2]], radiusM: DEFAULT_PILE_RADIUS_M });
     publish({});
   }, [publish]);
 
@@ -258,7 +264,8 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
     autopilot: { on: autopilotOn && enabled && connected, message },
     startAutopilot,
     stopAutopilot,
-    setPileAhead,
+    setPileHere,
+    workRadiusM: brain.current.options.autopilot.workRadiusM,
     reset,
   };
 }

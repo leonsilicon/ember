@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { BANANA_SPLAT_URL, SAMPLE_SPLAT_URL } from './SplatViewer'
+import { SAMPLE_SPLAT_URL } from './SplatViewer'
 
 export type SceneSource = { url: string; label: string } | null
 
@@ -34,13 +34,6 @@ export function ScenePanel({ scene, onChange }: Props) {
           className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
         >
           Leaf floor
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange({ url: BANANA_SPLAT_URL, label: 'banana (sample)' })}
-          className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
-        >
-          Banana
         </button>
         <button
           type="button"

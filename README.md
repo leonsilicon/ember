@@ -83,8 +83,10 @@ driving are decoupled:
 
 ### Scooping and the pile
 
-You set the pile with **Set pile** in the HUD: it goes on the ground 1 m in front of the rover,
-and everything within 1 m of it counts as piled (the rover never picks those up). Then **Auto**:
+Put the rover where the pile should be and press **Pile here** in the HUD: the pile goes where the
+rover stands, so the rover starts from the pile. It collects the leaves within its **work circle**
+round the pile (`workRadiusM`, 6 ft = 1.83 m by default) and leaves everything outside it alone.
+Leaves within 0.75 m (2.5 ft) of the pile's centre count as piled. Then **Auto**:
 
 1. **Choose a leaf**: the nearest confirmed one, plus half its distance from the pile (so it
    clears outwards from the pile), plus 2 m if something is in the way. It sticks with its choice
@@ -98,9 +100,11 @@ and everything within 1 m of it counts as piled (the rover never picks those up)
 4. **Scoop**: lower the scoop, drive straight until the lip (15 cm ahead of the camera) is 10 cm
    past the leaf, lift. That last stretch is blind and steered on the AR pose. Every leaf the
    lip passed over counts as scooped.
-5. **To the pile** once the scoop holds `capacity` loads (default 1), detouring the same way.
+5. **To the pile** once the bin holds `capacity` scoops (default 4: each scoop tips into a bin
+   on the rover), or with a part-full bin once nothing is left nearby, detouring the same way.
    Dump at 60 cm from its centre, facing it, or wherever the grown pile blocks the way first.
-   Then back up 35 cm and search again.
+   The bin tips out, then it backs up 35 cm and searches again.
+6. **Park** once a full look round finds nothing left in the circle, and look again every 20 s.
 
 The scoop position (`up` / `down` / `dump`) is part of every autopilot step, but the firmware has
 no scoop yet, so the app only sends the wheel speeds for now.

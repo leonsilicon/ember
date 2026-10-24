@@ -282,7 +282,7 @@ const groundColor = (x, z) => {
   col = mix(col, GRASS_DRY, clamp((n2 - 0.55) * 3, 0, 0.6))
   // worn soil/duff patches
   const bare = clamp((fbm(x * 0.9 - 40, z * 0.9 + 12) - 0.6) * 4, 0, 1)
-  col = mix(col, mix(SOIL, DUFF, n2), bare * 0.85)
+  col = mix(col, mix(SOIL, DUFF, n2), bare * 0.55)
   return col
 }
 
@@ -307,7 +307,7 @@ const groundColor = (x, z) => {
 }
 
 // ---------- scattered leaves ----------
-const SCATTER = 460
+const SCATTER = 900
 for (let i = 0; i < SCATTER; i++) {
   // denser near the piles (wind drift), sparse elsewhere
   let x, z

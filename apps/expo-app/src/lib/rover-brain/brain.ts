@@ -20,8 +20,8 @@ export type BrainOptions = {
   obstacleMemory: ObstacleMemoryOptions;
   rover: RoverSpec;
   /**
-   * With leaves in the scoop, sightings this close to the camera are ignored: the raised scoop
-   * can be in view, and what's in it isn't on the ground.
+   * With leaves on board, sightings this close to the camera are ignored: the raised scoop and the
+   * bin can be in view, and what's in them isn't on the ground.
    */
   selfMaskM: number;
 };
@@ -48,7 +48,7 @@ export class Brain {
   pile: Pile | null = null;
   autopilot: AutopilotState = initialAutopilotState(0);
   running = false;
-  /** Scoop loads tipped onto the pile so far. */
+  /** Scoops emptied onto the pile so far. */
   dumped = 0;
 
   constructor(options: Partial<BrainOptions> = {}) {
@@ -75,7 +75,7 @@ export class Brain {
     this.pile = pile;
   }
 
-  /** Starts the autopilot. Whatever is in the scoop stays counted. */
+  /** Starts the autopilot. Whatever is in the bin stays counted. */
   start(nowMs: number) {
     this.autopilot = initialAutopilotState(nowMs, this.autopilot.load);
     this.running = true;
@@ -92,7 +92,7 @@ export class Brain {
 
   /** Corridors from the current heading and, with the autopilot on, its next step. */
   tick(nowMs: number, heading: Heading | null): BrainTick {
-    const lanes = heading ? corridors(this.obstacles.scan(nowMs), heading, this.options.rover) : [];
+    const lanes = heading ? corridors(this.obstacles.scan(nowMs, heading?.origin), heading, this.options.rover) : [];
     const scanAgeMs = this.obstacles.ageMs(nowMs);
     if (!this.running) return { corridors: lanes, scanAgeMs };
     const step = stepAutopilot(
@@ -104,6 +104,7 @@ export class Brain {
     for (const id of step.collectedIds ?? []) this.leaves.markCollected(id, nowMs);
     if (step.missingId != null) this.leaves.markCollected(step.missingId, nowMs);
     if (step.failedId != null) this.leaves.markFailed(step.failedId);
+    if (step.checkedId != null) this.leaves.markChecked(step.checkedId);
     if (step.dumped) this.dumped += step.dumped;
     return { corridors: lanes, scanAgeMs, step };
   }

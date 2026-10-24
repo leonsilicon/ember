@@ -4,14 +4,15 @@ import { ThemedText } from './themed-text';
 
 import { Spacing } from '@/constants/theme';
 import { caption, type RoverBrain } from '@/hooks/use-rover-brain';
-import { MAX_RANGE_M } from '@/lib/rover-brain';
+import { FOOT_M, MAX_RANGE_M } from '@/lib/rover-brain';
 
 const BAR_HEIGHT = 36;
 
 /**
  * What the rover's brain sees: a fan of steering corridors (bar height = how far it can drive
  * that way; red = blocked), the nearest leaf, the pile, and the autopilot with its start/stop
- * button. "Set pile" puts the pile 1 m in front of the rover.
+ * button. "Pile here" puts the pile where the rover stands: it starts from the pile and collects the
+ * leaves within its work circle (6 ft by default).
  */
 export function RoverBrainHud({ brain, canDrive }: { brain: RoverBrain; canDrive: boolean }) {
   const nearest = brain.leaves.find((l) => l.state === 'confirmed') ?? brain.leaves[0];
@@ -26,7 +27,8 @@ export function RoverBrainHud({ brain, canDrive }: { brain: RoverBrain; canDrive
         : !brain.pile
           ? 'Set a pile first'
           : '';
-  const pileText = brain.pile?.rover ? `Pile ${caption(brain.pile.rover)}` : 'No pile';
+  const circle = `${Math.round(brain.workRadiusM / FOOT_M)} ft circle`;
+  const pileText = brain.pile?.rover ? `Pile ${caption(brain.pile.rover)} · ${circle}` : `No pile · ${circle}`;
 
   return (
     <View style={styles.panel}>
@@ -54,7 +56,7 @@ export function RoverBrainHud({ brain, canDrive }: { brain: RoverBrain; canDrive
           </ThemedText>
           <ThemedText type="small" style={styles.secondary} numberOfLines={1}>
             {pileText}
-            {brain.load > 0 ? ` · ${brain.load} in the scoop` : ''}
+            {brain.load > 0 ? ` · bin ${brain.load}/${brain.capacity}` : ''}
           </ThemedText>
           {brain.autopilot.on && brain.autopilot.message !== '' && (
             <ThemedText type="small" style={styles.light} numberOfLines={1}>
@@ -76,16 +78,16 @@ export function RoverBrainHud({ brain, canDrive }: { brain: RoverBrain; canDrive
           <>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Set the pile 1 metre ahead"
+              accessibilityLabel="Put the pile where the rover is"
               disabled={!brain.tracking}
-              onPress={brain.setPileAhead}
+              onPress={brain.setPileHere}
               style={({ pressed }) => [
                 styles.button,
                 styles.secondaryButton,
                 (pressed || !brain.tracking) && styles.pressed,
               ]}>
               <ThemedText type="smallBold" style={styles.light}>
-                {brain.pile ? 'Move pile' : 'Set pile'}
+                {brain.pile ? 'Move pile here' : 'Pile here'}
               </ThemedText>
             </Pressable>
             <Pressable

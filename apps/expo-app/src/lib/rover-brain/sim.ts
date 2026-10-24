@@ -40,7 +40,10 @@ export type SimWorld = {
    */
   points?: Vec3[];
   pile?: Pile;
-  /** Where the rover starts, [x, z], facing `yawDeg` (0 = world −z, + clockwise from above). */
+  /**
+   * Where the rover's camera starts, [x, z], facing `yawDeg` (0 = world −z, + clockwise from above).
+   * By default it starts on the pile (or at the origin without one), facing −z.
+   */
   start?: { position: [number, number]; yawDeg: number };
 };
 
@@ -65,7 +68,7 @@ export type SimOptions = {
   noisePerM: number;
   /** False detections per frame, somewhere in view. */
   falsePerFrame: number;
-  /** Chance a leaf under the lip ends up in the scoop. */
+  /** Chance a leaf under the lip ends up in the scoop (and so the bin). */
   scoopSuccess: number;
   /** How deep the scoop is, behind its lip. */
   scoopDepthM: number;
@@ -101,7 +104,7 @@ export const DEFAULT_SIM: SimOptions = {
 export type SimLeaf = {
   id: number;
   position: Vec3;
-  /** On the ground, in the scoop, or on the ground inside the pile's radius. */
+  /** On the ground, on board (`scoop`: in the scoop or the bin), or on the ground inside the pile's radius. */
   where: 'ground' | 'scoop' | 'pile';
 };
 
@@ -116,7 +119,17 @@ export type SimFrame = {
   tracked: TrackedLeaf[];
   tick: BrainTick;
   pile: Pile | null;
-  stats: { onGround: number; inScoop: number; inPile: number; collisions: number; dumped: number };
+  /** The brain's work circle round the pile (Infinity: no limit). */
+  workRadiusM: number;
+  stats: {
+    onGround: number;
+    /** Of `onGround`, those inside the work circle: what's left to do. */
+    inRange: number;
+    inScoop: number;
+    inPile: number;
+    collisions: number;
+    dumped: number;
+  };
 };
 
 /** mulberry32: small, fast and seedable. */
@@ -173,10 +186,10 @@ export class RoverSim {
     this.brain = brain;
     this.rand = random(this.options.seed);
     this.leaves = world.leaves.map(([x, z], i) => ({ id: i + 1, position: [x, 0, z], where: 'ground' }));
-    // `start` is where the camera starts.
-    this.x = world.start?.position[0] ?? 0;
-    this.z = world.start?.position[1] ?? 0;
-    this.yawDeg = world.start?.yawDeg ?? 0;
+    const start = world.start ?? { position: world.pile ? [world.pile.center[0], world.pile.center[2]] : [0, 0], yawDeg: 0 };
+    this.x = start.position[0];
+    this.z = start.position[1];
+    this.yawDeg = start.yawDeg;
     this.obstaclePoints = [...(world.obstacles ?? []).flatMap(cylinderPoints), ...(world.points ?? [])];
     if (world.pile) brain.setPile(world.pile);
     this.classify();
@@ -240,6 +253,11 @@ export class RoverSim {
 
   frame(): SimFrame {
     const count = (where: SimLeaf['where']) => this.leaves.filter((l) => l.where === where).length;
+    const workRadiusM = this.brain.options.autopilot.workRadiusM;
+    const pile = this.brain.pile;
+    const inRange = this.leaves.filter(
+      (l) => l.where === 'ground' && (!pile || Math.hypot(l.position[0] - pile.center[0], l.position[2] - pile.center[2]) <= workRadiusM),
+    ).length;
     return {
       timeMs: this.timeMs,
       rover: { position: [this.x, this.options.cameraHeightM, this.z], yawDeg: this.yawDeg, pose: this.pose },
@@ -247,9 +265,11 @@ export class RoverSim {
       leaves: this.leaves.map((l) => ({ ...l, position: [...l.position] as Vec3 })),
       tracked: this.brain.leaves.snapshot(),
       tick: this.lastTick,
-      pile: this.brain.pile,
+      pile,
+      workRadiusM,
       stats: {
         onGround: count('ground'),
+        inRange,
         inScoop: count('scoop'),
         inPile: count('pile'),
         collisions: this.collisions,
@@ -330,7 +350,7 @@ export class RoverSim {
     this.x = ax + Math.sin(rad(this.yawDeg)) * o.axleBackM;
     this.z = az - Math.cos(rad(this.yawDeg)) * o.axleBackM;
 
-    // Carried leaves ride in the scoop.
+    // Leaves on board ride in the bin.
     const h = this.heading;
     for (const leaf of this.leaves) {
       if (leaf.where !== 'scoop') continue;
@@ -365,7 +385,7 @@ export class RoverSim {
     if (position === this.scoop) return;
     if (position === 'down') this.tried.clear();
     if (position === 'dump') {
-      // Tipped out in front of the lip, scattering a little.
+      // The bin tips out in front of the lip, scattering a little.
       const h = this.heading;
       const lip = this.brain.options.autopilot.scoopLipM + 0.05;
       for (const leaf of this.leaves) {

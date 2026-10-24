@@ -215,12 +215,17 @@ export function corridors(
 export type ObstacleMemoryOptions = {
   /** Points older than this are forgotten (things move; AR drift adds up). */
   maxAgeMs: number;
+  /**
+   * Points this close to the rover never expire: something right beside it is out of the camera's
+   * view however long it waits there (AR drift over a metre is negligible).
+   */
+  keepNearM: number;
   /** Points are merged into cubes this size, keeping the newest, so memory stays small. */
   voxelM: number;
   maxPoints: number;
 };
 
-export const DEFAULT_OBSTACLE_MEMORY: ObstacleMemoryOptions = { maxAgeMs: 10_000, voxelM: 0.05, maxPoints: 20000 };
+export const DEFAULT_OBSTACLE_MEMORY: ObstacleMemoryOptions = { maxAgeMs: 10_000, keepNearM: 1, voxelM: 0.05, maxPoints: 20000 };
 
 /** Whether a world point falls inside a camera's image, in front of it and within LiDAR range. */
 export function inView(p: Vec3, view: { pose: Pose; intrinsics: Intrinsics }, maxDepthM = MAX_RANGE_M): boolean {
@@ -252,6 +257,8 @@ export class ObstacleMemory {
   private floor: { y: number; source: DepthScan['floorSource'] } | null = null;
   private lastScanAtMs = -Infinity;
   private lastTimestamp = 0;
+  /** The rover's position at the last `scan`. */
+  private near: Vec3 | undefined;
 
   constructor(private readonly options: ObstacleMemoryOptions = DEFAULT_OBSTACLE_MEMORY) {}
 
@@ -277,7 +284,9 @@ export class ObstacleMemory {
   }
 
   /** The remembered points as one scan, for `corridors`. Null before the first scan. */
-  scan(nowMs: number): DepthScan | null {
+  /** `near` is where the rover is now: points round it don't expire (`keepNearM`). */
+  scan(nowMs: number, near?: Vec3): DepthScan | null {
+    if (near) this.near = near;
     if (!this.floor) return null;
     this.prune(nowMs);
     return {
@@ -304,8 +313,12 @@ export class ObstacleMemory {
   }
 
   private prune(nowMs: number) {
+    const { near } = this;
+    const keep = this.options.keepNearM;
     for (const [key, cell] of this.cells) {
-      if (nowMs - cell.atMs > this.options.maxAgeMs) this.cells.delete(key);
+      if (nowMs - cell.atMs <= this.options.maxAgeMs) continue;
+      if (near && Math.hypot(cell.point[0] - near[0], cell.point[2] - near[2]) <= keep) continue;
+      this.cells.delete(key);
     }
     if (this.cells.size > this.options.maxPoints) {
       const oldest = [...this.cells].sort((a, b) => a[1].atMs - b[1].atMs);
