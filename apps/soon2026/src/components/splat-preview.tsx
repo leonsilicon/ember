@@ -8,7 +8,7 @@ import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { compact } from '@/lib/captures';
-import { getJob, viewerUrl, type SplatJob } from '@/lib/splat-preview';
+import { getJob, SPLAT_TOKEN, viewerUrl, type SplatJob } from '@/lib/splat-preview';
 
 type State =
   | { kind: 'checking' }
@@ -57,7 +57,7 @@ export function SplatPreview({ capture, serverUrl }: { capture: SavedCapture; se
   async function upload() {
     setState({ kind: 'uploading', sent: 0, total: capture.bytes });
     try {
-      const res = await SplatCapture.uploadCapture(capture.captureId, serverUrl);
+      const res = await SplatCapture.uploadCapture(capture.captureId, serverUrl, SPLAT_TOKEN);
       const body = JSON.parse(res.body || '{}');
       if (res.status !== 201) throw new Error(body.error ?? `server replied ${res.status}`);
       setState({ kind: 'job', job: body as SplatJob });
@@ -68,7 +68,8 @@ export function SplatPreview({ capture, serverUrl }: { capture: SavedCapture; se
 
   const job = state.kind === 'job' ? state.job : null;
   // A finished preview can be retrained too, e.g. after changing the server's Brush settings.
-  const canRetry = state.kind === 'idle' || state.kind === 'error' || job?.state === 'failed' || job?.state === 'done';
+  const canRetry =
+    state.kind === 'idle' || state.kind === 'error' || job?.state === 'uploading' || job?.state === 'failed' || job?.state === 'done';
 
   return (
     // Fixed heights: the status changes every couple of seconds while training, and the
@@ -99,6 +100,8 @@ export function SplatPreview({ capture, serverUrl }: { capture: SavedCapture; se
 function describe(job: SplatJob) {
   const gaussians = job.gaussians ? ` · ${compact(job.gaussians)} gaussians` : '';
   switch (job.state) {
+    case 'uploading':
+      return 'Debug preview: the upload did not finish';
     case 'queued':
       return 'Debug preview: queued on the Mac';
     case 'training':

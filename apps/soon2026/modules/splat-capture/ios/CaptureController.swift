@@ -39,6 +39,8 @@ struct CaptureSettings {
   var forceFeaturePoints = false
   /// Splat server to stream the recording to for live reconstruction (see LiveStreamer), if any.
   var liveServerURL: URL? = nil
+  /// The splat server's access token.
+  var serverToken: String? = nil
 }
 
 /// Owns the AR session's frame stream while recording and turns it into a
@@ -188,8 +190,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
         let recording = try Recording(settings: settings, mode: mode)
         self.recording = recording
         self.live = settings.liveServerURL.flatMap {
-          LiveStreamer(serverURL: $0, sessionId: recording.id, mode: mode, frameQueue: self.frameQueue,
-                       ciContext: self.ciContext)
+          LiveStreamer(serverURL: $0, token: settings.serverToken, sessionId: recording.id, mode: mode,
+                       frameQueue: self.frameQueue, ciContext: self.ciContext)
         }
         self.emitStatus()
         completion(.success(["captureId": recording.id, "mode": mode.rawValue]))

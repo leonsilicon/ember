@@ -54,10 +54,12 @@ export type StartCaptureOptions = {
   /** Use the no-LiDAR path even on a LiDAR device. */
   forceFeaturePoints?: boolean;
   /**
-   * Splat server (server/, e.g. http://192.168.1.10:8899) to stream the recording to while it
-   * records; the scene is rebuilt live at `<server>/live` in a browser.
+   * Splat server (server/, e.g. https://<project>.vercel.app) to stream the recording to while
+   * it records; the scene is rebuilt live at `<server>/live` in a browser.
    */
   liveServerUrl?: string;
+  /** The splat server's access token, for `liveServerUrl`. */
+  serverToken?: string;
 };
 
 /**

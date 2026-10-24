@@ -168,7 +168,7 @@ function DebugCard() {
           </View>
           <ThemedText type="small" themeColor="textSecondary">
             Streams each recording to the server, which rebuilds the scene as you move. It floats over the
-            camera while you record (tap it to swap the two), and the Mac can watch it at{' '}
+            camera while you record (tap it to swap the two), and any browser can watch it at{' '}
             <ThemedText type="code">{liveViewerUrl(debug.serverUrl)}</ThemedText>
           </ThemedText>
         </>

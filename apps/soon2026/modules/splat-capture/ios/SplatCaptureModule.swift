@@ -5,8 +5,10 @@ struct StartCaptureOptions: Record {
   @Field var imageWidth: Int = 1280
   /// Use the no-LiDAR path even on a LiDAR device (to test the fallback).
   @Field var forceFeaturePoints: Bool = false
-  /// Splat server (http://host:port) to stream the recording to for live reconstruction.
+  /// Splat server to stream the recording to for live reconstruction.
   @Field var liveServerUrl: String? = nil
+  /// The splat server's access token.
+  @Field var serverToken: String? = nil
 }
 
 public class SplatCaptureModule: Module {
@@ -28,7 +30,8 @@ public class SplatCaptureModule: Module {
     AsyncFunction("startCapture") { (options: StartCaptureOptions, promise: Promise) in
       let settings = CaptureSettings(maxFrames: options.maxFrames, imageWidth: options.imageWidth,
                                      forceFeaturePoints: options.forceFeaturePoints,
-                                     liveServerURL: options.liveServerUrl.flatMap { URL(string: $0) })
+                                     liveServerURL: options.liveServerUrl.flatMap { URL(string: $0) },
+                                     serverToken: options.serverToken)
       CaptureController.shared.start(settings) { promise.settle($0) }
     }
 
@@ -52,17 +55,17 @@ public class SplatCaptureModule: Module {
       try CaptureController.deleteCapture(id: captureId)
     }
 
-    // Debug splat preview: POSTs the saved zip to `<serverUrl>/api/captures` (server/).
-    AsyncFunction("uploadCapture") { (captureId: String, serverUrl: String, promise: Promise) in
+    // Debug splat preview: uploads the saved zip to the splat server (server/, see CaptureUploader).
+    AsyncFunction("uploadCapture") { (captureId: String, serverUrl: String, token: String, promise: Promise) in
       guard let zip = CaptureController.zipURL(id: captureId) else {
         return promise.reject("ERR_CAPTURE_NOT_FOUND", "No saved capture \(captureId)")
       }
-      guard let base = URL(string: serverUrl), let endpoint = URL(string: "api/captures", relativeTo: base) else {
+      guard let server = URL(string: serverUrl) else {
         return promise.reject("ERR_BAD_SERVER_URL", "Invalid server URL \(serverUrl)")
       }
       Task {
         do {
-          let result = try await CaptureUploader.upload(zip, to: endpoint, headers: ["X-Capture-Id": captureId]) {
+          let result = try await CaptureUploader.upload(zip, server: server, captureId: captureId, token: token) {
             [weak self] sent, total in
             self?.sendEvent("onUploadProgress", ["captureId": captureId, "sentBytes": sent, "totalBytes": total])
           }

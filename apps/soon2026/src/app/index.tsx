@@ -49,7 +49,7 @@ import { useDetections, type Detection, type Detections } from '@/hooks/use-dete
 import { useRoverBrain } from '@/hooks/use-rover-brain';
 import { compact } from '@/lib/captures';
 import { useRover } from '@/lib/rover';
-import { liveEmbedUrl } from '@/lib/splat-preview';
+import { liveEmbedUrl, SPLAT_TOKEN } from '@/lib/splat-preview';
 
 type Phase =
   | { kind: 'ready' }
@@ -206,7 +206,11 @@ export default function CameraScreen() {
     try {
       // With Live 3D on, the server rebuilds the scene as it records, shown here and at <server>/live.
       const liveServerUrl = debug.splatPreview && debug.liveStream ? debug.serverUrl : undefined;
-      const { captureId } = await SplatCapture.startCapture({ liveServerUrl, forceFeaturePoints: !lidarOn });
+      const { captureId } = await SplatCapture.startCapture({
+        liveServerUrl,
+        serverToken: SPLAT_TOKEN,
+        forceFeaturePoints: !lidarOn,
+      });
       setSwapped(false);
       setPhase({ kind: 'recording', captureId, liveServerUrl });
     } catch (error) {

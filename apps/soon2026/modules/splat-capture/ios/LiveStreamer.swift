@@ -14,6 +14,7 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
   private static let imageWidth = 640
 
   private let endpoint: URL
+  private let token: String?
   private let sessionId: String
   private let mode: CaptureMode
   /// The owner's frame queue; every `var` below is only touched on it.
@@ -36,8 +37,9 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
   /// The server's latest `stats` message for this session.
   private var serverStats: [String: Any] = [:]
 
-  /// `serverURL` is the splat server's HTTP address (e.g. http://192.168.1.10:8899).
-  init?(serverURL: URL, sessionId: String, mode: CaptureMode, frameQueue: DispatchQueue, ciContext: CIContext) {
+  /// `serverURL` is the splat server's address (e.g. https://<project>.vercel.app), `token` its access token.
+  init?(serverURL: URL, token: String?, sessionId: String, mode: CaptureMode, frameQueue: DispatchQueue,
+        ciContext: CIContext) {
     guard var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false),
           components.scheme == "http" || components.scheme == "https" else { return nil }
     components.scheme = components.scheme == "https" ? "wss" : "ws"
@@ -46,6 +48,7 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
       : "/" + components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/live/ingest"
     guard let endpoint = components.url else { return nil }
     self.endpoint = endpoint
+    self.token = token
     self.sessionId = sessionId
     self.mode = mode
     self.frameQueue = frameQueue
@@ -120,13 +123,15 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
   private func connect() {
     guard !closed else { return }
     state = "connecting"
-    let task = urlSession.webSocketTask(with: endpoint)
+    var request = URLRequest(url: endpoint)
+    if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+    let task = urlSession.webSocketTask(with: request)
     self.task = task
     task.resume()
   }
 
-  /// A dropped connection (Wi-Fi blip, server restart) is retried; the server picks the session
-  /// back up by its id, so the cloud carries on where it was.
+  /// A dropped connection (Wi-Fi blip, server restart, or the server's 5-minute socket limit) is
+  /// retried; the server picks the session back up by its id, so the cloud carries on where it was.
   private func connectionLost(_ task: URLSessionTask, reason: String) {
     guard task === self.task, !closed else { return }
     self.task = nil

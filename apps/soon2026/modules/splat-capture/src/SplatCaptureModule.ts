@@ -29,8 +29,11 @@ declare class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> 
   /** Saved captures, newest first. */
   listCaptures(): Promise<SavedCapture[]>;
   deleteCapture(captureId: string): Promise<void>;
-  /** Debug splat preview: POSTs a saved capture zip to `<serverUrl>/api/captures` (see server/). */
-  uploadCapture(captureId: string, serverUrl: string): Promise<UploadResult>;
+  /**
+   * Debug splat preview: uploads a saved capture zip to the splat server (see server/), with its
+   * access token. Resolves with the server's reply to the finished upload (201 and the job).
+   */
+  uploadCapture(captureId: string, serverUrl: string, token: string): Promise<UploadResult>;
 }
 
 export default requireNativeModule<SplatCaptureModule>('SplatCapture');
