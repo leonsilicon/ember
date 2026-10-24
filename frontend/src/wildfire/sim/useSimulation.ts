@@ -57,13 +57,22 @@ export function rasterizeBreaks(grid: FuelGrid, breaks: FuelBreak[]): Uint8Array
   return mask
 }
 
+const NO_ACTIONS: SimActions = { cleared: new Set(), breaks: [] }
+const sameWeather = (a: FbpInputs, b: FbpInputs) =>
+  a.ffmc === b.ffmc && a.windKmh === b.windKmh && a.windFromDeg === b.windFromDeg && a.month === b.month
+
 export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[]) {
   const workerRef = useRef<Worker | null>(null)
   const runIdRef = useRef(0)
+  const baseRunIdRef = useRef(0)
   const pendingRef = useRef<Map<number, { weather: FbpInputs; ignitionFid: number; actions: SimActions }>>(new Map())
   const [status, setStatus] = useState<'idle' | 'running' | 'done'>('idle')
   const [run, setRun] = useState<SimRun | null>(null)
   const [baseline, setBaseline] = useState<SimRun | null>(null)
+  const baselineRef = useRef<SimRun | null>(null)
+  useEffect(() => {
+    baselineRef.current = baseline
+  }, [baseline])
 
   const cells = useMemo(() => {
     if (!grid) return null
@@ -83,7 +92,8 @@ export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[]) {
       const res = ev.data
       const meta = pendingRef.current.get(res.runId)
       pendingRef.current.delete(res.runId)
-      if (!meta || res.runId !== runIdRef.current) return
+      const isMain = res.runId === runIdRef.current, isBase = res.runId === baseRunIdRef.current
+      if (!meta || (!isMain && !isBase)) return
       const n = res.arrival.length
       const idx: number[] = []
       for (let i = 0; i < n; i++) if (isFinite(res.arrival[i])) idx.push(i)
@@ -95,9 +105,12 @@ export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[]) {
         if (isFinite(t)) ignitedAt.set(buildings[i].fid, t)
       })
       const r: SimRun = { result: res, cells: sorted, times, ignitedAt, ...meta }
-      setRun(r)
-      if (!meta.actions.cleared.size && !meta.actions.breaks.length) setBaseline(r)
-      setStatus('done')
+      if (isBase) setBaseline(r)
+      if (isMain) {
+        setRun(r)
+        if (!meta.actions.cleared.size && !meta.actions.breaks.length) setBaseline(r)
+        setStatus('done')
+      }
     }
     return () => {
       w.terminate()
@@ -111,37 +124,44 @@ export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[]) {
       if (!w || !grid || !cells) return
       const bi = buildings.findIndex((b) => b.fid === ignitionFid)
       if (bi < 0 || cells.cell[bi] < 0) return
-      const cleared = new Uint8Array(buildings.length)
-      buildings.forEach((b, i) => {
-        if (actions.cleared.has(b.fid)) cleared[i] = 1
-      })
-      const runId = ++runIdRef.current
-      pendingRef.current.set(runId, { weather, ignitionFid, actions })
-      const req: SimRequest = {
-        type: 'run',
-        runId,
-        width: grid.width,
-        height: grid.height,
-        fuel: grid.fuel,
-        codes: grid.codes,
-        cellM: grid.cellM,
-        weather,
-        ignitionCell: cells.cell[bi],
-        horizonMin: HORIZON_MIN,
-        buildingCell: cells.cell,
-        buildingExposure: cells.exposure,
-        cleared,
-        blocked: rasterizeBreaks(grid, actions.breaks),
-        isochroneMin: ISOCHRONES,
+      const post = (runId: number, acts: SimActions) => {
+        const cleared = new Uint8Array(buildings.length)
+        buildings.forEach((b, i) => {
+          if (acts.cleared.has(b.fid)) cleared[i] = 1
+        })
+        pendingRef.current.set(runId, { weather, ignitionFid, actions: acts })
+        const req: SimRequest = {
+          type: 'run',
+          runId,
+          width: grid.width,
+          height: grid.height,
+          fuel: grid.fuel,
+          codes: grid.codes,
+          cellM: grid.cellM,
+          weather,
+          ignitionCell: cells.cell[bi],
+          horizonMin: HORIZON_MIN,
+          buildingCell: cells.cell,
+          buildingExposure: cells.exposure,
+          cleared,
+          blocked: rasterizeBreaks(grid, acts.breaks),
+          isochroneMin: ISOCHRONES,
+        }
+        w.postMessage(req)
       }
+      const hasActions = actions.cleared.size > 0 || actions.breaks.length > 0
+      // "Homes saved" must compare against an untouched run with the *same* weather and ignition point
+      const base = baselineRef.current
+      if (hasActions && (!base || base.ignitionFid !== ignitionFid || !sameWeather(base.weather, weather))) post(++baseRunIdRef.current, NO_ACTIONS)
+      post(++runIdRef.current, actions)
       setStatus('running')
-      w.postMessage(req)
     },
     [grid, cells, buildings],
   )
 
   const reset = useCallback(() => {
     runIdRef.current++
+    baseRunIdRef.current++
     setRun(null)
     setBaseline(null)
     setStatus('idle')

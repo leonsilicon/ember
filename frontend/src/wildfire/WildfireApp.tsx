@@ -359,12 +359,11 @@ export default function WildfireApp() {
   const ignite = useCallback(() => {
     if (selected == null) return
     setWeather(activeWeather)
-    setActions({ cleared: new Set(), breaks: [] })
     setT(0)
     setPlaying(true)
     setTab('sim')
-    sim.simulate(selected, activeWeather, { cleared: new Set(), breaks: [] })
-  }, [selected, activeWeather, sim])
+    sim.simulate(selected, activeWeather, actions)
+  }, [selected, activeWeather, actions, sim])
 
   // frame the 12 h burned extent once the untouched run is solved
   const framedRef = useRef<typeof sim.baseline>(null)

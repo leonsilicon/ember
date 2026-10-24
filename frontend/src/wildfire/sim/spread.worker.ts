@@ -53,7 +53,7 @@ class MinHeap {
   }
 }
 
-function run(req: SimRequest): SimResult {
+export function run(req: SimRequest): SimResult {
   const t0 = performance.now()
   const { width, height, fuel, codes, cellM, weather, horizonMin } = req
   const n = width * height
@@ -74,7 +74,8 @@ function run(req: SimRequest): SimResult {
     const c = req.buildingCell[b]
     if (c < 0) continue
     const e = req.buildingExposure[b] * (req.cleared[b] ? CLEARED_FACTOR : 1)
-    structRos[c] = Math.max(structRos[c], 0.3 + 0.7 * e)
+    // a home that cannot ignite (below the floor) does not carry fire to its neighbours either
+    if (e >= IGNITION_FLOOR) structRos[c] = Math.max(structRos[c], 0.3 + 0.7 * e)
     if (req.cleared[b]) {
       // 30 m zone cleared: this cell and its 8 neighbours lose most of their vegetation fuel
       const row = (c / width) | 0, col = c - row * width
@@ -155,7 +156,7 @@ function run(req: SimRequest): SimResult {
     const c = req.buildingCell[b]
     if (c < 0) continue
     const e = req.buildingExposure[b] * (req.cleared[b] ? CLEARED_FACTOR : 1)
-    if (e < IGNITION_FLOOR) continue
+    if (c !== req.ignitionCell && e < IGNITION_FLOOR) continue
     const t = arrival[c]
     if (!isFinite(t)) continue
     const ig = c === req.ignitionCell ? 0 : t + 60 * (1 - e)
@@ -165,11 +166,14 @@ function run(req: SimRequest): SimResult {
     }
   }
 
-  // Isochrones from the arrival field (unreached = far future so the contour closes)
+  // Isochrones: d3-contour encloses cells with value >= threshold, so contour -arrival at -minutes
+  // (unreached = -1e9) to get the polygon of cells reached by each hour rather than its complement.
   const vals = new Float64Array(n)
-  for (let i = 0; i < n; i++) vals[i] = isFinite(arrival[i]) ? arrival[i] : 1e9
-  const gen = contours().size([width, height]).thresholds(req.isochroneMin).smooth(true)
-  const isochrones = gen(Array.from(vals)).map((c) => ({ type: 'MultiPolygon' as const, coordinates: c.coordinates }))
+  for (let i = 0; i < n; i++) vals[i] = isFinite(arrival[i]) ? -arrival[i] : -1e9
+  // d3 sorts thresholds ascending, so map the polygons back to the requested order by value
+  const gen = contours().size([width, height]).thresholds(req.isochroneMin.map((m) => -m)).smooth(true)
+  const byValue = new Map(gen(Array.from(vals)).map((c) => [c.value, c.coordinates]))
+  const isochrones = req.isochroneMin.map((m) => ({ type: 'MultiPolygon' as const, coordinates: byValue.get(-m) ?? [] }))
 
   return {
     type: 'result',
@@ -186,8 +190,11 @@ function run(req: SimRequest): SimResult {
   }
 }
 
-self.onmessage = (ev: MessageEvent<SimRequest>) => {
-  if (ev.data.type !== 'run') return
-  const res = run(ev.data)
-  ;(self as unknown as Worker).postMessage(res, [res.arrival.buffer, res.ignition.buffer])
+// guarded so the solver can be imported by unit tests outside a worker
+if (typeof self !== 'undefined' && 'postMessage' in self) {
+  self.onmessage = (ev: MessageEvent<SimRequest>) => {
+    if (ev.data.type !== 'run') return
+    const res = run(ev.data)
+    ;(self as unknown as Worker).postMessage(res, [res.arrival.buffer, res.ignition.buffer])
+  }
 }
