@@ -36,6 +36,19 @@ def which_or_die(name, override=None):
     return path
 
 
+def promote_largest_model(sparse: Path):
+    """COLMAP may split the scene into several models; OpenSplat reads sparse/0, so put the biggest there."""
+    models = [p for p in sparse.iterdir() if p.is_dir() and (p / 'images.bin').exists()]
+    if len(models) < 2:
+        return
+    largest = max(models, key=lambda p: (p / 'images.bin').stat().st_size)
+    if largest.name != '0':
+        tmp = sparse / '_swap'
+        (sparse / '0').rename(tmp)
+        largest.rename(sparse / '0')
+        tmp.rename(largest)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('images', help='folder of .jpg/.png frames of one scene')
@@ -46,6 +59,10 @@ def main():
     ap.add_argument('--colmap', default=os.environ.get('COLMAP', 'colmap'), help='path to colmap binary')
     ap.add_argument('--downscale', type=float, default=2, help='OpenSplat image downscale factor')
     ap.add_argument('--max-image-size', type=int, default=1600, help='COLMAP feature extraction max image size')
+    ap.add_argument('--matcher', choices=['auto', 'sequential', 'exhaustive'], default='auto',
+                    help='sequential = frames are in capture order (fast, default for 30+ images); '
+                         'exhaustive = unordered photos (default for small sets)')
+    ap.add_argument('--overlap', type=int, default=10, help='sequential matcher: neighbours per frame')
     ap.add_argument('--skip-colmap', action='store_true', help='reuse an existing sparse/0')
     args = ap.parse_args()
 
@@ -83,9 +100,15 @@ def main():
         run([colmap, 'feature_extractor', '--database_path', db, '--image_path', images,
              '--ImageReader.single_camera', '1', '--ImageReader.camera_model', 'SIMPLE_RADIAL',
              '--SiftExtraction.use_gpu', '0', '--SiftExtraction.max_image_size', str(args.max_image_size)], log)
-        run([colmap, 'exhaustive_matcher', '--database_path', db, '--SiftMatching.use_gpu', '0'], log)
+        matcher = args.matcher if args.matcher != 'auto' else ('sequential' if len(frames) >= 30 else 'exhaustive')
+        if matcher == 'sequential':
+            run([colmap, 'sequential_matcher', '--database_path', db, '--SiftMatching.use_gpu', '0',
+                 '--SequentialMatching.overlap', str(args.overlap)], log)
+        else:
+            run([colmap, 'exhaustive_matcher', '--database_path', db, '--SiftMatching.use_gpu', '0'], log)
         run([colmap, 'mapper', '--database_path', db, '--image_path', images, '--output_path', sparse], log)
-        print(f'      done in {time.time() - t0:.0f}s', flush=True)
+        promote_largest_model(sparse)
+        print(f'      done in {time.time() - t0:.0f}s ({matcher} matching)', flush=True)
 
     model = sparse / '0'
     if not (model / 'cameras.bin').exists():
