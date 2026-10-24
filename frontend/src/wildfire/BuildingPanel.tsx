@@ -1,5 +1,5 @@
 import type { BuildingProps, Categories } from './types'
-import { VERDICT_STYLE, parseCodes, verdictOf } from './types'
+import { VERDICT_STYLE, parseCodes, verdictOf, fmtM } from './types'
 
 interface Props {
   b: BuildingProps
@@ -7,9 +7,6 @@ interface Props {
   onClose: () => void
 }
 
-function fmtM(m: number) {
-  return m < 1 ? '0 m' : `${Math.round(m)} m`
-}
 
 export function BuildingPanel({ b, categories, onClose }: Props) {
   const verdict = verdictOf(b)

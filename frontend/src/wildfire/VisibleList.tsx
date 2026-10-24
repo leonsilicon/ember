@@ -1,5 +1,5 @@
 import type { BuildingProps, ListFilter } from './types'
-import { VERDICT_STYLE, applyFilter, verdictOf } from './types'
+import { VERDICT_STYLE, applyFilter, verdictOf, fmtM } from './types'
 
 interface Props {
   items: BuildingProps[]
@@ -53,7 +53,7 @@ export function VisibleList({ items, filter, onFilter, onPick, zoomedOut }: Prop
                     #{b.fid} · {v === 'overlap' ? 'Overlaps hazard' : v === 'within' ? 'Hazard within 30 m' : 'None within 30 m'}
                   </span>
                   <span className="block text-xs text-slate-500">
-                    {b.nearest_hazard_m != null ? `${Math.round(b.nearest_hazard_m)} m to nearest High/Extreme` : 'No High/Extreme in area'}
+                    {b.nearest_hazard_m != null ? `${fmtM(b.nearest_hazard_m)} to nearest High/Extreme` : 'No High/Extreme in area'}
                     {b.needs_evaluation ? ' · pine eval' : ''}
                     {!b.coverage_complete ? ' · incomplete data' : ''}
                   </span>

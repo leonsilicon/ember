@@ -102,3 +102,10 @@ export function applyFilter(items: BuildingProps[], f: ListFilter) {
       return items
   }
 }
+
+/** Sub-metre gaps are shown as "<1 m" so a within-30 m building never reads like an overlap. */
+export function fmtM(m: number): string {
+  if (m <= 0) return '0 m'
+  if (m < 1) return '<1 m'
+  return `${Math.round(m)} m`
+}

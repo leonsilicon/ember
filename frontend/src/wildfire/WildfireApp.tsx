@@ -85,6 +85,20 @@ export default function WildfireApp() {
   const [filter, setFilter] = useState<ListFilter>('all')
   const [search, setSearch] = useState<SearchState>({ kind: 'idle' })
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [layersOpen, setLayersOpen] = useState(false)
+  const openSheet = useCallback(() => {
+    setSheetOpen(true)
+    setLayersOpen(false)
+  }, [])
+
+  // On phones the open sheet covers the lower 60% of the map; pad the camera so the selected
+  // building / search pin stays in the visible part.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !ready) return
+    const mobile = window.matchMedia('(max-width: 767px)').matches
+    map.easeTo({ padding: { top: 0, left: 0, right: 0, bottom: mobile && sheetOpen ? Math.round(window.innerHeight * 0.6) : 0 }, duration: 300 })
+  }, [sheetOpen, ready])
 
   const bias = useMemo(() => {
     if (!data) return { lon: -79.2, lat: 45.33 }
@@ -130,7 +144,7 @@ export default function WildfireApp() {
       if (!f) return
       setSearch({ kind: 'idle' })
       setSelected({ props: normalizeProps(f.properties, f.id), geometry: f.geometry })
-      setSheetOpen(true)
+      openSheet()
     })
     map.on('mouseenter', L.buildingsFill, () => (map.getCanvas().style.cursor = 'pointer'))
     map.on('mouseleave', L.buildingsFill, () => (map.getCanvas().style.cursor = ''))
@@ -149,7 +163,7 @@ export default function WildfireApp() {
       map.remove()
       mapRef.current = null
     }
-  }, [data])
+  }, [data, openSheet])
 
   useEffect(() => {
     const map = mapRef.current
@@ -200,11 +214,13 @@ export default function WildfireApp() {
         const exact = dedupe(map.queryRenderedFeatures(pt, { layers: [L.buildingsFill] }))
         if (exact.length === 1) {
           setSelected(exact[0])
-          setSheetOpen(true)
+          openSheet()
           setSearch({ kind: 'idle' })
           return
         }
-        const r = 90
+        // pixel box wide enough to cover the 80 m radius at the current zoom (plus footprint extent)
+        const mpp = (40075016.686 * Math.cos((hit.lat * Math.PI) / 180)) / (512 * 2 ** map.getZoom())
+        const r = Math.ceil(120 / mpp)
         const near = dedupe(map.queryRenderedFeatures([[pt.x - r, pt.y - r], [pt.x + r, pt.y + r]], { layers: [L.buildingsFill] }))
           .map((s) => ({ s, d: distM(hit, s.props) }))
           .filter((x) => x.d <= 80)
@@ -214,11 +230,11 @@ export default function WildfireApp() {
         if (near.length === 0) setSearch({ kind: 'missing', hit })
         else {
           setSearch({ kind: 'choose', hit, candidates: near })
-          setSheetOpen(true)
+          openSheet()
         }
       })
     },
-    [data, placeMarker],
+    [data, placeMarker, openSheet],
   )
 
   const pickFromList = useCallback((b: BuildingProps) => {
@@ -232,16 +248,16 @@ export default function WildfireApp() {
         (s) => s.props.fid === b.fid,
       )
       setSelected(f ?? null)
-      setSheetOpen(true)
+      openSheet()
     })
-  }, [])
+  }, [openSheet])
 
   const searchThisArea = () => {
     const map = mapRef.current
     if (!map) return
     setSelected(null)
     setSearch({ kind: 'idle' })
-    setSheetOpen(true)
+    openSheet()
     if (map.getZoom() < LIST_MIN_ZOOM) map.zoomTo(LIST_MIN_ZOOM + 0.5, { duration: 600 })
     else map.fire('idle')
   }
@@ -322,7 +338,7 @@ export default function WildfireApp() {
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-col gap-3 p-3 md:right-[412px] md:p-4">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col gap-3 p-3 md:right-[412px] md:p-4">
         <div className="flex items-start gap-3">
           <a href="#/" className="pointer-events-auto hidden rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 text-sm font-semibold text-slate-800 shadow-lg shadow-slate-900/10 backdrop-blur md:block">
             Wildfire hazard
@@ -347,17 +363,29 @@ export default function WildfireApp() {
 
       {/* mobile: layers + bottom sheet */}
       <div className="absolute bottom-0 inset-x-0 z-10 md:hidden">
-        <div className="pointer-events-none mb-2 flex items-end justify-between px-3">
-          <details className="pointer-events-auto">
-            <summary className="list-none rounded-full border border-slate-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-lg">Layers</summary>
-            <div className="absolute bottom-10 left-3">{data && <LayerControls categories={data.categories} showHazard={showHazard} showBuildings={showBuildings} opacity={opacity} onHazard={setShowHazard} onBuildings={setShowBuildings} onOpacity={setOpacity} />}</div>
-          </details>
+        <div className="pointer-events-none relative mb-2 flex items-end justify-between px-3">
+          <button
+            type="button"
+            onClick={() => {
+              setLayersOpen((o) => !o)
+              setSheetOpen(false)
+            }}
+            aria-expanded={layersOpen}
+            className="pointer-events-auto rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-lg"
+          >
+            Layers
+          </button>
+          {layersOpen && data && (
+            <div className="pointer-events-auto absolute bottom-10 left-3 z-20 max-h-[70vh] overflow-y-auto rounded-2xl bg-white">
+              <LayerControls categories={data.categories} showHazard={showHazard} showBuildings={showBuildings} opacity={opacity} onHazard={setShowHazard} onBuildings={setShowBuildings} onOpacity={setOpacity} />
+            </div>
+          )}
           <button type="button" onClick={searchThisArea} className="pointer-events-auto rounded-full border border-slate-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-lg">
             Search this area
           </button>
         </div>
         <div className={`rounded-t-2xl border-t border-slate-200 bg-white shadow-[0_-8px_30px_rgba(15,23,42,0.12)] transition-[height] ${sheetOpen ? 'h-[60vh]' : 'h-14'}`}>
-          <button type="button" onClick={() => setSheetOpen((o) => !o)} className="flex h-14 w-full items-center justify-between px-4" aria-expanded={sheetOpen}>
+          <button type="button" onClick={() => (sheetOpen ? setSheetOpen(false) : openSheet())} className="flex h-14 w-full items-center justify-between px-4" aria-expanded={sheetOpen}>
             <span className="text-sm font-medium text-slate-800">
               {selected ? `Building #${selected.props.fid}` : zoom < LIST_MIN_ZOOM ? 'Zoom in to list buildings' : `${flagged} flagged · ${visible.length} visible`}
             </span>

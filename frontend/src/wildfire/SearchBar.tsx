@@ -89,7 +89,7 @@ export function SearchBar({ bias, onPick }: Props) {
         )}
       </div>
       {open && status !== 'idle' && status !== 'loading' && (
-        <div className="absolute inset-x-0 top-full mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-900/10">
+        <div className="absolute inset-x-0 top-full mt-2 max-h-[55vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-900/10">
           {status === 'unavailable' && (
             <p className="px-4 py-3 text-sm text-slate-600">
               Address search is unavailable right now. You can still pan the map and click a building.
