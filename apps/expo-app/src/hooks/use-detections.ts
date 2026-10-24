@@ -1,11 +1,12 @@
 import { File, Paths } from 'expo-file-system';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useObjectDetector, type ObjectDetection, type ObjectDetectorModel } from 'react-native-executorch';
 import type { SharedValue } from 'react-native-reanimated';
 
 import SplatCapture, { type DetectionCamera, type DetectionFrame } from '../../modules/splat-capture';
 
 import type { Size } from '@/components/detection-overlay';
+import { DetectionTracker, trackerOptions, type Candidate, type TrackedDetection } from '@/lib/detection-tracker';
 import { lidarDistances } from '@/lib/rover-brain';
 
 const MODEL_NAME = 'OWL-ViT · leaves';
@@ -30,7 +31,11 @@ type LeafDetectorManifest = {
   iouThreshold: number;
 };
 
-export type Detection = ObjectDetection<'xyxy', string>;
+/**
+ * A box to show: one the tracker has seen enough of, smoothed over recent frames (see
+ * src/lib/detection-tracker.ts), rather than straight from the latest frame.
+ */
+export type Detection = TrackedDetection;
 
 export type DetectionResult = {
   detections: Detection[];
@@ -119,18 +124,28 @@ const CONFIG: ObjectDetectorModel<'xyxy', string> = BUNDLED.manifest
     };
 
 /**
- * The boxes from a frame cropped to its centred 1/zoom, in the whole frame, which the overlay and
- * the rover brain work in.
+ * The tracker shows a box at the model's own threshold, but keeps one it's showing alive on
+ * weaker sightings, so the detector is run at that lower score.
  */
-function uncrop(detections: Detection[], frame: DetectionFrame): Pick<DetectionResult, 'detections' | 'frameSize'> {
+const TRACKER = trackerOptions(BUNDLED.manifest?.confidenceThreshold ?? 1);
+
+/**
+ * The boxes from a frame cropped to its centred 1/zoom, in the whole frame, which the tracker, the
+ * overlay and the rover brain work in.
+ */
+function uncrop(
+  detections: ObjectDetection<'xyxy', string>[],
+  frame: DetectionFrame,
+): { candidates: Candidate[]; frameSize: Size } {
   const frameSize = { width: frame.width * frame.zoom, height: frame.height * frame.zoom };
   const dx = (frameSize.width - frame.width) / 2;
   const dy = (frameSize.height - frame.height) / 2;
   return {
     frameSize,
-    detections: detections.map(({ box, ...detection }) => ({
-      ...detection,
-      box: { ...box, xmin: box.xmin + dx, ymin: box.ymin + dy, xmax: box.xmax + dx, ymax: box.ymax + dy },
+    candidates: detections.map(({ box, label, confidence }) => ({
+      label,
+      confidence,
+      box: { xmin: box.xmin + dx, ymin: box.ymin + dy, xmax: box.xmax + dx, ymax: box.ymax + dy },
     })),
   };
 }
@@ -142,16 +157,23 @@ function uncrop(detections: Detection[], frame: DetectionFrame): Pick<DetectionR
  *
  * Each frame is cropped to the preview's `zoom`, so zooming in on a leaf hands the model more of
  * the leaf, in more pixels, than the whole frame scaled down to its input would.
+ *
+ * What comes back is the tracker's view of the frames, not the latest frame's detections: boxes
+ * that have been seen in more than one frame, smoothed, and kept through a frame or two of misses,
+ * so they don't blink.
  */
 export function useDetections(enabled: boolean, zoom: SharedValue<number>): Detections {
   const detector = useObjectDetector(CONFIG, { preventLoad: !BUNDLED.manifest });
   const { detectObjects } = detector;
+  const tracker = useRef(new DetectionTracker(TRACKER));
   const [result, setResult] = useState<DetectionResult>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     if (!enabled || detectObjects == null) return;
     let cancelled = false;
+    // Whatever was tracked before detection was paused is stale now.
+    tracker.current.reset();
 
     (async () => {
       while (!cancelled) {
@@ -160,23 +182,23 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
           const frame = await SplatCapture.nextDetectionFrame(FRAME_SIZE, zoom.get());
           if (cancelled || frame == null) continue;
           const start = Date.now();
-          const detections = await detectObjects({
-            data: frame.data,
-            width: frame.width,
-            height: frame.height,
-            format: 'rgba',
-            layout: 'hwc',
-          });
+          const found = await detectObjects(
+            { data: frame.data, width: frame.width, height: frame.height, format: 'rgba', layout: 'hwc' },
+            { confidenceThreshold: TRACKER.keepScore },
+          );
           if (cancelled) break;
-          const latencyMs = Date.now() - start;
-          const boxes = uncrop(detections, frame);
+          const now = Date.now();
+          const latencyMs = now - start;
+          const { candidates, frameSize } = uncrop(found, frame);
+          const detections = tracker.current.update(candidates, frameSize, now);
           setResult((previous) => ({
-            ...boxes,
+            detections,
+            frameSize,
             zoom: frame.zoom,
             camera: frame.camera,
             // Measured here, with the boxes, rather than by the rover brain a render later, so no box
             // ever shows without its distance.
-            distances: frame.camera && lidarDistances(boxes.detections, boxes.frameSize, frame.camera),
+            distances: frame.camera && lidarDistances(detections, frameSize, frame.camera),
             latencyMs: previous ? previous.latencyMs * 0.9 + latencyMs * 0.1 : latencyMs,
           }));
           setError(undefined);
