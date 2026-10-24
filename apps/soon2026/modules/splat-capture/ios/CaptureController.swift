@@ -245,6 +245,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
       out["points"] = s.points
       out["durationSeconds"] = s.durationSeconds
     }
+    if let thumbnail = capture.thumbnail { out["thumbnailUri"] = thumbnail.absoluteString }
     return out
   }
 
@@ -381,6 +382,8 @@ private final class Recording {
   // writeQueue
   var frames: [DatasetFrame] = []
   var points: PointCloudAccumulator
+  /// The first frame, small and upright, saved beside the zip for the gallery button.
+  var thumbnail: Data?
 
   init(settings: CaptureSettings, mode: CaptureMode) throws {
     let stamp = ISO8601DateFormatter().string(from: Date()).filter { $0.isNumber }
@@ -412,6 +415,25 @@ private final class Recording {
     else { return }
     frames.append(DatasetFrame(filePath: name, cameraToWorld: job.cameraToWorld,
                                intrinsics: job.intrinsics.scaled(toWidth: outW, height: outH)))
+    if thumbnail == nil {
+      thumbnail = Self.thumbnail(of: job.image, colorSpace: colorSpace, ciContext: ciContext)
+    }
+  }
+
+  /// The frame turned upright for the portrait UI (ARKit's sensor is landscape), its longer side
+  /// `maxSize`, as a JPEG.
+  private static func thumbnail(of buffer: CVPixelBuffer, maxSize: CGFloat = 360, colorSpace: CGColorSpace,
+                                ciContext: CIContext) -> Data? {
+    let upright = CIImage(cvPixelBuffer: buffer).oriented(.right)
+    let scale = maxSize / max(upright.extent.width, upright.extent.height)
+    let image = upright
+      .transformed(by: CGAffineTransform(translationX: -upright.extent.minX, y: -upright.extent.minY))
+      .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+      .cropped(to: CGRect(x: 0, y: 0, width: (upright.extent.width * scale).rounded(.down),
+                          height: (upright.extent.height * scale).rounded(.down)))
+    return ciContext.jpegRepresentation(
+      of: image, colorSpace: colorSpace,
+      options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.8])
   }
 
   private func addPoints(from job: FrameJob) {
@@ -463,7 +485,8 @@ private final class Recording {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(summary).write(to: dataset.appendingPathComponent("capture.json"))
-    return CaptureController.describe(try CaptureController.library.save(dataset: dataset, summary: summary))
+    return CaptureController.describe(
+      try CaptureController.library.save(dataset: dataset, summary: summary, thumbnail: thumbnail))
   }
 }
 

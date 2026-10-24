@@ -29,6 +29,11 @@ export type ServerConfig = {
    */
   depthWorkerBin: string | null;
   depthModel: string | null;
+  /**
+   * Models the app downloads, served at /models/: packages/owlvit's build (the leaf detector and
+   * its manifest) unless MODELS_DIR says otherwise.
+   */
+  modelsDir: string;
   live: LiveConfig;
 };
 
@@ -67,6 +72,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     maxSplats: int(env.SPLAT_MAX_SPLATS, 600_000),
     depthWorkerBin: installed(env.DEPTH_WORKER_BIN, path.join(SERVER_DIR, 'bin', 'depth_worker')),
     depthModel: installed(env.DEPTH_MODEL, path.join(SERVER_DIR, 'models', 'DepthAnythingV2SmallF16.mlmodelc')),
+    modelsDir: path.resolve(env.MODELS_DIR ?? path.join(SERVER_DIR, '..', '..', '..', 'packages', 'owlvit', 'dist')),
     live: {
       voxelSize: Number(env.LIVE_VOXEL_SIZE) || 0.02,
       maxDepth: Number(env.LIVE_MAX_DEPTH) || 4,

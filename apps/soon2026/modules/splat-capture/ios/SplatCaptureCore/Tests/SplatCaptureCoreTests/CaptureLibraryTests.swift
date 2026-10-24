@@ -72,11 +72,23 @@ final class CaptureLibraryTests: XCTestCase {
     XCTAssertNil(listed.first?.summary)
   }
 
-  func testDeleteRemovesZipAndSummary() throws {
-    try library.save(dataset: try makeDataset("gone"), summary: summary("gone"))
+  func testThumbnailIsKeptBesideTheSummaryAndOutOfTheZipFolder() throws {
+    let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0])
+    let saved = try library.save(dataset: try makeDataset("thumb"), summary: summary("thumb"), thumbnail: jpeg)
+    XCTAssertEqual(saved.thumbnail, library.summaries.appendingPathComponent("thumb.jpg"))
+    XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(library.list().first?.thumbnail)), jpeg)
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: library.directory.path), ["thumb.zip"])
+
+    try library.save(dataset: try makeDataset("plain"), summary: summary("plain"))
+    XCTAssertNil(library.list().first { $0.id == "plain" }?.thumbnail)
+  }
+
+  func testDeleteRemovesZipSummaryAndThumbnail() throws {
+    try library.save(dataset: try makeDataset("gone"), summary: summary("gone"), thumbnail: Data([0xFF, 0xD8]))
     try library.delete(id: "gone")
     XCTAssertTrue(library.list().isEmpty)
     XCTAssertFalse(FileManager.default.fileExists(atPath: library.summaries.appendingPathComponent("gone.json").path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: library.summaries.appendingPathComponent("gone.jpg").path))
     XCTAssertNoThrow(try library.delete(id: "never-existed"))
   }
 }

@@ -1,0 +1,9 @@
+{
+  "name": "@soon2026/owlvit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Builds the app's on-device leaf detector (OWL-ViT for react-native-executorch); see README.md.",
+  "scripts": {
+    "build": "uv run --locked export.py"
+  }
+}

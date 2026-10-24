@@ -28,7 +28,7 @@ done
 let root: string;
 
 async function makeConfig(brush: string | null): Promise<ServerConfig> {
-  return { port: 0, host: '127.0.0.1', dataDir: path.join(root, 'data'), brushBin: brush, steps: 300, exportEvery: 100, maxResolution: 960, shDegree: 1, growthFraction: 0.5, maxSplats: 600_000, depthWorkerBin: null, depthModel: null, live: { voxelSize: 0.02, maxDepth: 4, gridWidth: 256, gridHeight: 192 } };
+  return { port: 0, host: '127.0.0.1', dataDir: path.join(root, 'data'), brushBin: brush, steps: 300, exportEvery: 100, maxResolution: 960, shDegree: 1, growthFraction: 0.5, maxSplats: 600_000, depthWorkerBin: null, depthModel: null, modelsDir: path.join(root, 'models'), live: { voxelSize: 0.02, maxDepth: 4, gridWidth: 256, gridHeight: 192 } };
 }
 
 async function fakeBrush(script = FAKE_BRUSH) {
@@ -193,6 +193,37 @@ describe('capture upload → training → viewing', () => {
     restarted.trainer.enqueue('cap-test-1');
     await restarted.trainer.whenIdle();
     expect(restarted.store.get('cap-test-1')?.state).toBe('done');
+  });
+});
+
+describe('on-device models', () => {
+  test('serves a built model and its manifest, which is never cached', async () => {
+    const app = await createApp(await makeConfig(null));
+    await mkdir(path.join(root, 'models'), { recursive: true });
+    await writeFile(path.join(root, 'models', 'owlvit-leaves.json'), JSON.stringify({ model: 'owlvit-leaves-abc.pte' }));
+    await writeFile(path.join(root, 'models', 'owlvit-leaves-abc.pte'), 'program bytes');
+
+    const manifest = await app.fetch(new Request('http://localhost/models/owlvit-leaves.json'));
+    expect(manifest.headers.get('cache-control')).toBe('no-store');
+    expect(await body(manifest)).toEqual({ model: 'owlvit-leaves-abc.pte' });
+    const model = await app.fetch(new Request('http://localhost/models/owlvit-leaves-abc.pte'));
+    expect(model.status).toBe(200);
+    expect(await model.text()).toBe('program bytes');
+  });
+
+  test('says how to build a model that is missing', async () => {
+    const app = await createApp(await makeConfig(null));
+    const res = await app.fetch(new Request('http://localhost/models/owlvit-leaves.json'));
+    expect(res.status).toBe(404);
+    expect((await body(res)).error).toContain('@soon2026/owlvit build');
+  });
+
+  test('serves nothing outside the models directory', async () => {
+    const app = await createApp(await makeConfig(null));
+    await writeFile(path.join(root, 'secret.json'), '{}');
+    for (const name of ['..%2Fsecret.json', '.hidden.json', 'notes.txt']) {
+      expect((await app.fetch(new Request(`http://localhost/models/${name}`))).status).toBe(404);
+    }
   });
 });
 

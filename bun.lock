@@ -67,6 +67,10 @@
         "typescript": "~6.0.3",
       },
     },
+    "packages/owlvit": {
+      "name": "@soon2026/owlvit",
+      "version": "0.0.0",
+    },
   },
   "trustedDependencies": [
     "react-native-executorch",
@@ -437,6 +441,8 @@
     "@sinclair/typebox": ["@sinclair/typebox@0.27.12", "", {}, "sha512-hhyNJ+nbR6ZR7pToHvllEFun9TL0sbL+tk/ON75lo+Xas054uez98qRbsuNt7MBCyZKK4+8Yli/OAGZhmfBZ/g=="],
 
     "@soon2026/dev": ["@soon2026/dev@workspace:packages/dev"],
+
+    "@soon2026/owlvit": ["@soon2026/owlvit@workspace:packages/owlvit"],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.4", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A=="],
 

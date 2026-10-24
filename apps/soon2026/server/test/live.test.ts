@@ -144,7 +144,7 @@ describe('live hub', () => {
     const config: ServerConfig = {
       port: 0, host: '127.0.0.1', dataDir: path.join(root, 'data'), brushBin: null, steps: 300, exportEvery: 100,
       maxResolution: 960, shDegree: 1, growthFraction: 0.5, maxSplats: 600_000, depthWorkerBin: null, depthModel: null,
-      live: { voxelSize: 0.05, maxDepth: 4, gridWidth: W, gridHeight: H },
+      modelsDir: path.join(root, 'models'), live: { voxelSize: 0.05, maxDepth: 4, gridWidth: W, gridHeight: H },
     };
     const estimator = new FakeEstimator();
     const app = await createApp(config, { startEstimator: async () => estimator });

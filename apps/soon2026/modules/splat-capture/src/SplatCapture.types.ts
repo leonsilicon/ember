@@ -70,6 +70,8 @@ export type SavedCapture = {
   frames?: number;
   points?: number;
   durationSeconds?: number;
+  /** file:// URL of a small upright JPEG of the first frame. Missing where `mode` is, and for older captures. */
+  thumbnailUri?: string;
 };
 
 /** A camera frame for object detection: upright for the portrait UI, as RGBA rows. */

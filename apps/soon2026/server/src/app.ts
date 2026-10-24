@@ -10,6 +10,7 @@ import { liveViewerPage } from './live/viewer';
 import { indexPage, viewerPage } from './pages';
 
 const CAPTURE_ID = /^[A-Za-z0-9_-]{1,80}$/;
+const MODEL_FILE = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,120}\.(pte|json)$/;
 
 // Any origin may read the API, so a teammate's own web app can list and load splats.
 const CORS = {
@@ -126,6 +127,23 @@ export async function createApp(
     if (url.pathname === '/api/captures') {
       if (request.method === 'POST') return receiveCapture(request);
       return json({ captures: store.list().map(publicJob) });
+    }
+
+    // The app's on-device models (see packages/owlvit). Each build of a model has a file name of
+    // its own, so only the manifests that name them must not be cached.
+    if (parts[0] === 'models' && parts.length === 2) {
+      const file = MODEL_FILE.test(parts[1]) ? Bun.file(path.join(config.modelsDir, parts[1])) : null;
+      if (!file || !(await file.exists())) {
+        return json({ error: `no model ${parts[1]}; build it with \`bun run --filter @soon2026/owlvit build\`` }, 404);
+      }
+      const manifest = parts[1].endsWith('.json');
+      return new Response(file, {
+        headers: {
+          ...CORS,
+          'Content-Type': manifest ? 'application/json' : 'application/octet-stream',
+          'Cache-Control': manifest ? 'no-store' : 'public, max-age=31536000, immutable',
+        },
+      });
     }
 
     const [scope, kind, id, asset] = parts;

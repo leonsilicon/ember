@@ -1,9 +1,11 @@
 import { useEvent } from 'expo';
-import { router, useIsFocused } from 'expo-router';
+import { Image } from 'expo-image';
+import { router, useFocusEffect, useIsFocused } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SymbolView, type SymbolViewProps } from 'expo-symbols';
-import { useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import Animated, { ZoomIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import SplatCapture, {
@@ -21,14 +23,13 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useDebugSettings } from '@/hooks/use-debug-settings';
 import { useDetections, type Detection } from '@/hooks/use-detections';
-import { compact, describeCapture, shareCapture } from '@/lib/captures';
+import { compact } from '@/lib/captures';
 import { useRover } from '@/lib/rover';
 
 type Phase =
   | { kind: 'ready' }
   | { kind: 'recording' }
   | { kind: 'saving' }
-  | { kind: 'saved'; capture: SavedCapture }
   | { kind: 'failed'; message: string };
 
 const INITIAL_STATUS: CaptureStatus = {
@@ -88,11 +89,26 @@ export default function CameraScreen() {
   const [detection, setDetection] = useState(true);
   const [featurePoints, setFeaturePoints] = useState(true);
   const [roverOpen, setRoverOpen] = useState(false);
+  /** The newest capture, for the gallery button; `fresh` once this screen has just saved it. */
+  const [latest, setLatest] = useState<{ capture: SavedCapture; fresh: boolean } | null>(null);
   const [viewSize, setViewSize] = useState<Size>({ width: 0, height: 0 });
   const status = useEvent(SplatCapture, 'onStatus', INITIAL_STATUS);
   const detections = useDetections(detection && capabilities.arkit);
   const rover = useRover();
   const debug = useDebugSettings();
+
+  // Re-read on every return, since the gallery can delete the newest capture.
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      SplatCapture.listCaptures()
+        .then(([newest]) => alive && setLatest(newest ? { capture: newest, fresh: false } : null))
+        .catch(() => {});
+      return () => {
+        alive = false;
+      };
+    }, []),
+  );
 
   async function startRecording() {
     try {
@@ -108,15 +124,9 @@ export default function CameraScreen() {
   async function stopRecording() {
     setPhase({ kind: 'saving' });
     try {
-      setPhase({ kind: 'saved', capture: await SplatCapture.stopCapture() });
-    } catch (error) {
-      setPhase({ kind: 'failed', message: message(error) });
-    }
-  }
-
-  async function share(capture: SavedCapture) {
-    try {
-      await shareCapture(capture);
+      // Like the Camera app, the gallery button turning into the new capture is the confirmation.
+      setLatest({ capture: await SplatCapture.stopCapture(), fresh: true });
+      setPhase({ kind: 'ready' });
     } catch (error) {
       setPhase({ kind: 'failed', message: message(error) });
     }
@@ -223,17 +233,6 @@ export default function CameraScreen() {
           </View>
         )}
 
-        {phase.kind === 'saved' && (
-          <View style={styles.panel}>
-            <Light style={styles.stats}>Saved · {describeCapture(phase.capture)}</Light>
-            <Light>Send the zip to whoever turns it into a splat. It&apos;s also kept in the gallery.</Light>
-            <View style={styles.buttons}>
-              <Button label="Share…" onPress={() => share(phase.capture)} />
-              <Button label="Done" secondary onPress={() => setPhase({ kind: 'ready' })} />
-            </View>
-          </View>
-        )}
-
         {phase.kind === 'failed' && (
           <View style={styles.panel}>
             <Light style={styles.error}>{phase.message}</Light>
@@ -242,9 +241,9 @@ export default function CameraScreen() {
         )}
 
         <View style={styles.controls}>
-          <RoundButton
-            icon="photo.on.rectangle"
-            label="Gallery"
+          <GalleryButton
+            capture={latest?.capture}
+            pop={latest?.fresh}
             disabled={busy}
             onPress={() => router.push('/captures')}
           />
@@ -373,6 +372,42 @@ function RoundButton({
   );
 }
 
+/**
+ * Like the Camera app's: the newest capture's first frame, which pops in when a recording is
+ * saved. Falls back to an icon when there's no capture, or it has no thumbnail.
+ */
+function GalleryButton({
+  capture,
+  pop,
+  onPress,
+  disabled,
+}: {
+  capture?: SavedCapture;
+  pop?: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  if (!capture?.thumbnailUri) {
+    return <RoundButton icon="photo.on.rectangle" label="Gallery" disabled={disabled} onPress={onPress} />;
+  }
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Gallery"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => (pressed || disabled) && styles.pressed}>
+      {/* Keyed by capture, so a newly saved one mounts fresh and plays the pop. */}
+      <Animated.View
+        key={capture.captureId}
+        entering={pop ? ZoomIn.springify().damping(14) : undefined}
+        style={styles.thumbnail}>
+        <Image source={capture.thumbnailUri} style={StyleSheet.absoluteFill} contentFit="cover" />
+      </Animated.View>
+    </Pressable>
+  );
+}
+
 function Button({
   label,
   onPress,
@@ -494,6 +529,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  thumbnail: {
+    width: ROUND_SIZE,
+    height: ROUND_SIZE,
+    borderRadius: Spacing.two + Spacing.half,
+    borderWidth: 2,
+    borderColor: '#fff',
+    overflow: 'hidden',
+    backgroundColor: '#000',
   },
   badge: {
     position: 'absolute',
