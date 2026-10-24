@@ -7,8 +7,8 @@ export const BANANA_SPLAT_URL = '/splats/banana.splat'
 
 // Scene convention: ground is the y=0 plane and up is -y (cameraUp below). The default view looks down
 // at ~35° onto the middle of the ~4.6 m leaf-floor sample.
-const CAMERA_POSITION: [number, number, number] = [0, -1.9, -2.9]
-const CAMERA_LOOK_AT: [number, number, number] = [0, 0, 0.15]
+const CAMERA_POSITION: [number, number, number] = [0, -1.45, -2.25]
+const CAMERA_LOOK_AT: [number, number, number] = [0, 0, 0.2]
 
 type LoadState =
   | { kind: 'idle' }
@@ -73,6 +73,10 @@ export function SplatViewer({ source, label }: Props) {
     const name = label ?? source ?? ''
 
     const load = async () => {
+      // Yield once so a StrictMode mount/unmount/mount never starts a load on the viewer being disposed
+      // (that load gets aborted with an unhandled "Scene disposed" rejection).
+      await Promise.resolve()
+      if (cancelled) return
       if (viewer.isLoadingOrUnloading()) await waitUntil(() => !viewer.isLoadingOrUnloading())
       if (viewer.getSceneCount() > 0) await viewer.removeSplatScene(0, false)
       if (cancelled || !source) {
@@ -81,6 +85,15 @@ export function SplatViewer({ source, label }: Props) {
       }
       setState({ kind: 'loading', progress: 0, label: name })
       try {
+        // A missing file under Vite falls back to index.html (200, text/html), which the parser
+        // happily turns into a handful of garbage splats. Check first so a bad path reports an error.
+        if (!source.startsWith('blob:')) {
+          const head = await fetch(source, { method: 'HEAD' })
+          if (!head.ok || head.headers.get('content-type')?.includes('text/html')) {
+            throw new Error(`Scene not found: ${source}`)
+          }
+          if (cancelled) return
+        }
         await viewer.addSplatScene(source, {
           format: formatFromName(name),
           showLoadingUI: false,

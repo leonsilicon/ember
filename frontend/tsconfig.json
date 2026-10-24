@@ -1,5 +1,8 @@
 {
   "files": [],
+  "compilerOptions": {
+    "paths": { "@rover-brain": ["../apps/expo-app/src/lib/rover-brain/index.ts"] }
+  },
   "references": [
     { "path": "./tsconfig.app.json" },
     { "path": "./tsconfig.node.json" }

@@ -1,3 +1,4 @@
+import { AppNav } from './components/AppNav'
 import { ArmPanel } from './components/ArmPanel'
 import { ConnectionPanel } from './components/ConnectionPanel'
 import { CONNECTION_STYLES } from './components/connectionStyles'
@@ -27,6 +28,7 @@ export default function App() {
           <h1 className="text-lg font-bold tracking-tight">Rover Control</h1>
           <p className="text-xs text-zinc-500">soon2026 · laptop remote for rover + arm</p>
         </div>
+        <AppNav current="#/" />
         <div className="flex items-center gap-4 text-sm">
           <span className="flex items-center gap-2">
             <span className={`inline-block h-2.5 w-2.5 rounded-full ${CONNECTION_STYLES[snapshot.connection].dot}`} />

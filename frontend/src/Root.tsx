@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import App from './App.tsx'
+import SimApp from './SimApp.tsx'
 import WildfireApp from './wildfire/WildfireApp.tsx'
 
 export default function Root() {
@@ -9,5 +10,7 @@ export default function Root() {
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
-  return hash.startsWith('#/wildfire') ? <WildfireApp /> : <App />
+  if (hash.startsWith('#/wildfire')) return <WildfireApp />
+  if (hash.startsWith('#/sim')) return <SimApp />
+  return <App />
 }
