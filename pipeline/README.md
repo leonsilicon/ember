@@ -12,7 +12,7 @@ Stages (all CPU-capable, no CUDA needed):
 2. **OpenSplat** — trains the Gaussian splat from the COLMAP project (Metal on Apple Silicon, CPU elsewhere).
 3. Writes `scene.splat`. Open it in the web app (Scene panel → Load URL `/splats/scene.splat`, or "Open .splat").
 
-Options: `--iters N` (default 3000; 300 is a fast smoke test, 7000+ looks good), `--downscale 2`, `--out <dir>` (project folder, default `<images>/../recon`), `--matcher sequential|exhaustive` (auto: sequential for 30+ frames in capture order — much faster for a 1 fps stream; exhaustive for small unordered sets), `--skip-colmap` to re-train with different settings.
+Options: `--iters N` (default 4000; 300 is a fast smoke test, 7000+ looks good), `--downscale 2`, `--out <dir>` (project folder, default `<images>/../recon`), `--matcher sequential|exhaustive` (auto: sequential for 30+ frames in capture order — much faster for a 1 fps stream; exhaustive for small unordered sets), `--skip-colmap` to re-train with different settings.
 
 ## Install on macOS (Apple Silicon)
 

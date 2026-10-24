@@ -2,7 +2,7 @@
 """Images -> COLMAP (poses + sparse points) -> OpenSplat (Gaussian splat) -> .splat/.ply.
 
 Usage:
-  python3 pipeline/reconstruct.py <images_dir> [--out <project_dir>] [--iters 3000]
+  python3 pipeline/reconstruct.py <images_dir> [--out <project_dir>] [--iters 4000]
                                   [--splat <path/to/out.splat>] [--opensplat <path>]
 
 Produces <project_dir>/images/, <project_dir>/sparse/0/ (COLMAP) and the final splat
@@ -68,7 +68,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('images', help='folder of .jpg/.png frames of one scene')
     ap.add_argument('--out', help='project dir (default: <images>/../recon)')
-    ap.add_argument('--iters', type=int, default=3000, help='OpenSplat iterations (3000 decent, 7000+ nicer)')
+    ap.add_argument('--iters', type=int, default=4000, help='OpenSplat iterations (4000 decent, 7000+ nicer)')
     ap.add_argument('--splat', help='output splat path (default: <out>/scene.splat)')
     ap.add_argument('--opensplat', default=os.environ.get('OPENSPLAT'), help='path to opensplat binary')
     ap.add_argument('--colmap', default=os.environ.get('COLMAP', 'colmap'), help='path to colmap binary')
