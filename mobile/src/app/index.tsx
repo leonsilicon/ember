@@ -44,7 +44,7 @@ import { DetectionOverlay, type Size } from '@/components/detection-overlay';
 import { Glass } from '@/components/glass';
 import { LiveSplatView } from '@/components/live-splat-view';
 import { ModePicker } from '@/components/mode-picker';
-import { RoverBrainHud } from '@/components/rover-brain-hud';
+import { RoverBrainHud } from '@/components/rover-brain-menu';
 import { RoverRemote } from '@/components/rover-control';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
