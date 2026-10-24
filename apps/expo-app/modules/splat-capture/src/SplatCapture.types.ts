@@ -79,6 +79,11 @@ export type SavedCapture = {
   durationSeconds?: number;
   /** file:// URL of a small upright JPEG of the first frame. Missing where `mode` is, and for older captures. */
   thumbnailUri?: string;
+  /**
+   * file:// URL of a small upright H.264 video of the whole recording, for the gallery to play. It
+   * isn't in the zip. Missing where `thumbnailUri` is, and for captures from before it existed.
+   */
+  videoUri?: string;
 };
 
 /** A camera frame for object detection: upright for the portrait UI, as RGBA rows. */
@@ -86,6 +91,11 @@ export type DetectionFrame = {
   width: number;
   height: number;
   data: Uint8Array;
+  /**
+   * The digital zoom it was cropped to (at least 1): it shows the centred 1/zoom of the camera's
+   * view, in each direction, at `width` × `height`.
+   */
+  zoom: number;
   /** Where the camera was for this frame; lets detections be placed in the world (src/lib/rover-brain). */
   camera?: DetectionCamera;
 };
@@ -104,7 +114,7 @@ export type DetectionCamera = {
   pose: number[];
   /**
    * Of the sensor-oriented (landscape) camera image. The detection frame is that image rotated a
-   * quarter turn clockwise (upright for portrait) and scaled down.
+   * quarter turn clockwise (upright for portrait), cropped to its `zoom` and scaled.
    */
   intrinsics: PinholeIntrinsics;
   trackingNormal: boolean;

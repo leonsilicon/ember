@@ -1,10 +1,12 @@
 import { File, Paths } from 'expo-file-system';
 import { useEffect, useState } from 'react';
 import { useObjectDetector, type ObjectDetection, type ObjectDetectorModel } from 'react-native-executorch';
+import type { SharedValue } from 'react-native-reanimated';
 
-import SplatCapture, { type DetectionCamera } from '../../modules/splat-capture';
+import SplatCapture, { type DetectionCamera, type DetectionFrame } from '../../modules/splat-capture';
 
 import type { Size } from '@/components/detection-overlay';
+import { lidarDistances } from '@/lib/rover-brain';
 
 const MODEL_NAME = 'OWL-ViT · leaves';
 /** packages/owlvit's build, which plugins/with-leaf-detector.js embeds in the app. */
@@ -32,12 +34,23 @@ export type Detection = ObjectDetection<'xyxy', string>;
 
 export type DetectionResult = {
   detections: Detection[];
-  /** The upright camera frame the boxes are in, scaled down from the camera's full size. */
+  /**
+   * The whole upright camera frame the boxes are in, scaled from the camera's full size, even when
+   * the model only saw its zoomed-in middle.
+   */
   frameSize: Size;
+  /** The digital zoom the frame was taken at: the model saw the centred 1/zoom of `frameSize`. */
+  zoom: number;
   /** Inference time, smoothed over recent frames. */
   latencyMs: number;
   /** Where the camera was for the frame, to place the detections in the world. */
   camera?: DetectionCamera;
+  /**
+   * How far each detection is from the phone in metres, by index, measured with LiDAR on the same
+   * frame; null where LiDAR has no reading. Missing for frames without depth (no LiDAR, or the front
+   * camera).
+   */
+  distances?: (number | null)[];
 };
 
 export type Detections = {
@@ -106,11 +119,31 @@ const CONFIG: ObjectDetectorModel<'xyxy', string> = BUNDLED.manifest
     };
 
 /**
+ * The boxes from a frame cropped to its centred 1/zoom, in the whole frame, which the overlay and
+ * the rover brain work in.
+ */
+function uncrop(detections: Detection[], frame: DetectionFrame): Pick<DetectionResult, 'detections' | 'frameSize'> {
+  const frameSize = { width: frame.width * frame.zoom, height: frame.height * frame.zoom };
+  const dx = (frameSize.width - frame.width) / 2;
+  const dy = (frameSize.height - frame.height) / 2;
+  return {
+    frameSize,
+    detections: detections.map(({ box, ...detection }) => ({
+      ...detection,
+      box: { ...box, xmin: box.xmin + dx, ymin: box.ymin + dy, xmax: box.xmax + dx, ymax: box.ymax + dy },
+    })),
+  };
+}
+
+/**
  * Runs the OWL-ViT leaf detector on the capture camera's frames while `enabled`. The AR session
  * owns the camera, so frames come from it (see `nextDetectionFrame`) rather than from a second
  * camera session. The model is built on the Mac and embedded in the app.
+ *
+ * Each frame is cropped to the preview's `zoom`, so zooming in on a leaf hands the model more of
+ * the leaf, in more pixels, than the whole frame scaled down to its input would.
  */
-export function useDetections(enabled: boolean): Detections {
+export function useDetections(enabled: boolean, zoom: SharedValue<number>): Detections {
   const detector = useObjectDetector(CONFIG, { preventLoad: !BUNDLED.manifest });
   const { detectObjects } = detector;
   const [result, setResult] = useState<DetectionResult>();
@@ -124,7 +157,7 @@ export function useDetections(enabled: boolean): Detections {
       while (!cancelled) {
         try {
           // Resolves once the camera delivers a frame, so this waits while the preview is paused.
-          const frame = await SplatCapture.nextDetectionFrame(FRAME_SIZE);
+          const frame = await SplatCapture.nextDetectionFrame(FRAME_SIZE, zoom.get());
           if (cancelled || frame == null) continue;
           const start = Date.now();
           const detections = await detectObjects({
@@ -136,10 +169,14 @@ export function useDetections(enabled: boolean): Detections {
           });
           if (cancelled) break;
           const latencyMs = Date.now() - start;
+          const boxes = uncrop(detections, frame);
           setResult((previous) => ({
-            detections,
-            frameSize: { width: frame.width, height: frame.height },
+            ...boxes,
+            zoom: frame.zoom,
             camera: frame.camera,
+            // Measured here, with the boxes, rather than by the rover brain a render later, so no box
+            // ever shows without its distance.
+            distances: frame.camera && lidarDistances(boxes.detections, boxes.frameSize, frame.camera),
             latencyMs: previous ? previous.latencyMs * 0.9 + latencyMs * 0.1 : latencyMs,
           }));
           setError(undefined);
@@ -154,7 +191,7 @@ export function useDetections(enabled: boolean): Detections {
     return () => {
       cancelled = true;
     };
-  }, [enabled, detectObjects]);
+  }, [enabled, detectObjects, zoom]);
 
   let status: string | undefined;
   if (BUNDLED.error) {

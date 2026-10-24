@@ -83,12 +83,30 @@ final class CaptureLibraryTests: XCTestCase {
     XCTAssertNil(library.list().first { $0.id == "plain" }?.thumbnail)
   }
 
-  func testDeleteRemovesZipSummaryAndThumbnail() throws {
-    try library.save(dataset: try makeDataset("gone"), summary: summary("gone"), thumbnail: Data([0xFF, 0xD8]))
+  func testVideoIsMovedBesideTheSummaryAndOutOfTheZipFolder() throws {
+    let dataset = try makeDataset("clip")
+    let recorded = root.appendingPathComponent("work/clip.mp4")
+    try Data([0x00, 0x00, 0x00, 0x18]).write(to: recorded)
+    let saved = try library.save(dataset: dataset, summary: summary("clip"), video: recorded)
+    XCTAssertEqual(saved.video, library.summaries.appendingPathComponent("clip.mp4"))
+    XCTAssertEqual(library.list().first?.video, saved.video)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: recorded.path))
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: library.directory.path), ["clip.zip"])
+
+    try library.save(dataset: try makeDataset("still"), summary: summary("still"))
+    XCTAssertNil(library.list().first { $0.id == "still" }?.video)
+  }
+
+  func testDeleteRemovesZipSummaryThumbnailAndVideo() throws {
+    let dataset = try makeDataset("gone")
+    let recorded = root.appendingPathComponent("work/gone.mp4")
+    try Data([0x00]).write(to: recorded)
+    try library.save(dataset: dataset, summary: summary("gone"), thumbnail: Data([0xFF, 0xD8]), video: recorded)
     try library.delete(id: "gone")
     XCTAssertTrue(library.list().isEmpty)
     XCTAssertFalse(FileManager.default.fileExists(atPath: library.summaries.appendingPathComponent("gone.json").path))
     XCTAssertFalse(FileManager.default.fileExists(atPath: library.summaries.appendingPathComponent("gone.jpg").path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: library.summaries.appendingPathComponent("gone.mp4").path))
     XCTAssertNoThrow(try library.delete(id: "never-existed"))
   }
 }

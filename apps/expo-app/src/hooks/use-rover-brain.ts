@@ -41,7 +41,11 @@ export type RoverBrain = {
   /** Scoop loads carried, and tipped onto the pile so far. */
   load: number;
   dumped: number;
-  /** Per detection of `captionsFor`: "1.2 m · 15° R", or undefined if it couldn't be placed. */
+  /**
+   * Per detection of `captionsFor`: why LiDAR ruled it out, "~1.2 m · 15° R" for a leaf placed
+   * without LiDAR (on the floor plane), or undefined. A LiDAR-placed leaf's box already shows its
+   * LiDAR distance (`DetectionResult.distances`).
+   */
   captions: (string | undefined)[];
   /** The detection result `captions` belong to; show them only with that result. */
   captionsFor?: DetectionResult;
@@ -146,7 +150,9 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
     const { leaves: located, rejected } = locateDetections(result.detections, result.frameSize, camera, floorY);
     brain.current.observe(located, frameHeading, Date.now());
     const captions: (string | undefined)[] = result.detections.map(() => undefined);
-    for (const leaf of located) captions[leaf.index] = caption(leaf.rover);
+    for (const leaf of located) {
+      if (leaf.source === 'floor') captions[leaf.index] = `~${caption(leaf.rover)}`;
+    }
     for (const r of rejected) captions[r.index] = rejectionCaption(r);
     publish({ captions, captionsFor: result });
   }, [enabled, result, publish]);

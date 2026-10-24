@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { DEFAULT_LEAF_MAP, LeafMap } from '../../src/lib/rover-brain/leaf-map';
 import { decodeDepth, uprightToSensor } from '../../src/lib/rover-brain/geometry';
-import { boxDepth, locateDetections } from '../../src/lib/rover-brain/perceive';
+import { boxDepth, lidarDistances, locateDetections } from '../../src/lib/rover-brain/perceive';
 import { boxAt, FRAME, K, pose, renderDepth, snapshot, toFrame } from './scene';
 
 const obs = (x: number, z: number, source: 'lidar' | 'floor' = 'lidar') => ({
@@ -89,6 +89,29 @@ describe('boxDepth', () => {
       uprightToSensor(u + 10, v + 10, FRAME, K),
     ];
     expect(boxDepth(map, corners, K)!).toBeCloseTo(1, 1);
+  });
+});
+
+describe('lidarDistances', () => {
+  test('straight-line distance from the phone; null where LiDAR has no reading', () => {
+    const p = pose([0, 0.3, 0], 25, 0);
+    // Above the horizon, where the depth map is empty (see 'unplaceable detections' above).
+    const sky = { label: 'dry leaf', confidence: 0.1, box: { xmin: 570, ymin: 380, xmax: 575, ymax: 388 } };
+    const near = boxAt(p, [0.3, 0, -1.2]);
+    const far = boxAt(p, [-0.4, 0, -3]);
+    const [a, b, c] = lidarDistances([near, far, sky], FRAME, snapshot(p, renderDepth(p)))!;
+    // From the camera, 0.3 m up: not the horizontal distance the rover drives.
+    expect(a!).toBeCloseTo(Math.hypot(0.3, 0.3, 1.2), 1);
+    expect(b!).toBeCloseTo(Math.hypot(0.4, 0.3, 3), 1);
+    expect(c).toBeNull();
+  });
+
+  test('needs no pose or tracking, only depth', () => {
+    const p = pose([0, 0.3, 0], 25, 0);
+    const box = boxAt(p, [0, 0, -1]);
+    const [d] = lidarDistances([box], FRAME, { intrinsics: K, depth: renderDepth(p) })!;
+    expect(d!).toBeCloseTo(Math.hypot(0.3, 1), 1);
+    expect(lidarDistances([box], FRAME, snapshot(p))).toBeUndefined();
   });
 });
 

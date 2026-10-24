@@ -158,7 +158,11 @@ its own if commands stop arriving for 500 ms.
 - **Rover-relative:** `distance` (horizontal metres) and `bearingDeg` (0 straight ahead,
   **+ right**), measured from the phone's position and its viewing direction flattened onto the
   ground. These match the drive mixer, where `+turn` is right.
-- In the app, every detection box shows `dry leaf 23% · 1.4 m · 12° R`. The HUD shows the nearest
+- In the app, every detection box shows how far the leaf is from the phone, measured with LiDAR on
+  the same frame: `dry leaf 1.4 m` (straight-line, so slightly more than the horizontal
+  `distance`; `45 cm` under a metre, `– m` where LiDAR has no reading). Without LiDAR, boxes show
+  the detector's confidence instead, plus the floor-plane estimate: `dry leaf 23% · ~1.4 m · 12° R`
+  (the front camera shows only the confidence). Boxes LiDAR rules out say why. The HUD shows the nearest
   confirmed leaf, how many have been found and collected, and the corridor fan (bar height is the
   clearance; red is blocked).
 
@@ -218,6 +222,7 @@ much easier.
 | Module | Use |
 |---|---|
 | `perceive.ts` | `locateDetections(detections, frameSize, camera, floorY)` → `{ leaves, rejected }`: each leaf's world point, distance, bearing, height above the floor and size; rejected boxes with the reason |
+| | `lidarDistances(detections, frameSize, camera)` → each box's straight-line LiDAR distance from the phone (null without a reading; undefined without depth). `useDetections` returns it with every result as `distances` |
 | `leaf-map.ts` | `LeafMap.observe(...)`, `.snapshot()`, `.markCollected(id, now)`, `.markFailed(id)` |
 | `obstacles.ts` | `scanDepth(camera)` → world points + floor; `ObstacleMemory` keeps the last few seconds; `corridors(scan, heading)` → clearance per bearing |
 | `autopilot.ts` | `stepAutopilot(state, input)` → `{ left, right, scoop, message, collectedIds, ... }` for `drive()` |

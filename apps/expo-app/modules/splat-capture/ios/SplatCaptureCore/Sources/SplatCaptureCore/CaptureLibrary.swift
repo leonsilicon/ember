@@ -26,6 +26,8 @@ struct SavedCapture: Equatable {
   var summary: CaptureSummary?
   /// A small JPEG of the capture for the gallery button, when one was saved with it.
   var thumbnail: URL?
+  /// A small video of the recording for the gallery to play, when one was saved with it.
+  var video: URL?
 }
 
 enum CaptureLibraryError: LocalizedError {
@@ -42,13 +44,13 @@ enum CaptureLibraryError: LocalizedError {
 /// Documents folder appears in the Files app and in Finder).
 struct CaptureLibrary {
   let directory: URL
-  /// Summaries (and thumbnails) live outside `directory` so the Files app only shows the zips.
+  /// Summaries (and thumbnails and videos) live outside `directory` so the Files app only shows the zips.
   let summaries: URL
 
   /// Zips `dataset` (whose folder name becomes the zip's top-level folder) into the library,
-  /// keeping `thumbnail` (JPEG data) beside its summary.
+  /// keeping `thumbnail` (JPEG data) beside its summary, and moving the `video` file there.
   @discardableResult
-  func save(dataset: URL, summary: CaptureSummary, thumbnail: Data? = nil) throws -> SavedCapture {
+  func save(dataset: URL, summary: CaptureSummary, thumbnail: Data? = nil, video: URL? = nil) throws -> SavedCapture {
     let fm = FileManager.default
     try fm.createDirectory(at: directory, withIntermediateDirectories: true)
     try fm.createDirectory(at: summaries, withIntermediateDirectories: true)
@@ -58,6 +60,10 @@ struct CaptureLibrary {
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(summary).write(to: summaryURL(summary.captureId))
     try thumbnail?.write(to: thumbnailURL(summary.captureId))
+    if let video {
+      try? fm.removeItem(at: videoURL(summary.captureId))
+      try fm.moveItem(at: video, to: videoURL(summary.captureId))
+    }
     return try saved(zip)
   }
 
@@ -72,7 +78,7 @@ struct CaptureLibrary {
 
   func delete(id: String) throws {
     let fm = FileManager.default
-    for url in [directory.appendingPathComponent("\(id).zip"), summaryURL(id), thumbnailURL(id)]
+    for url in [directory.appendingPathComponent("\(id).zip"), summaryURL(id), thumbnailURL(id), videoURL(id)]
     where fm.fileExists(atPath: url.path) {
       try fm.removeItem(at: url)
     }
@@ -86,14 +92,18 @@ struct CaptureLibrary {
     summaries.appendingPathComponent("\(id).jpg")
   }
 
+  private func videoURL(_ id: String) -> URL {
+    summaries.appendingPathComponent("\(id).mp4")
+  }
+
   private func saved(_ zip: URL) throws -> SavedCapture {
     let attributes = try FileManager.default.attributesOfItem(atPath: zip.path)
     let id = zip.deletingPathExtension().lastPathComponent
     let summary = (try? Data(contentsOf: summaryURL(id))).flatMap { try? JSONDecoder().decode(CaptureSummary.self, from: $0) }
-    let thumbnail = thumbnailURL(id)
+    let existing = { (url: URL) in FileManager.default.fileExists(atPath: url.path) ? url : nil }
     return SavedCapture(id: id, zip: zip, bytes: (attributes[.size] as? Int) ?? 0,
                         savedAt: (attributes[.modificationDate] as? Date) ?? .distantPast, summary: summary,
-                        thumbnail: FileManager.default.fileExists(atPath: thumbnail.path) ? thumbnail : nil)
+                        thumbnail: existing(thumbnailURL(id)), video: existing(videoURL(id)))
   }
 
   /// Foundation's built-in archiver: reading a directory with `.forUploading` yields a zip of it.

@@ -39,8 +39,8 @@ public class SplatCaptureModule: Module {
       CaptureController.shared.stop { promise.settle($0) }
     }
 
-    AsyncFunction("nextDetectionFrame") { (maxSize: Int, promise: Promise) in
-      CaptureController.shared.nextDetectionFrame(maxSize: maxSize) { promise.resolve($0) }
+    AsyncFunction("nextDetectionFrame") { (maxSize: Int, zoom: Double, promise: Promise) in
+      CaptureController.shared.nextDetectionFrame(maxSize: maxSize, zoom: zoom) { promise.resolve($0) }
     }
 
     AsyncFunction("currentCamera") { (includeDepth: Bool, promise: Promise) in
