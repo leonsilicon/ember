@@ -142,9 +142,14 @@ export default function WildfireApp() {
     map.on('click', L.buildingsFill, (e: MapLayerMouseEvent) => {
       const f = e.features?.[0]
       if (!f) return
+      const props = normalizeProps(f.properties, f.id)
       setSearch({ kind: 'idle' })
-      setSelected({ props: normalizeProps(f.properties, f.id), geometry: f.geometry })
+      setSelected({ props, geometry: f.geometry })
       openSheet()
+      if (window.matchMedia('(max-width: 767px)').matches) {
+        // keep the tapped footprint in the strip of map left above the sheet
+        map.easeTo({ center: [props.lon, props.lat], padding: { top: 0, left: 0, right: 0, bottom: Math.round(window.innerHeight * 0.6) }, duration: 350 })
+      }
     })
     map.on('mouseenter', L.buildingsFill, () => (map.getCanvas().style.cursor = 'pointer'))
     map.on('mouseleave', L.buildingsFill, () => (map.getCanvas().style.cursor = ''))
