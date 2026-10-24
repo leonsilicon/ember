@@ -17,10 +17,11 @@ declare class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> 
   /** Finishes the dataset and saves it as a zip in the app's Documents/Captures folder. */
   stopCapture(): Promise<SavedCapture>;
   /**
-   * Resolves with the next frame of the capture camera, scaled so its longer side is `maxSize`,
-   * once the preview is running. Resolves with null if a newer call replaces this one.
+   * Resolves with the next frame of the capture camera, cropped to its centred 1/`zoom` (as a
+   * preview zoomed by `zoom` shows it) and scaled so its longer side is `maxSize`, once the preview
+   * is running. Resolves with null if a newer call replaces this one.
    */
-  nextDetectionFrame(maxSize: number): Promise<DetectionFrame | null>;
+  nextDetectionFrame(maxSize: number, zoom: number): Promise<DetectionFrame | null>;
   /**
    * The newest AR frame's camera: pose, intrinsics and, with `includeDepth`, LiDAR depth. Null
    * before the first frame. The rover's steering loop polls this.

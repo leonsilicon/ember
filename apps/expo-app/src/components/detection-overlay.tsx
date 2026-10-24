@@ -1,9 +1,11 @@
 import { StyleSheet, View } from 'react-native';
 import type { ObjectDetection } from 'react-native-executorch';
+import type { SharedValue } from 'react-native-reanimated';
 
 import { ThemedText } from './themed-text';
 
 import { Spacing } from '@/constants/theme';
+import { useZoomLevel } from '@/hooks/use-camera-zoom';
 
 export type Size = {
   width: number;
@@ -20,6 +22,8 @@ type DetectionOverlayProps = {
   frameSize: Size;
   /** On-screen size of the camera preview, which fills its view (`resizeMode="cover"`). */
   viewSize: Size;
+  /** The preview's pinch zoom: it shows the centred 1/zoom of the frame, magnified to fill the view. */
+  zoom: SharedValue<number>;
   /** Whether the model input was upside down, so boxes have to be rotated back. */
   rotated180: boolean;
   /** Extra text per detection, by index, e.g. how far away it is. */
@@ -51,9 +55,13 @@ export function DetectionOverlay({
   inputSize,
   frameSize,
   viewSize,
+  zoom,
   rotated180,
   captions,
 }: DetectionOverlayProps) {
+  // Follows the pinch, so the boxes stay on what they found as the preview zooms.
+  const level = useZoomLevel(zoom);
+
   if (frameSize.width <= 0 || frameSize.height <= 0) {
     return null;
   }
@@ -61,7 +69,7 @@ export function DetectionOverlay({
   // The resizer letterboxes the whole frame into the model input ("contain") while the
   // preview crops it to fill the view ("cover"), so both scales are relative to the frame.
   const inputScale = Math.min(inputSize.width / frameSize.width, inputSize.height / frameSize.height);
-  const viewScale = Math.max(viewSize.width / frameSize.width, viewSize.height / frameSize.height);
+  const viewScale = Math.max(viewSize.width / frameSize.width, viewSize.height / frameSize.height) * level;
   const scale = viewScale / inputScale;
   const offsetX = (viewSize.width - inputSize.width * scale) / 2;
   const offsetY = (viewSize.height - inputSize.height * scale) / 2;

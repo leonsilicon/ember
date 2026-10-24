@@ -14,6 +14,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import { GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
   FadeIn,
@@ -22,6 +23,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   ZoomIn,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -44,6 +46,7 @@ import { RoverRemote } from '@/components/rover-control';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import { useCameraZoom, useZoomLevel, zoomTo } from '@/hooks/use-camera-zoom';
 import { useDebugSettings } from '@/hooks/use-debug-settings';
 import { useDetections, type Detection, type Detections } from '@/hooks/use-detections';
 import { useRoverBrain } from '@/hooks/use-rover-brain';
@@ -166,7 +169,13 @@ export default function CameraScreen() {
   const [latest, setLatest] = useState<{ capture: SavedCapture; fresh: boolean } | null>(null);
   const [viewSize, setViewSize] = useState<Size>({ width: 0, height: 0 });
   const status = useEvent(SplatCapture, 'onStatus', INITIAL_STATUS);
-  const detections = useDetections(detection && capabilities.arkit);
+  const recording = phase.kind === 'recording';
+  const liveUrl = recording && phase.liveServerUrl ? liveEmbedUrl(phase.liveServerUrl, phase.captureId) : null;
+  const liveMain = liveUrl !== null && swapped;
+  // Pinches go to the live 3D view while it fills the viewfinder.
+  const { zoom, pinch, style: zoomStyle } = useCameraZoom(!liveMain);
+  // Crops each frame to the zoom, so zooming in on a leaf shows it to the detector bigger and sharper.
+  const detections = useDetections(detection && capabilities.arkit, zoom);
   const rover = useRover();
   // Places leaves in the world, scans LiDAR for obstacles, and runs the drive-to-leaf autopilot.
   // The front camera can't place anything in the world.
@@ -175,9 +184,11 @@ export default function CameraScreen() {
   const debug = useDebugSettings();
   const [caption, showCaption] = useCaption();
   // Like the Camera app, a sideways swipe across the viewfinder moves to the next or previous mode.
+  // Only with one finger: two pinch to zoom.
   const [swipe] = useState(() =>
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, { dx, dy }) => Math.abs(dx) > 24 && Math.abs(dx) > 2 * Math.abs(dy),
+      onMoveShouldSetPanResponder: (_, { dx, dy, numberActiveTouches }) =>
+        numberActiveTouches === 1 && Math.abs(dx) > 24 && Math.abs(dx) > 2 * Math.abs(dy),
       onPanResponderRelease: (_, { dx }) => {
         if (Math.abs(dx) > 48) setMode(dx < 0 ? 'remote' : 'camera');
       },
@@ -213,6 +224,7 @@ export default function CameraScreen() {
       });
       setSwapped(false);
       setPhase({ kind: 'recording', captureId, liveServerUrl });
+      if (zoom.get() > 1) showCaption('Zoom magnifies the preview and detection; the recording keeps the whole view');
     } catch (error) {
       setPhase({ kind: 'failed', message: message(error) });
     }
@@ -242,7 +254,6 @@ export default function CameraScreen() {
   }
 
   const front = camera === 'front';
-  const recording = phase.kind === 'recording';
   // A recording keeps the mode it started with.
   const lidar = recording ? status.mode === 'lidar' : capabilities.lidar && lidarOn;
   const tracking = describeTracking(status);
@@ -295,8 +306,6 @@ export default function CameraScreen() {
   if (detection) indicators.push(describeDetections(detections));
   const busy = recording || phase.kind === 'saving';
   const result = detections.result;
-  const liveUrl = recording && phase.liveServerUrl ? liveEmbedUrl(phase.liveServerUrl, phase.captureId) : null;
-  const liveMain = liveUrl !== null && swapped;
   const barHeight = BAR_PADDING + BAR_CONTENT + Math.max(insets.bottom, Spacing.three);
 
   const options = (
@@ -310,6 +319,7 @@ export default function CameraScreen() {
       detectionInfo={detections.status ?? detections.model}
     />
   );
+  const zoomButton = <ZoomButton zoom={zoom} />;
 
   return (
     <View style={styles.container}>
@@ -329,36 +339,43 @@ export default function CameraScreen() {
           Both views keep their place in the tree as they swap, so neither the AR session nor the
           3D page restarts.
         */}
-        <View style={StyleSheet.absoluteFill}>
-          <Animated.View layout={SWAP} style={liveMain ? styles.pip : StyleSheet.absoluteFill}>
-            {/* Pauses itself while the gallery covers it, unless a recording is in progress. */}
-            <SplatCaptureView
-              style={StyleSheet.absoluteFill}
-              camera={camera}
-              showFeaturePoints={featurePoints && !lidar}
-            />
-            {result && !liveMain && (
-              <DetectionOverlay
-                detections={result.detections}
-                inputSize={result.frameSize}
-                frameSize={result.frameSize}
-                viewSize={viewSize}
-                rotated180={false}
-                captions={brain.captionsFor === result ? brain.captions : undefined}
-              />
-            )}
-            {liveMain && <SwapButton label="Show the camera" onPress={() => setSwapped(false)} />}
-          </Animated.View>
-          {liveUrl && (
-            <Animated.View
-              layout={SWAP}
-              entering={POP}
-              style={liveMain ? StyleSheet.absoluteFill : styles.pip}>
-              <LiveSplatView url={liveUrl} interactive={liveMain} />
-              {!liveMain && <SwapButton label="Show live 3D" onPress={() => setSwapped(true)} />}
+        {/* Pinch to zoom the camera. */}
+        <GestureDetector gesture={pinch}>
+          <View style={StyleSheet.absoluteFill}>
+            <Animated.View layout={SWAP} style={liveMain ? styles.pip : StyleSheet.absoluteFill}>
+              {/* Zoomed by pinching, and clipped by the viewfinder (or the floating view's frame). */}
+              <Animated.View style={[StyleSheet.absoluteFill, zoomStyle]}>
+                {/* Pauses itself while the gallery covers it, unless a recording is in progress. */}
+                <SplatCaptureView
+                  style={StyleSheet.absoluteFill}
+                  camera={camera}
+                  showFeaturePoints={featurePoints && !lidar}
+                />
+              </Animated.View>
+              {result && !liveMain && (
+                <DetectionOverlay
+                  detections={result.detections}
+                  inputSize={result.frameSize}
+                  frameSize={result.frameSize}
+                  viewSize={viewSize}
+                  zoom={zoom}
+                  rotated180={false}
+                  captions={brain.captionsFor === result ? brain.captions : undefined}
+                />
+              )}
+              {liveMain && <SwapButton label="Show the camera" onPress={() => setSwapped(false)} />}
             </Animated.View>
-          )}
-        </View>
+            {liveUrl && (
+              <Animated.View
+                layout={SWAP}
+                entering={POP}
+                style={liveMain ? StyleSheet.absoluteFill : styles.pip}>
+                <LiveSplatView url={liveUrl} interactive={liveMain} />
+                {!liveMain && <SwapButton label="Show live 3D" onPress={() => setSwapped(true)} />}
+              </Animated.View>
+            )}
+          </View>
+        </GestureDetector>
 
         {/* Its captions stop short of the floating view. */}
         <View style={[styles.top, styles.passThrough, liveUrl !== null && styles.topBesidePip]}>
@@ -373,7 +390,9 @@ export default function CameraScreen() {
 
         {debugOverlay && (
           <ThemedText type="code" style={[styles.debug, liveUrl !== null && styles.debugUnderPip]}>
-            {result ? `${Math.round(result.latencyMs)} ms` : '– ms'}
+            {result
+              ? `${Math.round(result.latencyMs)} ms${result.zoom > 1 ? ` at ${result.zoom.toFixed(1)}×` : ''}`
+              : '– ms'}
           </ThemedText>
         )}
 
@@ -406,8 +425,7 @@ export default function CameraScreen() {
 
           {mode === 'camera' ? (
             <View style={[styles.controls, styles.passThrough]}>
-              {/* Balances the options, so the record button stays centred. */}
-              <View style={styles.side} />
+              <View style={[styles.side, styles.passThrough]}>{zoomButton}</View>
               <RecordButton
                 recording={recording}
                 saving={phase.kind === 'saving'}
@@ -423,7 +441,7 @@ export default function CameraScreen() {
               <View style={[styles.side, styles.passThrough]}>{options}</View>
             </View>
           ) : (
-            <RoverRemote right={options} />
+            <RoverRemote left={zoomButton} right={options} />
           )}
         </View>
       </View>
@@ -452,7 +470,11 @@ export default function CameraScreen() {
               front={front}
               // Only the back camera records, so it can't change mid-recording.
               disabled={!capabilities.frontCamera || busy}
-              onPress={() => setCamera(front ? 'back' : 'front')}
+              onPress={() => {
+                // Each camera starts at 1×, as in the Camera app.
+                zoom.set(1);
+                setCamera(front ? 'back' : 'front');
+              }}
             />
           </View>
         </Fade>
@@ -555,6 +577,28 @@ function RecordButton({
       ) : (
         <Animated.View style={[styles.recordDot, dimmed && styles.disabled, dot]} />
       )}
+    </Pressable>
+  );
+}
+
+/**
+ * Like the Camera app's 1× button: how far the camera is zoomed in (yellow when it is), and a tap
+ * zooms in to 2× or back out to 1×. Pinching the viewfinder zooms anywhere in between.
+ */
+function ZoomButton({ zoom }: { zoom: SharedValue<number> }) {
+  const level = useZoomLevel(zoom, 0.1);
+  const zoomed = level > 1;
+  const label = `${Number(level.toFixed(1))}×`;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Zoom ${label}`}
+      accessibilityHint={zoomed ? 'Zooms back out to 1×' : 'Zooms in to 2×. Pinch the viewfinder to zoom further.'}
+      onPress={() => zoomTo(zoom, zoomed ? 1 : 2)}
+      style={({ pressed }) => [styles.round, pressed && styles.pressed]}>
+      <Glass style={[StyleSheet.absoluteFill, styles.roundShape]} />
+      <Text style={[styles.zoomText, zoomed && styles.zoomTextOn]}>{label}</Text>
     </Pressable>
   );
 }
@@ -802,6 +846,16 @@ const styles = StyleSheet.create({
   },
   roundShape: {
     borderRadius: ROUND_SIZE / 2,
+  },
+  zoomText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 600,
+    fontVariant: ['tabular-nums'],
+  },
+  /** The Camera app's yellow, as on its zoom buttons. */
+  zoomTextOn: {
+    color: '#FFD60A',
   },
   thumbnail: {
     width: THUMBNAIL_SIZE,

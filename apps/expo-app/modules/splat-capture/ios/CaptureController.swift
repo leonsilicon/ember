@@ -226,10 +226,11 @@ final class CaptureController: NSObject, ARSessionDelegate {
   /// Hands the next camera frame to `completion` for object detection in JS, as an upright RGBA
   /// image whose longer side is `maxSize`. Detection reads this session's frames because iOS
   /// allows one camera session at a time. A newer request replaces a pending one, which gets nil.
-  func nextDetectionFrame(maxSize: Int, completion: @escaping ([String: Any]?) -> Void) {
+  /// `zoom` crops it to the centred 1/zoom of the frame, as the zoomed preview shows it.
+  func nextDetectionFrame(maxSize: Int, zoom: Double, completion: @escaping ([String: Any]?) -> Void) {
     frameQueue.async {
       self.detectionRequest?.completion(nil)
-      self.detectionRequest = DetectionRequest(maxSize: maxSize, completion: completion)
+      self.detectionRequest = DetectionRequest(maxSize: maxSize, zoom: max(zoom, 1), completion: completion)
     }
   }
 
@@ -243,26 +244,31 @@ final class CaptureController: NSObject, ARSessionDelegate {
   }
 
   /// ARKit delivers the camera image in the sensor's landscape orientation; turn it upright for
-  /// the portrait UI (mirroring the front camera's, as its preview is) and scale it down, as tightly
-  /// packed RGBA rows.
-  private func detectionImage(from buffer: CVPixelBuffer, maxSize: Int,
+  /// the portrait UI (mirroring the front camera's, as its preview is), crop it to the centred
+  /// 1/zoom and scale it to `maxSize`, as tightly packed RGBA rows. Cropping the full-resolution
+  /// image, rather than the scaled-down one, is what makes zooming help the detector: what's zoomed
+  /// in on fills more of the model's input, in up to `zoom` times as many pixels.
+  private func detectionImage(from buffer: CVPixelBuffer, maxSize: Int, zoom: Double,
                               orientation: CGImagePropertyOrientation) -> [String: Any]? {
     let upright = CIImage(cvPixelBuffer: buffer).oriented(orientation)
-    let scale = CGFloat(maxSize) / max(upright.extent.width, upright.extent.height)
-    let width = Int((upright.extent.width * scale).rounded())
-    let height = Int((upright.extent.height * scale).rounded())
+    let extent = upright.extent
+    let crop = extent.insetBy(dx: extent.width * (1 - 1 / zoom) / 2, dy: extent.height * (1 - 1 / zoom) / 2)
+    let scale = CGFloat(maxSize) / max(crop.width, crop.height)
+    let width = Int((crop.width * scale).rounded())
+    let height = Int((crop.height * scale).rounded())
     guard width > 0, height > 0, let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+    // Rendering only (0, 0, width, height) leaves out the rest of the frame.
     let image = upright
-      .transformed(by: CGAffineTransform(translationX: -upright.extent.minX, y: -upright.extent.minY))
-      .transformed(by: CGAffineTransform(scaleX: CGFloat(width) / upright.extent.width,
-                                         y: CGFloat(height) / upright.extent.height))
+      .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+      .transformed(by: CGAffineTransform(scaleX: CGFloat(width) / crop.width,
+                                         y: CGFloat(height) / crop.height))
     var pixels = Data(count: width * height * 4)
     pixels.withUnsafeMutableBytes { bytes in
       ciContext.render(image, toBitmap: bytes.baseAddress!, rowBytes: width * 4,
                        bounds: CGRect(x: 0, y: 0, width: width, height: height),
                        format: .RGBA8, colorSpace: colorSpace)
     }
-    return ["width": width, "height": height, "data": pixels]
+    return ["width": width, "height": height, "data": pixels, "zoom": zoom]
   }
 
   static func listCaptures() -> [[String: Any]] {
@@ -319,7 +325,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
       let orientation: CGImagePropertyOrientation = frontCamera ? .leftMirrored : .right
       let camera = latestCamera
       detectionQueue.async {
-        var result = self.detectionImage(from: image, maxSize: request.maxSize, orientation: orientation)
+        var result = self.detectionImage(from: image, maxSize: request.maxSize, zoom: request.zoom,
+                                         orientation: orientation)
         result?["camera"] = camera?.dictionary()
         request.completion(result)
       }
@@ -395,6 +402,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
 private struct DetectionRequest {
   let maxSize: Int
+  let zoom: Double
   let completion: ([String: Any]?) -> Void
 }
 
