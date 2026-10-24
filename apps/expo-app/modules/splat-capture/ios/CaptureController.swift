@@ -305,6 +305,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
       out["durationSeconds"] = s.durationSeconds
     }
     if let thumbnail = capture.thumbnail { out["thumbnailUri"] = thumbnail.absoluteString }
+    if let video = capture.video { out["videoUri"] = video.absoluteString }
     return out
   }
 
@@ -318,6 +319,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
     if recoveringFromFailure && tracking.0 == "normal" {
       recoveringFromFailure = false
       DispatchQueue.main.async { self.consecutiveFailures = 0 }
+    }
+    if let recording, !recording.stopping, !recording.frozen {
+      recording.preview.append(frame.capturedImage, timestamp: frame.timestamp)
     }
     if let request = detectionRequest {
       detectionRequest = nil
@@ -514,10 +518,14 @@ private final class Recording {
   /// The first frame, small and upright, saved beside the zip for the gallery button.
   var thumbnail: Data?
 
+  /// The whole recording as a small video for the gallery, fed on frameQueue and finished on writeQueue.
+  let preview: PreviewRecorder
+
   init(settings: CaptureSettings, mode: CaptureMode) throws {
     let stamp = ISO8601DateFormatter().string(from: Date()).filter { $0.isNumber }
     id = "capture-\(stamp)-\(UUID().uuidString.prefix(4).lowercased())"
     dataset = CaptureController.workDirectory.appendingPathComponent(id)
+    preview = PreviewRecorder(url: CaptureController.workDirectory.appendingPathComponent("\(id).mp4"))
     self.mode = mode
     self.settings = settings
     selector = FrameSelector(config: FrameSelectorConfig(maxFrames: settings.maxFrames))
@@ -596,9 +604,15 @@ private final class Recording {
     }
   }
 
-  /// Writes transforms.json, points.ply and capture.json, then saves the dataset as a zip.
+  /// Writes transforms.json, points.ply and capture.json, then saves the dataset as a zip, with the
+  /// preview video beside it.
   func finish() throws -> [String: Any] {
-    defer { try? FileManager.default.removeItem(at: dataset) }
+    let video = preview.finish()
+    defer {
+      try? FileManager.default.removeItem(at: dataset)
+      // Moved into the library unless saving failed.
+      try? FileManager.default.removeItem(at: preview.url)
+    }
     guard !frames.isEmpty else { throw CaptureError.noFrames }
     let plyName: String? = points.count > 0 ? "points.ply" : nil
     if let plyName {
@@ -615,7 +629,7 @@ private final class Recording {
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(summary).write(to: dataset.appendingPathComponent("capture.json"))
     return CaptureController.describe(
-      try CaptureController.library.save(dataset: dataset, summary: summary, thumbnail: thumbnail))
+      try CaptureController.library.save(dataset: dataset, summary: summary, thumbnail: thumbnail, video: video))
   }
 }
 

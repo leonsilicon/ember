@@ -1,28 +1,58 @@
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { useEvent } from 'expo';
+import { Image } from 'expo-image';
+import { router, useFocusEffect, useIsFocused, useLocalSearchParams } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { SymbolView, type SFSymbol } from 'expo-symbols';
+import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  Alert,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
+import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
 
-import { SplatPreview } from '@/components/splat-preview';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing } from '@/constants/theme';
-import { updateDebugSettings, useDebugSettings } from '@/hooks/use-debug-settings';
-import { useTheme } from '@/hooks/use-theme';
-import { describeCapture, shareCapture } from '@/lib/captures';
-import { checkServer, liveViewerUrl } from '@/lib/splat-preview';
+import { Glass } from '@/components/glass';
+import { Spacing } from '@/constants/theme';
+import { describeDay, describeTime, formatDuration, shareCapture } from '@/lib/captures';
 
-export default function CapturesScreen() {
-  const debug = useDebugSettings();
+function message(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The gallery, like the Photos app: the newest capture fills the screen and its video plays, and
+ * swiping right goes back through older ones. Tapping shows or hides the controls; the grid button
+ * shows every capture. The `id` param is the capture on screen (the newest without one), so the
+ * grid opens a capture by coming back here with its id.
+ */
+export default function GalleryScreen() {
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const focused = useIsFocused();
+  /** Oldest first, so the newest is on the right, as in Photos. */
   const [captures, setCaptures] = useState<SavedCapture[] | null>(null);
+  const [chrome, setChrome] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const list = useRef<FlatList<SavedCapture>>(null);
+  /** The page the list rests on, so it's only scrolled when the capture on screen changes otherwise. */
+  const restingIndex = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      setCaptures(await SplatCapture.listCaptures());
+      setCaptures((await SplatCapture.listCaptures()).reverse());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(message(e));
     }
   }, []);
 
@@ -33,203 +63,467 @@ export default function CapturesScreen() {
     }, [refresh]),
   );
 
-  function confirmDelete(capture: SavedCapture) {
-    Alert.alert('Delete capture?', 'The zip is removed from this phone. Copies you already sent are unaffected.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await SplatCapture.deleteCapture(capture.captureId);
-          refresh();
-        },
+  const found = captures?.findIndex((capture) => capture.captureId === id) ?? -1;
+  const index = found >= 0 ? found : (captures?.length ?? 0) - 1;
+  const current = index >= 0 ? captures?.[index] : undefined;
+
+  useEffect(() => {
+    if (index < 0 || restingIndex.current === index) return;
+    restingIndex.current = index;
+    list.current?.scrollToOffset({ offset: index * width, animated: false });
+  }, [index, width]);
+
+  // One player for the capture on screen. Recordings have no sound; muted, they also leave other
+  // apps' audio playing.
+  const player = useVideoPlayer(null, (p) => {
+    p.muted = true;
+    p.timeUpdateEventInterval = 0.05;
+  });
+  const videoUri = current?.videoUri;
+  /** The video the player holds, so a page only shows the player once it holds that page's video. */
+  const [loadedUri, setLoadedUri] = useState<string>();
+  useEffect(() => {
+    let alive = true;
+    player.replaceAsync(videoUri ?? null).then(
+      () => {
+        if (!alive) return;
+        setLoadedUri(videoUri);
+        // Like Photos, a video plays as soon as it's on screen.
+        if (videoUri) player.play();
       },
-    ]);
+      (e) => alive && setError(message(e)),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [player, videoUri]);
+
+  // Paused under the grid and the info sheet, and playing again on return if it was.
+  const wasPlaying = useRef(false);
+  useEffect(() => {
+    if (focused) {
+      if (wasPlaying.current) player.play();
+    } else {
+      wasPlaying.current = player.playing;
+      player.pause();
+    }
+  }, [focused, player]);
+
+  function confirmDelete(capture: SavedCapture) {
+    Alert.alert(
+      'Delete capture?',
+      'The zip and its video are removed from this phone. Copies you already sent are unaffected.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            // The one before it takes its place, or the one after when it was the oldest.
+            const neighbor = captures?.[index - 1] ?? captures?.[index + 1];
+            try {
+              await SplatCapture.deleteCapture(capture.captureId);
+              router.setParams({ id: neighbor?.captureId });
+            } catch (e) {
+              setError(message(e));
+            }
+            refresh();
+          },
+        },
+      ],
+    );
   }
 
   async function share(capture: SavedCapture) {
     try {
       await shareCapture(capture);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(message(e));
     }
   }
 
-  return (
-    <ThemedView style={styles.container}>
-      {/* Automatic insets keep content clear of the large-title header and the home indicator. */}
-      <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
-        <ThemedText type="small" themeColor="textSecondary">
-          Each capture is a zip of camera frames, poses and a seed point cloud, ready to turn into a splat. Share it
-          from here, or find it in Files › On My iPhone › soon2026 (and in Finder when the phone is plugged in).
-        </ThemedText>
-
-        {error && (
-          <ThemedText type="small" style={styles.error}>
-            {error}
-          </ThemedText>
-        )}
-
-        {captures?.length === 0 && (
-          <ThemedText themeColor="textSecondary">No captures yet. Record one with the camera&apos;s record button.</ThemedText>
-        )}
-
-        {captures?.map((capture) => (
-          <ThemedView key={capture.captureId} type="backgroundElement" style={styles.card}>
-            <View style={styles.cardHeader}>
-              <ThemedText type="smallBold">{new Date(capture.savedAt).toLocaleString()}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {capture.mode === 'lidar' ? 'LiDAR' : capture.mode === 'features' ? 'No LiDAR' : ''}
-              </ThemedText>
-            </View>
-            <ThemedText type="small">{describeCapture(capture)}</ThemedText>
-            <ThemedText type="code" themeColor="textSecondary">
-              {capture.captureId}.zip
-            </ThemedText>
-            <View style={styles.actions}>
-              <Action label="Share…" onPress={() => share(capture)} />
-              <Action label="Delete" onPress={() => confirmDelete(capture)} destructive />
-            </View>
-            {debug.splatPreview && <SplatPreview capture={capture} serverUrl={debug.serverUrl} />}
-          </ThemedView>
-        ))}
-
-        <DebugCard />
-      </ScrollView>
-    </ThemedView>
-  );
-}
-
-/** Debug-only: preview splats trained on a Mac (apps/next-app) to compare with the real reconstruction. */
-function DebugCard() {
-  const theme = useTheme();
-  const debug = useDebugSettings();
-  // Only set while the field is being edited; otherwise it shows the shared URL.
-  const [draftUrl, setDraftUrl] = useState<string | null>(null);
-  const [server, setServer] = useState<string>('Checking…');
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!debug.splatPreview) return;
-      let alive = true;
-      checkServer(debug.serverUrl)
-        .then(
-          (h) =>
-            alive &&
-            setServer(
-              !h.agent
-                ? 'Connected, but the Mac agent is offline (bun run agent in apps/next-app), so nothing trains'
-                : [
-                    h.brush ? 'Connected · Mac agent ready' : 'Connected, but Brush is not installed on the Mac',
-                    h.depthWorker ? null : 'live 3D needs apps/next-app/scripts/install-depth.sh',
-                  ]
-                    .filter(Boolean)
-                    .join(' · '),
-            ),
-        )
-        .catch((e) => alive && setServer(`Unreachable (${e instanceof Error ? e.message : e})`));
-      return () => {
-        alive = false;
-      };
-    }, [debug.splatPreview, debug.serverUrl]),
-  );
+  const date = current ? new Date(current.savedAt) : null;
 
   return (
-    <ThemedView type="backgroundElement" style={styles.card}>
-      <View style={styles.cardHeader}>
-        <ThemedText type="smallBold">Debug: splat preview</ThemedText>
-        <Switch value={debug.splatPreview} onValueChange={(splatPreview) => updateDebugSettings({ splatPreview })} />
-      </View>
-      <ThemedText type="small" themeColor="textSecondary">
-        Sends a capture to the splat server, where a Mac running its agent trains it into a splat (Brush),
-        and opens it in the browser, to compare with the real reconstruction. The viewer link works on any
-        device.
-      </ThemedText>
-      {debug.splatPreview && (
-        <>
-          <TextInput
-            value={draftUrl ?? debug.serverUrl}
-            onChangeText={setDraftUrl}
-            onEndEditing={() => {
-              if (draftUrl !== null) updateDebugSettings({ serverUrl: draftUrl.trim() });
-              setDraftUrl(null);
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
-          />
-          <ThemedText type="small" themeColor="textSecondary">
-            {server}
-          </ThemedText>
-          <View style={styles.cardHeader}>
-            <ThemedText type="smallBold">Live 3D while recording</ThemedText>
-            <Switch value={debug.liveStream} onValueChange={(liveStream) => updateDebugSettings({ liveStream })} />
-          </View>
-          <ThemedText type="small" themeColor="textSecondary">
-            Streams each recording to the server, which rebuilds the scene as you move. It floats over the
-            camera while you record (tap it to swap the two), and any browser can watch it at{' '}
-            <ThemedText type="code">{liveViewerUrl(debug.serverUrl)}</ThemedText>
-          </ThemedText>
-        </>
+    <View style={styles.container}>
+      {focused && <StatusBar style="light" hidden={!chrome} animated />}
+
+      {captures && captures.length > 0 && (
+        <FlatList
+          ref={list}
+          data={captures}
+          keyExtractor={(capture) => capture.captureId}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          initialScrollIndex={index}
+          getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
+          windowSize={3}
+          extraData={`${current?.captureId}|${loadedUri}`}
+          onMomentumScrollEnd={(event) => {
+            const i = Math.round(event.nativeEvent.contentOffset.x / width);
+            const capture = captures[i];
+            restingIndex.current = i;
+            if (capture && capture.captureId !== current?.captureId) router.setParams({ id: capture.captureId });
+          }}
+          renderItem={({ item }) => (
+            <Page
+              capture={item}
+              style={{ width, height }}
+              player={item === current && item.videoUri && item.videoUri === loadedUri ? player : null}
+              onPress={() => setChrome((shown) => !shown)}
+            />
+          )}
+        />
       )}
-    </ThemedView>
+
+      {captures?.length === 0 && (
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>No captures yet</Text>
+          <Text style={styles.emptyText}>Record one with the camera&apos;s record button.</Text>
+        </View>
+      )}
+
+      <Fade hidden={!chrome} style={[styles.top, { paddingTop: insets.top + Spacing.two }]}>
+        <RoundButton icon="chevron.left" label="Back to the camera" onPress={() => router.back()} />
+        {date && (
+          <View style={styles.title}>
+            <Text style={styles.titleDay}>{describeDay(date)}</Text>
+            <Text style={styles.titleTime}>{describeTime(date)}</Text>
+          </View>
+        )}
+        <RoundButton icon="square.grid.2x2" label="All captures" onPress={() => router.push('/all-captures')} />
+      </Fade>
+
+      <Fade hidden={!chrome} style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, Spacing.three) }]}>
+        {error && (
+          <Pressable accessibilityRole="button" onPress={() => setError(null)} style={styles.errorPanel}>
+            <Text style={styles.errorText}>{error}</Text>
+          </Pressable>
+        )}
+        {current?.videoUri && (
+          <PlaybackBar key={current.captureId} player={player} fallbackDuration={current.durationSeconds} />
+        )}
+        {current && (
+          <View style={styles.toolbar}>
+            <RoundButton icon="square.and.arrow.up" label="Share the capture" onPress={() => share(current)} />
+            <RoundButton
+              icon="info.circle"
+              label="Info"
+              onPress={() => router.push({ pathname: '/capture-info', params: { id: current.captureId } })}
+            />
+            <RoundButton icon="trash" label="Delete" onPress={() => confirmDelete(current)} />
+          </View>
+        )}
+      </Fade>
+    </View>
   );
 }
 
-function Action({ label, onPress, destructive }: { label: string; onPress: () => void; destructive?: boolean }) {
+/**
+ * One capture, as large as fits. Its first frame stands in until `player` (only set for the page
+ * on screen, once it holds this capture's video) draws over it.
+ */
+function Page({
+  capture,
+  player,
+  style,
+  onPress,
+}: {
+  capture: SavedCapture;
+  player: VideoPlayer | null;
+  style: StyleProp<ViewStyle>;
+  onPress: () => void;
+}) {
+  const date = new Date(capture.savedAt);
   return (
     <Pressable
-      accessibilityRole="button"
+      accessibilityRole="imagebutton"
+      accessibilityLabel={`Capture, ${describeDay(date)} ${describeTime(date)}`}
+      accessibilityHint="Shows or hides the controls"
       onPress={onPress}
-      style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
-      <ThemedText type="smallBold" style={destructive ? styles.error : undefined}>
-        {label}
-      </ThemedText>
+      style={style}>
+      {capture.thumbnailUri ? (
+        <Image source={capture.thumbnailUri} style={StyleSheet.absoluteFill} contentFit="contain" />
+      ) : (
+        !capture.videoUri && (
+          <View style={styles.noPreview}>
+            <SymbolView name="cube.transparent" size={48} tintColor="rgba(255,255,255,0.5)" />
+            <Text style={styles.emptyText}>No preview for this capture</Text>
+          </View>
+        )
+      )}
+      {player && (
+        // Taps go to the page, to show or hide the controls.
+        <View style={[StyleSheet.absoluteFill, styles.inert]}>
+          <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="contain" nativeControls={false} />
+        </View>
+      )}
     </Pressable>
   );
 }
 
+/** Play/pause and a scrubber for the video on screen, in a glass capsule like the Photos app's. */
+function PlaybackBar({ player, fallbackDuration }: { player: VideoPlayer; fallbackDuration?: number }) {
+  const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
+  const time = useEvent(player, 'timeUpdate')?.currentTime ?? 0;
+  const duration = useEvent(player, 'sourceLoad')?.duration || fallbackDuration || 0;
+  /**
+   * While dragging: the scrubber's position, as a fraction of the video, and whether to play again
+   * on letting go.
+   */
+  const [scrub, setScrub] = useState<{ fraction: number; resume: boolean } | null>(null);
+  const [trackWidth, setTrackWidth] = useState(0);
+
+  /** Moves to where the finger is, `locationX` from the scrubber's left edge (even outside it). */
+  function scrubTo(locationX: number, resume: boolean) {
+    const fraction = Math.min(Math.max(locationX / trackWidth, 0), 1);
+    setScrub({ fraction, resume });
+    seek(player, fraction * duration);
+  }
+
+  function togglePlaying() {
+    if (isPlaying) {
+      player.pause();
+      return;
+    }
+    // From the start again once it has played to the end.
+    if (duration > 0 && player.currentTime >= duration - 0.1) seek(player, 0);
+    player.play();
+  }
+
+  const progress = scrub?.fraction ?? (duration > 0 ? Math.min(time / duration, 1) : 0);
+
+  return (
+    <View style={styles.playback}>
+      <Glass style={[StyleSheet.absoluteFill, styles.capsuleShape]} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+        onPress={togglePlaying}
+        style={({ pressed }) => [styles.playButton, pressed && styles.pressed]}>
+        <SymbolView name={isPlaying ? 'pause.fill' : 'play.fill'} size={18} tintColor="#fff" />
+      </Pressable>
+      <View
+        accessibilityRole="adjustable"
+        accessibilityLabel="Playback position"
+        accessibilityValue={{ text: `${formatDuration(progress * duration)} of ${formatDuration(duration)}` }}
+        accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+        onAccessibilityAction={(event) => {
+          const step = event.nativeEvent.actionName === 'increment' ? 5 : -5;
+          seek(player, Math.min(Math.max(player.currentTime + step, 0), duration));
+        }}
+        style={styles.scrubber}
+        onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
+        onStartShouldSetResponder={() => duration > 0 && trackWidth > 0}
+        onResponderTerminationRequest={() => false}
+        onResponderGrant={(event) => {
+          const resume = player.playing;
+          player.pause();
+          scrubTo(event.nativeEvent.locationX, resume);
+        }}
+        onResponderMove={(event) => scrubTo(event.nativeEvent.locationX, scrub?.resume ?? false)}
+        onResponderRelease={() => {
+          if (scrub?.resume) player.play();
+          setScrub(null);
+        }}
+        onResponderTerminate={() => setScrub(null)}>
+        {/* Not touchable, so touches land on the scrubber itself and are measured from its left edge. */}
+        <View style={[styles.track, styles.inert]}>
+          <View style={[styles.trackFill, { width: `${progress * 100}%` }]} />
+        </View>
+        <View style={[styles.knob, styles.inert, { left: progress * trackWidth - KNOB_SIZE / 2 }]} />
+      </View>
+      <Text style={styles.time}>{formatDuration(progress * duration)}</Text>
+    </View>
+  );
+}
+
+/** Outside the components, as the React Compiler doesn't let them assign to a prop. */
+function seek(player: VideoPlayer, seconds: number) {
+  player.currentTime = seconds;
+}
+
+/** Fades out while `hidden`, staying mounted, and meanwhile lets taps and VoiceOver past it. */
+function Fade({ hidden, style, children }: { hidden: boolean; style?: StyleProp<ViewStyle>; children: ReactNode }) {
+  const fade = useAnimatedStyle(() => ({ opacity: withTiming(hidden ? 0 : 1, { duration: 200 }) }));
+
+  return (
+    <Animated.View
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+      style={[style, fade, hidden ? styles.inert : styles.passThrough]}>
+      {children}
+    </Animated.View>
+  );
+}
+
+function RoundButton({ icon, label, onPress }: { icon: SFSymbol; label: string; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={({ pressed }) => [styles.round, pressed && styles.pressed]}>
+      <Glass style={[StyleSheet.absoluteFill, styles.roundShape]} />
+      <SymbolView name={icon} size={20} weight="medium" tintColor="#fff" />
+    </Pressable>
+  );
+}
+
+const ROUND_SIZE = 48;
+const KNOB_SIZE = 14;
+const SHADOW = {
+  textShadowColor: 'rgba(0,0,0,0.5)',
+  textShadowRadius: 4,
+} as const;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#000',
   },
-  content: {
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.four,
-    gap: Spacing.three,
-    maxWidth: MaxContentWidth,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  card: {
-    gap: Spacing.two,
-    padding: Spacing.three,
-    borderRadius: Spacing.three,
-  },
-  cardHeader: {
+  top: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: Spacing.two,
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: Spacing.two,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    fontSize: 15,
   },
-  actions: {
+  /** Centred on the screen, whatever the buttons either side. */
+  title: {
+    position: 'absolute',
+    left: Spacing.three + ROUND_SIZE,
+    right: Spacing.three + ROUND_SIZE,
+    bottom: 0,
+    height: ROUND_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'none',
+  },
+  titleDay: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: 600,
+    ...SHADOW,
+  },
+  titleTime: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    fontWeight: 500,
+    ...SHADOW,
+  },
+  bottom: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: Spacing.three,
+    gap: Spacing.three,
+  },
+  toolbar: {
     flexDirection: 'row',
-    gap: Spacing.four,
-    paddingTop: Spacing.one,
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  action: {
-    paddingVertical: Spacing.one,
+  playback: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: ROUND_SIZE,
+    paddingRight: Spacing.three,
   },
-  error: {
-    color: '#d0402b',
+  capsuleShape: {
+    borderRadius: ROUND_SIZE / 2,
+  },
+  playButton: {
+    width: ROUND_SIZE,
+    height: ROUND_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  /** Taller than the track it draws, so it's easy to catch. */
+  scrubber: {
+    flex: 1,
+    height: ROUND_SIZE,
+    justifyContent: 'center',
+  },
+  track: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    overflow: 'hidden',
+  },
+  trackFill: {
+    height: '100%',
+    backgroundColor: '#fff',
+  },
+  knob: {
+    position: 'absolute',
+    top: (ROUND_SIZE - KNOB_SIZE) / 2,
+    width: KNOB_SIZE,
+    height: KNOB_SIZE,
+    borderRadius: KNOB_SIZE / 2,
+    backgroundColor: '#fff',
+  },
+  time: {
+    minWidth: 40,
+    marginLeft: Spacing.three,
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: 500,
+    fontVariant: ['tabular-nums'],
+    textAlign: 'right',
+  },
+  round: {
+    width: ROUND_SIZE,
+    height: ROUND_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roundShape: {
+    borderRadius: ROUND_SIZE / 2,
+  },
+  empty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.four,
+  },
+  emptyTitle: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 600,
+  },
+  emptyText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 15,
+    textAlign: 'center',
+  },
+  noPreview: {
+    position: 'absolute',
+    inset: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.three,
+  },
+  errorPanel: {
+    padding: Spacing.three,
+    borderRadius: Spacing.four,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  errorText: {
+    color: '#ffb4a8',
+    textAlign: 'center',
+  },
+  passThrough: {
+    pointerEvents: 'box-none',
+  },
+  inert: {
+    pointerEvents: 'none',
   },
   pressed: {
     opacity: 0.6,

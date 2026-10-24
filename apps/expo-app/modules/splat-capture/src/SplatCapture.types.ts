@@ -79,6 +79,11 @@ export type SavedCapture = {
   durationSeconds?: number;
   /** file:// URL of a small upright JPEG of the first frame. Missing where `mode` is, and for older captures. */
   thumbnailUri?: string;
+  /**
+   * file:// URL of a small upright H.264 video of the whole recording, for the gallery to play. It
+   * isn't in the zip. Missing where `thumbnailUri` is, and for captures from before it existed.
+   */
+  videoUri?: string;
 };
 
 /** A camera frame for object detection: upright for the portrait UI, as RGBA rows. */

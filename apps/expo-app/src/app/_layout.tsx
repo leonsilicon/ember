@@ -17,7 +17,22 @@ export default function RootLayout() {
         {/* The phone rides on the rover, so the app opens straight to the camera. */}
         <Stack>
           <Stack.Screen name="index" options={{ title: 'Camera', headerShown: false }} />
-          <Stack.Screen name="captures" options={{ title: 'Gallery', headerLargeTitle: true }} />
+          {/* Like the Photos app: the newest capture full screen, then every capture as a grid. */}
+          <Stack.Screen
+            name="captures"
+            options={{ title: 'Gallery', headerShown: false, contentStyle: { backgroundColor: '#000' } }}
+          />
+          <Stack.Screen name="all-captures" options={{ title: 'All Captures', headerLargeTitle: true }} />
+          <Stack.Screen
+            name="capture-info"
+            options={{
+              title: 'Info',
+              headerShown: false,
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.5, 1],
+              sheetGrabberVisible: true,
+            }}
+          />
         </Stack>
       </ThemeProvider>
     </GestureHandlerRootView>

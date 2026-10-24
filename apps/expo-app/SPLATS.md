@@ -165,7 +165,7 @@ bun run agent                         # or `vpx _dev` from anywhere
 bun scripts/live-replay.ts data/captures/<id>/<id>   # try it without the phone
 ```
 
-In the app it's *Live 3D while recording* in the Gallery's debug card (on by default in development
+In the app it's *Live 3D while recording* in the debug card under the gallery's All Captures grid (on by default in development
 builds, sent to the same server address); while recording, the cube in the status rail says how
 many keyframes the server has fused (tap it), and the reconstruction floats top left of the
 viewfinder. Tap it to swap it with the camera, FaceTime style (drag the full-screen one to orbit;
