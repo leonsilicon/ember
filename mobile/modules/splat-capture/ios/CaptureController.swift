@@ -345,6 +345,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
       status["state"] = "ready"
       status["port"] = Int(port)
       status["urls"] = CameraStreamServer.localAddresses().map { "http://\($0):\(port)" }
+    case .blocked:
+      status["state"] = "blocked"
     case .failed(let message):
       status["state"] = "failed"
       status["error"] = message

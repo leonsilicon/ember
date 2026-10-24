@@ -1,6 +1,6 @@
 """A stand-in for the rover app's Wi-Fi camera, for working on the web app's live mode without the iPhone.
 
-Serves the same routes as the app's CameraStreamServer (apps/expo-app/modules/splat-capture/ios/
+Serves the same routes as the app's CameraStreamServer, /detections included (a box on the leaf and the pile) (apps/expo-app/modules/splat-capture/ios/
 SplatCaptureCore/Sources/SplatCaptureCore/CameraStreamServer.swift): /camera.mjpg, /frame.jpg and /status,
 with a moving test picture at about 12 fps. Needs Pillow (`pip install pillow`).
 
@@ -33,6 +33,25 @@ viewers = 0
 lock = threading.Lock()
 
 
+def leaf_at(t: float):
+    """Where the test picture's leaf is at time t, in pixels."""
+    cx, cy = WIDTH / 2, HEIGHT * 0.68
+    return cx + math.cos(t) * 150, cy + math.sin(t) * 60
+
+
+def detections(t: float) -> bytes:
+    """Boxes as the app streams them: fractions of the frame, with the camera screen's colours and tags."""
+    x, y = leaf_at(t)
+    cx, cy = WIDTH / 2, HEIGHT * 0.68
+    boxes = [
+        {"id": 1, "x0": (x - 20) / WIDTH, "y0": (y - 15) / HEIGHT, "x1": (x + 20) / WIDTH, "y1": (y + 15) / HEIGHT,
+         "color": "#FFD60A", "text": f"dry leaf {1.2 + math.sin(t) * 0.4:.1f} m", "coasting": False},
+        {"id": 2, "x0": (cx - 76) / WIDTH, "y0": (cy - 34) / HEIGHT, "x1": (cx + 76) / WIDTH, "y1": (cy + 34) / HEIGHT,
+         "color": "#FF9F0A", "text": "pile of leaves 1.0 m · ✕ in the pile", "coasting": False},
+    ]
+    return json.dumps({"t": int(time.time() * 1000), "width": WIDTH, "height": HEIGHT, "boxes": boxes}).encode() + b"\n"
+
+
 def render(t: float, size: int | None = None) -> bytes:
     """A lawn with a leaf circling a pile, and the time, so motion and latency are easy to see. With
     `size`, a still that big (longer side), as the app sends for capturing."""
@@ -41,8 +60,7 @@ def render(t: float, size: int | None = None) -> bytes:
     draw.rectangle((0, 0, WIDTH, HEIGHT * 0.3), fill=(150, 185, 215))
     cx, cy = WIDTH / 2, HEIGHT * 0.68
     draw.ellipse((cx - 70, cy - 28, cx + 70, cy + 28), fill=(160, 105, 45))
-    x = cx + math.cos(t) * 150
-    y = cy + math.sin(t) * 60
+    x, y = leaf_at(t)
     draw.ellipse((x - 14, y - 9, x + 14, y + 9), fill=(212, 162, 76))
     draw.text((16, 16), f"MOCK iPhone  {time.strftime('%H:%M:%S')}.{int(t * 10) % 10}", fill=(20, 20, 20))
     if size:
@@ -76,6 +94,15 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps({"device": "Mock iPhone", "viewers": viewers, "frames": frames, "width": WIDTH, "height": HEIGHT}).encode()
             self.headers_common(200, "application/json", len(body))
             self.wfile.write(body)
+        elif path == "/detections":
+            self.headers_common(200, "application/x-ndjson")
+            try:
+                while True:
+                    self.wfile.write(detections(time.time() * 1.5))
+                    self.wfile.flush()
+                    time.sleep(0.25)  # about as often as the phone's detector finishes a frame
+            except (BrokenPipeError, ConnectionResetError):
+                pass
         elif path == "/frame.jpg":
             size = int(params["size"]) if params.get("size", "").isdigit() else None
             body = render(time.time(), max(160, min(size, 4096)) if size else None)

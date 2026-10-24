@@ -21,6 +21,11 @@ final class CameraStreamServerTests: XCTestCase {
     }
   }
 
+  func testLocalNetworkDenialIsBlockedNotAFailure() {
+    XCTAssertEqual(CameraStreamServer.state(waitingOn: .dns(-65570)), .blocked) // kDNSServiceErr_PolicyDenied
+    if case .failed = CameraStreamServer.state(waitingOn: .posix(.ENETDOWN)) {} else { XCTFail("other waits are failures") }
+  }
+
   func testMjpegPartsCarryTheirLength() {
     let part = String(decoding: HTTPResponse.mjpegPart(Data([1, 2, 3])), as: UTF8.self)
     XCTAssertTrue(part.hasPrefix("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 3\r\n\r\n"))
@@ -121,6 +126,34 @@ final class CameraStreamServerTests: XCTestCase {
     let start = Date()
     XCTAssertEqual(try get("/frame.jpg?size=1920").status, 503)
     XCTAssertEqual(Date().timeIntervalSince(start), CameraStreamServer.stillTimeout, accuracy: 1)
+  }
+
+  func testDetectionsStreamAsLinesNewestFirst() throws {
+    server.publishDetections(json: Data(#"{"boxes":1}"#.utf8))
+    let client = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+    var received = Data()
+    let gotBoth = expectation(description: "both lines")
+    var done = false
+    func read() {
+      client.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, isComplete, _ in
+        if let data { received.append(data) }
+        let text = String(decoding: received, as: UTF8.self)
+        if !done && text.contains(#"{"boxes":1}"#) && text.contains(#"{"boxes":2}"#) { done = true; gotBoth.fulfill() }
+        if !isComplete && !done { read() }
+      }
+    }
+    client.start(queue: DispatchQueue(label: "detections-client"))
+    client.send(content: Data("GET /detections HTTP/1.1\r\nHost: test\r\n\r\n".utf8), completion: .contentProcessed { _ in })
+    read()
+    // The newest line arrives on connect; publish the next once the client is surely connected.
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
+      self.server.publishDetections(json: Data(#"{"boxes":2}"#.utf8))
+    }
+    wait(for: [gotBoth], timeout: 5)
+    let text = String(decoding: received, as: UTF8.self)
+    XCTAssertTrue(text.hasPrefix("HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n"))
+    XCTAssertTrue(text.hasSuffix(#"{"boxes":1}"# + "\n" + #"{"boxes":2}"# + "\n"))
+    client.cancel()
   }
 
   func testStreamSendsTheLatestFrameThenEachNewOne() throws {

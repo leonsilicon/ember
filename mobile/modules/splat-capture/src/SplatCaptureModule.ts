@@ -34,6 +34,8 @@ declare class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> 
    */
   startCameraStream(port: number): CameraStreamStatus;
   stopCameraStream(): void;
+  /** Hands the Wi-Fi camera's viewers the leaf detector's boxes: one JSON line, streamed at `/detections`. */
+  publishCameraDetections(json: string): void;
   cameraStreamStatus(): CameraStreamStatus;
   /** Saved captures, newest first. */
   listCaptures(): Promise<SavedCapture[]>;

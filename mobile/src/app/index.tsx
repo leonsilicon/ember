@@ -7,6 +7,7 @@ import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   PanResponder,
   Pressable,
   StyleSheet,
@@ -50,7 +51,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useCameraZoom, useZoomLevel, zoomTo } from '@/hooks/use-camera-zoom';
 import { useDetections, type Detection, type Detections } from '@/hooks/use-detections';
-import { useCameraStream } from '@/hooks/use-camera-stream';
+import { useCameraStream, usePublishDetections } from '@/hooks/use-camera-stream';
 import { useRoverBrain } from '@/hooks/use-rover-brain';
 import { updateSplatSettings, useSplatSettings } from '@/hooks/use-splat-settings';
 import { compact } from '@/lib/captures';
@@ -115,9 +116,31 @@ function describeLive(live: LiveStatus): Indicator {
   return { key, icon: 'cube-off-outline', tone: 'warn', label: `Live 3D: ${live.error ?? live.state}` };
 }
 
+/**
+ * Why the web app can't see this camera, in words, or undefined when it can (or might: a laptop that
+ * hasn't connected yet isn't a problem the phone can see). Shown as a hint that stays on the camera
+ * screen while it applies.
+ */
+function cameraStreamProblem(stream: CameraStreamStatus | null): string | undefined {
+  if (!stream) return undefined;
+  if (stream.state === 'blocked') return "Laptop can't see this camera: turn on Local Network for this app in Settings (tap the cast icon)";
+  if (stream.state === 'failed') return `Laptop can't see this camera: ${stream.error ?? 'its server failed to start'}`;
+  if (stream.state === 'ready' && !stream.urls?.length) return "Laptop can't see this camera: join the laptop's Wi-Fi";
+  return undefined;
+}
+
 /** The Wi-Fi camera for the web app's live mode: the address to type in there, and who's watching. */
 function describeCameraStream(stream: CameraStreamStatus): Indicator {
   const key = 'wifi-camera';
+  if (stream.state === 'blocked') {
+    return {
+      key,
+      icon: 'cast-off',
+      tone: 'warn',
+      label: 'Laptop view blocked: Local Network access is off for this app',
+      onPress: () => void Linking.openSettings(),
+    };
+  }
   if (stream.state === 'ready') {
     const url = stream.urls?.[0];
     if (!url) return { key, icon: 'cast-off', tone: 'dim', label: 'Laptop view: join a Wi-Fi network so the web app can reach this phone' };
@@ -351,6 +374,12 @@ export default function CameraScreen() {
   if (cameraStream) indicators.push(describeCameraStream(cameraStream));
   const busy = recording || phase.kind === 'saving';
   const result = detections.result;
+  // The same boxes and tags for the web app's live view (none while detection is off).
+  usePublishDetections(
+    cameraStream,
+    detection ? result : undefined,
+    result && brain.captionsFor === result ? brain.captions : undefined,
+  );
   const barHeight = BAR_PADDING + BAR_CONTENT + Math.max(insets.bottom, Spacing.three);
 
   const options = (
@@ -430,7 +459,7 @@ export default function CameraScreen() {
           <CameraStatus
             indicators={indicators}
             // Tracking matters most while recording, so only then does it say what's wrong.
-            hint={recording && !front && tracking.tone === 'warn' ? tracking.label : undefined}
+            hint={recording && !front && tracking.tone === 'warn' ? tracking.label : cameraStreamProblem(cameraStream)}
             caption={caption}
             onPressIndicator={(indicator) => showCaption(indicator.label)}
           />

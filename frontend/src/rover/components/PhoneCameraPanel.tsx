@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DiscoveredPhone } from '../../phone-discovery'
 import { useFrameCapture } from '../hooks/useFrameCapture'
 import { CaptureControls } from './CaptureControls'
+import { useDetectionStream } from '../hooks/useDetectionStream'
+import { DetectionBoxes } from './DetectionBoxes'
 import { MjpegView } from './MjpegView'
 import { PHONE_CAMERA_PORT, phoneCameraOrigin } from '../phoneCamera'
 
@@ -173,6 +175,11 @@ export function PhoneCameraPanel({ discovered = null }: { discovered?: Discovere
   const busy = state.kind === 'checking'
   const streaming = state.kind === 'streaming'
 
+  // The leaf detector's boxes, while linked: drawn over the picture, never into captured frames.
+  const [showBoxes, setShowBoxes] = useState(true)
+  const detections = useDetectionStream(streaming && showBoxes ? origin : null)
+  const frameAspect = detections && detections.width > 0 ? detections.width / detections.height : 3 / 4
+
   const capture = useFrameCapture(async () => {
     if (!origin) return null
     try {
@@ -264,20 +271,32 @@ export function PhoneCameraPanel({ discovered = null }: { discovered?: Discovere
 
       <div className="relative mt-3 flex aspect-[3/4] max-h-[420px] w-full items-center justify-center overflow-hidden rounded-lg bg-zinc-950">
         {streamUrl ? (
-          <MjpegView
-            url={streamUrl}
-            alt="Live view from the rover's iPhone"
-            className="h-full w-full object-contain"
-            onFrame={(jpeg) => {
-              shownFrames.current += 1
-              latestFrame.current = jpeg
-            }}
-            onEnd={() => {
-              setStreamUrl(null)
-              setFps(null)
-              setState({ kind: 'error', message: 'The phone stopped streaming. Is the rover app still open on its camera screen?' })
-            }}
-          />
+          // Sized to the frame, so the boxes' fractions land on the picture, not the letterbox.
+          <div className="relative h-full max-w-full" style={{ aspectRatio: frameAspect }}>
+            <MjpegView
+              url={streamUrl}
+              alt="Live view from the rover's iPhone"
+              className="h-full w-full object-fill"
+              onFrame={(jpeg) => {
+                shownFrames.current += 1
+                latestFrame.current = jpeg
+              }}
+              onEnd={() => {
+                setStreamUrl(null)
+                setFps(null)
+                setState({ kind: 'error', message: 'The phone stopped streaming. Is the rover app still open on its camera screen?' })
+              }}
+            />
+            {showBoxes && detections && <DetectionBoxes boxes={detections.boxes} />}
+            <button
+              type="button"
+              aria-pressed={showBoxes}
+              onClick={() => setShowBoxes((v) => !v)}
+              className="absolute right-2 bottom-2 rounded-md bg-zinc-950/80 px-2 py-1 text-[11px] font-semibold text-zinc-200 hover:bg-zinc-900 focus-visible:outline-2 focus-visible:outline-sky-400"
+            >
+              {showBoxes ? `Boxes on${detections ? ` · ${detections.boxes.length}` : ''}` : 'Boxes off'}
+            </button>
+          </div>
         ) : (
           <p className="max-w-[30ch] px-4 text-center text-xs leading-relaxed text-zinc-500">
             {state.kind === 'error'

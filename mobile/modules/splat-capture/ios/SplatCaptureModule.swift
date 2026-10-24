@@ -53,6 +53,11 @@ public class SplatCaptureModule: Module {
       return CaptureController.shared.cameraStreamStatus()
     }
 
+    /// The leaf detector's boxes for the Wi-Fi camera's viewers, as one line of JSON (see use-camera-stream.ts).
+    Function("publishCameraDetections") { (json: String) in
+      CaptureController.shared.cameraServer.publishDetections(json: Data(json.utf8))
+    }
+
     Function("stopCameraStream") {
       CaptureController.shared.stopCameraStream()
     }

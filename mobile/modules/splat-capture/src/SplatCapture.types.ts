@@ -137,7 +137,8 @@ export type UploadProgress = {
 
 /** The Wi-Fi camera (the web app's live mode watches it): where browsers reach it and who's watching. */
 export type CameraStreamStatus = {
-  state: 'stopped' | 'starting' | 'ready' | 'failed';
+  /** `blocked`: iOS's Local Network setting is off for the app, so nothing on the Wi-Fi can reach it. */
+  state: 'stopped' | 'starting' | 'ready' | 'blocked' | 'failed';
   /** While ready: e.g. ["http://192.168.1.23:8787"], Wi-Fi first. */
   urls?: string[];
   port?: number;
