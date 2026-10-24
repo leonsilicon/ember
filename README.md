@@ -20,6 +20,9 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
 | `packages/owlvit` | Builds the on-device OWL-ViT leaf detector the app embeds. |
 | `packages/dev` | The `vpx _dev` and `vpx _ios` scripts. |
 | `.github/workflows/testflight.yml` | Ships every push to `main` to TestFlight from a self-hosted Mac; see "TestFlight" in [`apps/expo-app/AGENTS.md`](apps/expo-app/AGENTS.md). |
+| `frontend` | Parth's laptop web app (React + Vite + TS + Tailwind): rover remote control, splat viewer, and the wildfire hazard map at `#/wildfire`. |
+| `firmware/rover_ws` | ESP32 Arduino sketch: Wi-Fi access point + WebSocket command endpoint for the web app. |
+| `data/wildfire` | Ontario wildfire hazard pipeline that feeds the web app's map. |
 | `backend` | Python on the Mac: the same leaf detector and depth logic as the app, for testing with a webcam, photo or RealSense, plus an HTTP perception service. See [`backend/README.md`](backend/README.md). |
 
 ---
