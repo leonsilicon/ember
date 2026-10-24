@@ -60,61 +60,6 @@ export interface BuildingRow {
   area_m2: number
 }
 
-export interface BuildingProps extends BuildingRow {
-  gers_id: string | null
-  hazard_overlap: boolean
-  hazard_within_30m: boolean
-  highest_category_footprint: CategoryKey | null
-  highest_category_30m: CategoryKey | null
-  needs_evaluation: boolean
-  has_not_rated: boolean
-  coverage_complete: boolean
-  nearest_hazard_m: number | null
-  fuel_codes_footprint: string
-  fuel_codes_30m: string
-  footprint_source: string | null
-  leafoff_30m: number | null
-}
-
-export function parseCodes(s: string | undefined): number[] {
-  if (!s) return []
-  try {
-    const v = JSON.parse(s)
-    return Array.isArray(v) ? v.map(Number) : []
-  } catch {
-    return []
-  }
-}
-
-export function normalizeProps(p: Record<string, unknown>, id?: string | number): BuildingProps {
-  const bool = (v: unknown) => v === true || v === 1 || v === 'true'
-  const num = (v: unknown, d = 0) => (v == null ? d : Number(v))
-  return {
-    ...(p as unknown as BuildingProps),
-    fid: Number(p.fid ?? id),
-    hazard_overlap: bool(p.hazard_overlap),
-    hazard_within_30m: bool(p.hazard_within_30m),
-    needs_evaluation: bool(p.needs_evaluation),
-    has_not_rated: bool(p.has_not_rated),
-    coverage_complete: bool(p.coverage_complete),
-    nearest_hazard_m: p.nearest_hazard_m == null ? null : Number(p.nearest_hazard_m),
-    highest_category_footprint: (p.highest_category_footprint as CategoryKey) ?? null,
-    highest_category_30m: (p.highest_category_30m as CategoryKey) ?? null,
-    leafoff_30m: p.leafoff_30m == null ? null : Number(p.leafoff_30m),
-    exposure: num(p.exposure),
-    f_fuel: num(p.f_fuel),
-    l_leafoff: num(p.l_leafoff, 0.5),
-    n_neighbours: num(p.n_neighbours),
-  }
-}
-
-/** Sub-metre gaps are shown as "<1 m" so a within-30 m building never reads like an overlap. */
-export function fmtM(m: number): string {
-  if (m <= 0) return '0 m'
-  if (m < 1) return '<1 m'
-  return `${Math.round(m)} m`
-}
-
 // ---- Ignition Risk: one number per home ------------------------------------------------------
 // risk = 100 × exposure × (0.4 + 0.6 × dryness)
 // exposure = 0.55 F (fuel in the 30 m zone) + 0.25 L (fresh leaf litter) + 0.20 N (neighbouring structures), from the pipeline

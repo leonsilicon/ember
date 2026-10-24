@@ -11,9 +11,6 @@ export interface Dryness {
   date: string
 }
 
-const FDR_LABEL = ['—', 'Low', 'Moderate', 'High', 'Very high', 'Extreme']
-export const fdrLabel = (v: number | null) => (v == null ? 'n/a' : (FDR_LABEL[v] ?? `class ${v}`))
-
 export function ffmcClass(ffmc: number | null): { label: string; color: string } {
   if (ffmc == null) return { label: 'n/a', color: '#64748b' }
   if (ffmc < 74) return { label: 'Low', color: '#3b82f6' }
@@ -23,7 +20,7 @@ export function ffmcClass(ffmc: number | null): { label: string; color: string }
   return { label: 'Extreme', color: '#ef4444' }
 }
 
-/** 0–1 multiplier for scan priority: fine fuel moisture 70 → 0, 95 → 1 (CWFIS FFMC scale). */
+/** 0–1 dryness term of the Ignition Risk: fine fuel moisture 70 → 0, 95 → 1 (CWFIS FFMC scale). */
 export function drynessFactor(ffmc: number | null): number {
   if (ffmc == null) return 0.5
   return Math.min(1, Math.max(0, (ffmc - 70) / 25))

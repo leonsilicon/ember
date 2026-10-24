@@ -104,6 +104,7 @@ export default function WildfireApp() {
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(15)
   const ignitedPtrRef = useRef(0)
+  const prevIgnitedRef = useRef<number[]>([])
 
   const liveWeather = useMemo<FbpInputs>(
     () => ({ ffmc: dryness.data?.ffmc ?? 88, windKmh: wind.speedKmh, windFromDeg: wind.fromDeg, month: now.getMonth() + 1 }),
@@ -268,10 +269,10 @@ export default function WildfireApp() {
           }))
         : [],
     })
-    // reset ignited feature-states for a fresh run
-    for (const b of buildings) if (run == null || !run.ignitedAt.has(b.fid)) continue
+    // reset ignited feature-states: homes lit by the previous run (e.g. ones an action just saved) must not stay charred
     ignitedPtrRef.current = 0
-    for (const [fid] of ignitionSorted) map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { ignited: false })
+    for (const fid of prevIgnitedRef.current) map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { ignited: false })
+    prevIgnitedRef.current = run ? [...run.ignitedAt.keys()] : []
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, sim.run, data?.grid])
 
