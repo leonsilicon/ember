@@ -1,9 +1,9 @@
 import type { Job } from './jobs';
 
-const THREE_VERSION = '0.180.0';
+export const THREE_VERSION = '0.180.0';
 const SPARK_VERSION = '2.3.1';
 
-function escape(text: string) {
+export function escape(text: string) {
   return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
@@ -15,7 +15,7 @@ function describe(job: Job) {
   return `${progress}${gaussians} · ${job.frames} frames · ${seed}, ${job.seedPoints.toLocaleString()} pts`;
 }
 
-const BASE_STYLE = `
+export const BASE_STYLE = `
   :root { color-scheme: light dark; --bg: #f6f6f4; --fg: #1b1b1a; --muted: #6b6b66; --card: #fff; --line: #e2e2dd; }
   @media (prefers-color-scheme: dark) { :root { --bg: #111; --fg: #eee; --muted: #9a9a94; --card: #1b1b1b; --line: #2c2c2c; } }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, sans-serif; }

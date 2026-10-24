@@ -89,7 +89,7 @@ const PLY_TYPE_SIZE: Record<string, number> = {
 };
 
 /** x/y/z (float32) of every vertex in a binary little-endian PLY, or null for anything else. */
-async function readPlyPositions(file: string): Promise<Float64Array | null> {
+export async function readPlyPositions(file: string): Promise<Float64Array | null> {
   const bytes = new Uint8Array(await Bun.file(file).arrayBuffer());
   const headerEnd = Buffer.from(bytes).indexOf('end_header\n');
   if (headerEnd < 0) return null;

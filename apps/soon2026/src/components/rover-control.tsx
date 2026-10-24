@@ -1,5 +1,4 @@
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -9,12 +8,11 @@ import {
   type GestureResponderEvent,
 } from 'react-native';
 import { State } from 'react-native-ble-plx';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
   connect,
@@ -36,36 +34,25 @@ const SPEEDS = [
   { label: 'Fast', value: 100 },
 ];
 
+/** Connection and driving controls; shown in the rover sheet over the camera. */
 export function RoverControl() {
-  const insets = useSafeAreaInsets();
   const rover = useRover();
   const [maxSpeed, setMaxSpeed] = useState(SPEEDS[0].value);
   const { connection } = rover;
 
-  // Look for rovers while this tab is open and nothing is connected, and stop driving on leaving it.
+  // Look for rovers while the controls are open and nothing is connected, and stop driving on closing them.
   const idle = rover.bluetooth === State.PoweredOn && connection.state === 'disconnected';
-  useFocusEffect(
-    useCallback(() => {
-      enableBluetooth();
-      if (idle) startScan();
-      return () => {
-        stopScan();
-        stop();
-      };
-    }, [idle]),
-  );
+  useEffect(() => {
+    enableBluetooth();
+    if (idle) startScan();
+    return () => {
+      stopScan();
+      stop();
+    };
+  }, [idle]);
 
   return (
-    <ThemedView
-      style={[
-        styles.container,
-        {
-          paddingTop: insets.top + Spacing.four,
-          paddingBottom: insets.bottom + BottomTabInset + Spacing.four,
-        },
-      ]}>
-      <ThemedText type="subtitle">Rover</ThemedText>
-
+    <View style={styles.container}>
       <ThemedView type="backgroundElement" style={styles.card}>
         <ConnectionStatus rover={rover} />
       </ThemedView>
@@ -93,7 +80,7 @@ export function RoverControl() {
           {connection.state === 'connected' ? 'Drag to drive, let go to stop' : 'Connect to a rover to drive'}
         </ThemedText>
       </View>
-    </ThemedView>
+    </View>
   );
 }
 
@@ -306,8 +293,6 @@ function Button({
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
     gap: Spacing.three,
   },
   card: {
@@ -340,8 +325,6 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
   },
   controls: {
-    flex: 1,
-    justifyContent: 'flex-end',
     alignItems: 'center',
     gap: Spacing.three,
   },

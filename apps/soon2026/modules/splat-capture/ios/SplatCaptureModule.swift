@@ -33,6 +33,10 @@ public class SplatCaptureModule: Module {
       CaptureController.shared.stop { promise.settle($0) }
     }
 
+    AsyncFunction("nextDetectionFrame") { (maxSize: Int, promise: Promise) in
+      CaptureController.shared.nextDetectionFrame(maxSize: maxSize) { promise.resolve($0) }
+    }
+
     AsyncFunction("listCaptures") {
       CaptureController.listCaptures()
     }

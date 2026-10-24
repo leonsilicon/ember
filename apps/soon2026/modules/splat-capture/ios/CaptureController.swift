@@ -44,6 +44,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
   private let frameQueue = DispatchQueue(label: "soon2026.splatcapture.frames", qos: .userInitiated)
   private let writeQueue = DispatchQueue(label: "soon2026.splatcapture.write", qos: .userInitiated)
+  private let detectionQueue = DispatchQueue(label: "soon2026.splatcapture.detection", qos: .userInitiated)
   private let ciContext = CIContext()
   private weak var session: ARSession?
   // main-thread state
@@ -53,6 +54,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
   // frameQueue state
   private var recording: Recording?
+  private var detectionRequest: DetectionRequest?
   private var recoveringFromFailure = false
   private var lastStatusAt: TimeInterval = 0
   private var tracking = ("notAvailable", nil as String?)
@@ -168,6 +170,39 @@ final class CaptureController: NSObject, ARSessionDelegate {
     }
   }
 
+  // MARK: Detection frames
+
+  /// Hands the next camera frame to `completion` for object detection in JS, as an upright RGBA
+  /// image whose longer side is `maxSize`. Detection reads this session's frames because iOS
+  /// allows one camera session at a time. A newer request replaces a pending one, which gets nil.
+  func nextDetectionFrame(maxSize: Int, completion: @escaping ([String: Any]?) -> Void) {
+    frameQueue.async {
+      self.detectionRequest?.completion(nil)
+      self.detectionRequest = DetectionRequest(maxSize: maxSize, completion: completion)
+    }
+  }
+
+  /// ARKit delivers the camera image in the sensor's landscape orientation; turn it upright for
+  /// the portrait UI and scale it down, as tightly packed RGBA rows.
+  private func detectionImage(from buffer: CVPixelBuffer, maxSize: Int) -> [String: Any]? {
+    let upright = CIImage(cvPixelBuffer: buffer).oriented(.right)
+    let scale = CGFloat(maxSize) / max(upright.extent.width, upright.extent.height)
+    let width = Int((upright.extent.width * scale).rounded())
+    let height = Int((upright.extent.height * scale).rounded())
+    guard width > 0, height > 0, let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+    let image = upright
+      .transformed(by: CGAffineTransform(translationX: -upright.extent.minX, y: -upright.extent.minY))
+      .transformed(by: CGAffineTransform(scaleX: CGFloat(width) / upright.extent.width,
+                                         y: CGFloat(height) / upright.extent.height))
+    var pixels = Data(count: width * height * 4)
+    pixels.withUnsafeMutableBytes { bytes in
+      ciContext.render(image, toBitmap: bytes.baseAddress!, rowBytes: width * 4,
+                       bounds: CGRect(x: 0, y: 0, width: width, height: height),
+                       format: .RGBA8, colorSpace: colorSpace)
+    }
+    return ["width": width, "height": height, "data": pixels]
+  }
+
   static func listCaptures() -> [[String: Any]] {
     library.list().map(describe)
   }
@@ -211,6 +246,11 @@ final class CaptureController: NSObject, ARSessionDelegate {
     if recoveringFromFailure && tracking.0 == "normal" {
       recoveringFromFailure = false
       DispatchQueue.main.async { self.consecutiveFailures = 0 }
+    }
+    if let request = detectionRequest {
+      detectionRequest = nil
+      let image = frame.capturedImage
+      detectionQueue.async { request.completion(self.detectionImage(from: image, maxSize: request.maxSize)) }
     }
     if let recording, !recording.stopping, !recording.frozen, recording.inFlight < 2,
        recording.selector.shouldKeep(timestamp: frame.timestamp,
@@ -274,6 +314,11 @@ final class CaptureController: NSObject, ARSessionDelegate {
       }
     }
   }
+}
+
+private struct DetectionRequest {
+  let maxSize: Int
+  let completion: ([String: Any]?) -> Void
 }
 
 /// What the write queue needs from one ARFrame. Holding these buffers (not the

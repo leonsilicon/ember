@@ -51,6 +51,13 @@ export type SavedCapture = {
   durationSeconds?: number;
 };
 
+/** A camera frame for object detection: upright for the portrait UI, as RGBA rows. */
+export type DetectionFrame = {
+  width: number;
+  height: number;
+  data: Uint8Array;
+};
+
 export type UploadProgress = {
   captureId: string;
   sentBytes: number;

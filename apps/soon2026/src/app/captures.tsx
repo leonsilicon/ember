@@ -1,21 +1,19 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 
 import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
 
 import { SplatPreview } from '@/components/splat-preview';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { updateDebugSettings, useDebugSettings } from '@/hooks/use-debug-settings';
 import { useTheme } from '@/hooks/use-theme';
 import { describeCapture, shareCapture } from '@/lib/captures';
 import { checkServer } from '@/lib/splat-preview';
 
 export default function CapturesScreen() {
-  const insets = useSafeAreaInsets();
   const debug = useDebugSettings();
   const [captures, setCaptures] = useState<SavedCapture[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +26,7 @@ export default function CapturesScreen() {
     }
   }, []);
 
-  // Re-read the folder whenever the tab is shown (a capture may have just been saved).
+  // Re-read the folder whenever the screen is shown (a capture may have just been saved).
   useFocusEffect(
     useCallback(() => {
       refresh();
@@ -59,16 +57,8 @@ export default function CapturesScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={[
-          styles.content,
-          {
-            // On the web the tab bar floats over the top of the page.
-            paddingTop: Platform.OS === 'web' ? Spacing.six + Spacing.four : insets.top + Spacing.four,
-            paddingBottom: insets.bottom + BottomTabInset + Spacing.four,
-          },
-        ]}>
-        <ThemedText type="subtitle">Captures</ThemedText>
+      {/* Automatic insets keep content clear of the large-title header and the home indicator. */}
+      <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
         <ThemedText type="small" themeColor="textSecondary">
           Each capture is a zip of camera frames, poses and a seed point cloud, ready to turn into a splat. Share it
           from here, or find it in Files › On My iPhone › soon2026 (and in Finder when the phone is plugged in).
@@ -81,7 +71,7 @@ export default function CapturesScreen() {
         )}
 
         {captures?.length === 0 && (
-          <ThemedText themeColor="textSecondary">No captures yet. Record one on the Capture tab.</ThemedText>
+          <ThemedText themeColor="textSecondary">No captures yet. Record one with the camera&apos;s record button.</ThemedText>
         )}
 
         {captures?.map((capture) => (
@@ -183,6 +173,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.four,
     gap: Spacing.three,
     maxWidth: MaxContentWidth,
     width: '100%',

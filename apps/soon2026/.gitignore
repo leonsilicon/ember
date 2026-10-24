@@ -42,6 +42,8 @@ example
 /ios
 /android
 
-# splat server: captures, training output, and the downloaded Brush binary
+# splat server: captures, training output, the downloaded Brush binary, and the live
+# reconstruction's depth worker and Core ML model (server/scripts/install-*.sh)
 /server/data
 /server/bin
+/server/models

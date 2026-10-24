@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
+import type { LiveConfig } from './live/hub';
+
 export type ServerConfig = {
   port: number;
   host: string;
@@ -21,6 +23,13 @@ export type ServerConfig = {
   growthFraction: number;
   /** Cap on gaussians, so a long capture's splat still loads in a phone browser (~100 B each). */
   maxSplats: number;
+  /**
+   * The live reconstruction's depth worker and its Core ML model (see install-depth.sh), or null
+   * when they aren't installed. LiDAR phones need only the worker, for decoding their JPEGs.
+   */
+  depthWorkerBin: string | null;
+  depthModel: string | null;
+  live: LiveConfig;
 };
 
 const SERVER_DIR = path.resolve(import.meta.dir, '..');
@@ -37,6 +46,11 @@ export function findBrush(env: Record<string, string | undefined>): string | nul
   return Bun.which('brush_app');
 }
 
+function installed(envPath: string | undefined, local: string) {
+  if (envPath) return envPath;
+  return existsSync(local) ? local : null;
+}
+
 export function configFromEnv(env: Record<string, string | undefined> = process.env): ServerConfig {
   const steps = int(env.SPLAT_STEPS, 5000);
   return {
@@ -51,5 +65,13 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     shDegree: int(env.SPLAT_SH_DEGREE, 1),
     growthFraction: Number(env.SPLAT_GROWTH) || 0.5,
     maxSplats: int(env.SPLAT_MAX_SPLATS, 600_000),
+    depthWorkerBin: installed(env.DEPTH_WORKER_BIN, path.join(SERVER_DIR, 'bin', 'depth_worker')),
+    depthModel: installed(env.DEPTH_MODEL, path.join(SERVER_DIR, 'models', 'DepthAnythingV2SmallF16.mlmodelc')),
+    live: {
+      voxelSize: Number(env.LIVE_VOXEL_SIZE) || 0.02,
+      maxDepth: Number(env.LIVE_MAX_DEPTH) || 4,
+      gridWidth: 256,
+      gridHeight: 192,
+    },
   };
 }

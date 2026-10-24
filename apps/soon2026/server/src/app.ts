@@ -4,6 +4,9 @@ import path from 'node:path';
 import type { ServerConfig } from './config';
 import { DatasetError, extractCapture } from './dataset';
 import { JobStore, publicJob, Trainer } from './jobs';
+import { DepthWorker, type DepthEstimator } from './live/depth-worker';
+import { LiveHub } from './live/hub';
+import { liveViewerPage } from './live/viewer';
 import { indexPage, viewerPage } from './pages';
 
 const CAPTURE_ID = /^[A-Za-z0-9_-]{1,80}$/;
@@ -23,11 +26,22 @@ function html(body: string) {
   return new Response(body, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 }
 
-export async function createApp(config: ServerConfig) {
+function startDepthWorker(config: ServerConfig): Promise<DepthEstimator> {
+  if (!config.depthWorkerBin || !config.depthModel) {
+    return Promise.reject(new Error('The depth worker is not installed; run server/scripts/install-depth.sh'));
+  }
+  return DepthWorker.start(config.depthWorkerBin, config.depthModel);
+}
+
+export async function createApp(
+  config: ServerConfig,
+  options: { startEstimator?: () => Promise<DepthEstimator> } = {},
+) {
   await mkdir(path.join(config.dataDir, 'uploads'), { recursive: true });
   const store = new JobStore(path.join(config.dataDir, 'jobs.json'));
   await store.load();
   const trainer = new Trainer(store, config);
+  const live = new LiveHub(config.live, options.startEstimator ?? (() => startDepthWorker(config)));
   // Anything interrupted by a restart trains again from the start.
   for (const job of store.list()) {
     if (job.state === 'queued' || job.state === 'training') trainer.enqueue(job.id);
@@ -80,7 +94,34 @@ export async function createApp(config: ServerConfig) {
 
     if (url.pathname === '/') return html(indexPage(store.list().map(publicJob)));
     if (url.pathname === '/health') {
-      return json({ ok: true, brush: config.brushBin, steps: config.steps, maxResolution: config.maxResolution });
+      return json({
+        ok: true,
+        brush: config.brushBin,
+        depthWorker: Boolean(config.depthWorkerBin && config.depthModel),
+        steps: config.steps,
+        maxResolution: config.maxResolution,
+      });
+    }
+
+    // Live reconstruction. The WebSocket endpoints (/live/ingest, /live/socket) are upgraded
+    // before requests reach here (see index.ts), so a plain request to them is a mistake.
+    if (parts[0] === 'live') {
+      if (parts[1] === 'ingest' || parts[1] === 'socket') return json({ error: 'WebSocket endpoint' }, 426);
+      if (parts.length === 1) return html(liveViewerPage(null));
+      if (parts.length === 2 && CAPTURE_ID.test(parts[1])) return html(liveViewerPage(parts[1]));
+    }
+    if (url.pathname === '/api/live') return json({ sessions: live.list() });
+    if (parts[0] === 'api' && parts[1] === 'live' && parts[3] === 'points.ply') {
+      const cloud = live.cloud(parts[2] ?? '');
+      if (!cloud) return json({ error: `no live session ${parts[2]}` }, 404);
+      const minViews = Math.max(1, Number(url.searchParams.get('minViews')) || 1);
+      return new Response(cloud.toPly(minViews), {
+        headers: {
+          ...CORS,
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': `attachment; filename="${parts[2]}-live.ply"`,
+        },
+      });
     }
     if (url.pathname === '/api/captures') {
       if (request.method === 'POST') return receiveCapture(request);
@@ -112,5 +153,5 @@ export async function createApp(config: ServerConfig) {
     return json({ error: 'not found' }, 404);
   }
 
-  return { fetch, store, trainer };
+  return { fetch, store, trainer, live };
 }

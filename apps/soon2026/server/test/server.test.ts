@@ -28,7 +28,7 @@ done
 let root: string;
 
 async function makeConfig(brush: string | null): Promise<ServerConfig> {
-  return { port: 0, host: '127.0.0.1', dataDir: path.join(root, 'data'), brushBin: brush, steps: 300, exportEvery: 100, maxResolution: 960, shDegree: 1, growthFraction: 0.5, maxSplats: 600_000 };
+  return { port: 0, host: '127.0.0.1', dataDir: path.join(root, 'data'), brushBin: brush, steps: 300, exportEvery: 100, maxResolution: 960, shDegree: 1, growthFraction: 0.5, maxSplats: 600_000, depthWorkerBin: null, depthModel: null, live: { voxelSize: 0.02, maxDepth: 4, gridWidth: 256, gridHeight: 192 } };
 }
 
 async function fakeBrush(script = FAKE_BRUSH) {
