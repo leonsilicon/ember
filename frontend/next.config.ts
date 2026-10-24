@@ -9,7 +9,7 @@ const config: NextConfig = {
     },
   },
   // ws (for upgradeWebSocket) and ioredis load optional native addons at runtime; leave them unbundled.
-  serverExternalPackages: ['ws', 'ioredis'],
+  serverExternalPackages: ['ws', 'ioredis', 'bonjour-service'],
 };
 
 export default config;

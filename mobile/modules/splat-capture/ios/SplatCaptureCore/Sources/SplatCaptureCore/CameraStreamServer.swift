@@ -1,0 +1,296 @@
+import Foundation
+import Network
+
+/// Serves the phone's camera to browsers on the same Wi-Fi, so the web app's live mode can show what
+/// the rover sees. Plain HTTP, three routes, all with `Access-Control-Allow-Origin: *`:
+///
+/// - `GET /camera.mjpg`: the live picture as MJPEG (`multipart/x-mixed-replace`), which an `<img>`
+///   plays as it arrives;
+/// - `GET /frame.jpg`: the newest frame once (503 before the first);
+/// - `GET /status`: JSON `{ device, viewers, frames, width, height }`, to check the phone is reachable.
+///
+/// While running it advertises itself on the network with Bonjour as `_rovercam._tcp` (see `serviceType`),
+/// so the web app's dev server can find the phone and link up without anyone typing an address.
+///
+/// The owner calls `publish(jpeg:)` with each new frame, and can skip encoding while `wantsFrames` is
+/// false (nobody is watching). A viewer still sending its previous frame skips the new one, so a slow
+/// browser gets fewer frames rather than a growing backlog.
+public final class CameraStreamServer {
+  public static let defaultPort: UInt16 = 8787
+  /// The Bonjour service type the web app's dev server looks for (and Info.plist's NSBonjourServices lists).
+  public static let serviceType = "_rovercam._tcp"
+
+  public enum State: Equatable {
+    case stopped
+    case starting
+    case ready(port: UInt16)
+    case failed(String)
+  }
+
+  /// Called on the server's queue whenever `state` changes.
+  public var onStateChange: ((State) -> Void)?
+
+  private let queue = DispatchQueue(label: "soon2026.camera-stream-server")
+  private let device: String
+  private var listener: NWListener?
+  private var viewers: [ObjectIdentifier: Viewer] = [:]
+  private var latest: Data?
+  private var latestSize: (width: Int, height: Int) = (0, 0)
+  private var frames = 0
+  private var _state = State.stopped
+  /// Read from any thread: whether anyone is watching the stream.
+  private let watching = ManagedAtomicFlag()
+
+  /// `device` is reported by `/status` (e.g. "iPhone 15 Pro").
+  public init(device: String) {
+    self.device = device
+  }
+
+  public var state: State { queue.sync { _state } }
+
+  /// True while at least one browser has `/camera.mjpg` open. Cheap; safe from any thread.
+  public var wantsFrames: Bool { watching.value }
+
+  /// Starts listening on `port` (0 picks a free one; see `state` for which). Restarts if already running.
+  public func start(port: UInt16 = defaultPort) {
+    queue.async { [self] in
+      self.stopListening()
+      self.setState(.starting)
+      do {
+        let parameters = NWParameters.tcp
+        parameters.allowLocalEndpointReuse = true
+        let listener = try NWListener(using: parameters, on: port == 0 ? .any : NWEndpoint.Port(rawValue: port)!)
+        // The TXT record says which device it is; Bonjour renames the service if the name is taken.
+        let txt = NWTXTRecord(["device": self.device, "path": "/camera.mjpg"])
+        listener.service = NWListener.Service(name: "Rover camera (\(self.device))", type: Self.serviceType,
+                                              txtRecord: txt)
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
+          guard let self, let listener, listener === self.listener else { return }
+          switch state {
+          case .ready: self.setState(.ready(port: listener.port?.rawValue ?? port))
+          case .failed(let error):
+            self.setState(.failed(error.localizedDescription))
+            self.stopListening()
+          default: break
+          }
+        }
+        listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+        self.listener = listener
+        listener.start(queue: self.queue)
+      } catch {
+        self.setState(.failed(error.localizedDescription))
+      }
+    }
+  }
+
+  public func stop() {
+    queue.async {
+      self.stopListening()
+      self.setState(.stopped)
+    }
+  }
+
+  /// A new camera frame: kept for `/frame.jpg` and sent to every viewer that's ready for one.
+  public func publish(jpeg: Data, width: Int, height: Int) {
+    queue.async {
+      self.latest = jpeg
+      self.latestSize = (width, height)
+      self.frames += 1
+      for viewer in self.viewers.values where viewer.streaming && !viewer.sending {
+        self.send(jpeg, to: viewer)
+      }
+    }
+  }
+
+  /// The phone's IPv4 addresses that other devices can reach: Wi-Fi first (en*), then the
+  /// Personal Hotspot bridge, skipping loopback and link-local (169.254.x.x) ones.
+  public static func localAddresses() -> [String] {
+    var head: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&head) == 0, let first = head else { return [] }
+    defer { freeifaddrs(head) }
+    var found: [(name: String, address: String)] = []
+    for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+      let entry = pointer.pointee
+      guard let addr = entry.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET),
+            entry.ifa_flags & UInt32(IFF_UP) != 0, entry.ifa_flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
+      var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+      guard getnameinfo(addr, socklen_t(addr.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0
+      else { continue }
+      let address = String(cString: host)
+      guard !address.hasPrefix("169.254.") else { continue }
+      found.append((String(cString: entry.ifa_name), address))
+    }
+    let rank = { (name: String) -> Int in name.hasPrefix("en") ? 0 : name.hasPrefix("bridge") ? 1 : 2 }
+    return found.sorted { rank($0.name) < rank($1.name) }.map(\.address)
+  }
+
+  /// Viewers with the stream open, for the UI.
+  public var viewerCount: Int { queue.sync { viewers.values.filter(\.streaming).count } }
+
+  // MARK: Connections (all on `queue`)
+
+  private final class Viewer {
+    let connection: NWConnection
+    var request = Data()
+    var streaming = false
+    var sending = false
+    init(_ connection: NWConnection) { self.connection = connection }
+  }
+
+  private func setState(_ state: State) {
+    guard state != _state else { return }
+    _state = state
+    onStateChange?(state)
+  }
+
+  private func stopListening() {
+    listener?.cancel()
+    listener = nil
+    for viewer in viewers.values { viewer.connection.cancel() }
+    viewers.removeAll()
+    updateWatching()
+  }
+
+  private func updateWatching() {
+    watching.value = viewers.values.contains(where: \.streaming)
+  }
+
+  private func accept(_ connection: NWConnection) {
+    let viewer = Viewer(connection)
+    let id = ObjectIdentifier(viewer)
+    viewers[id] = viewer
+    connection.stateUpdateHandler = { [weak self] state in
+      switch state {
+      case .failed, .cancelled:
+        self?.viewers[id] = nil
+        self?.updateWatching()
+      default: break
+      }
+    }
+    connection.start(queue: queue)
+    readRequest(viewer)
+  }
+
+  private func readRequest(_ viewer: Viewer) {
+    viewer.connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] data, _, isComplete, error in
+      guard let self else { return }
+      if let data { viewer.request.append(data) }
+      if let head = HTTPRequestHead(viewer.request) {
+        self.respond(to: head, viewer: viewer)
+      } else if error != nil || isComplete || viewer.request.count > 8192 {
+        viewer.connection.cancel()
+      } else {
+        self.readRequest(viewer)
+      }
+    }
+  }
+
+  private func respond(to head: HTTPRequestHead, viewer: Viewer) {
+    guard head.method == "GET" || head.method == "HEAD" else {
+      return finish(viewer, HTTPResponse.text(405, "Only GET"))
+    }
+    switch head.path {
+    case "/camera.mjpg":
+      viewer.streaming = true
+      updateWatching()
+      viewer.sending = true
+      viewer.connection.send(content: HTTPResponse.mjpegHead(), completion: .contentProcessed { [weak self] error in
+        guard let self else { return }
+        viewer.sending = false
+        if error != nil { return viewer.connection.cancel() }
+        if let latest = self.latest { self.send(latest, to: viewer) }
+      })
+    case "/frame.jpg":
+      if let latest {
+        finish(viewer, HTTPResponse.make(200, contentType: "image/jpeg", body: latest))
+      } else {
+        finish(viewer, HTTPResponse.text(503, "No camera frame yet: is the camera screen open?"))
+      }
+    case "/status":
+      let status: [String: Any] = [
+        "device": device,
+        "viewers": viewers.values.filter(\.streaming).count,
+        "frames": frames,
+        "width": latestSize.width,
+        "height": latestSize.height,
+      ]
+      let body = (try? JSONSerialization.data(withJSONObject: status, options: [.sortedKeys])) ?? Data("{}".utf8)
+      finish(viewer, HTTPResponse.make(200, contentType: "application/json", body: body))
+    default:
+      finish(viewer, HTTPResponse.text(404, "Not found. Try /camera.mjpg, /frame.jpg or /status"))
+    }
+  }
+
+  private func send(_ jpeg: Data, to viewer: Viewer) {
+    viewer.sending = true
+    viewer.connection.send(content: HTTPResponse.mjpegPart(jpeg), completion: .contentProcessed { error in
+      viewer.sending = false
+      if error != nil { viewer.connection.cancel() }
+    })
+  }
+
+  private func finish(_ viewer: Viewer, _ response: Data) {
+    viewer.connection.send(content: response, completion: .contentProcessed { _ in viewer.connection.cancel() })
+  }
+}
+
+/// The first line of an HTTP request, once its headers have all arrived.
+struct HTTPRequestHead: Equatable {
+  let method: String
+  /// Without the query string.
+  let path: String
+
+  /// Nil until `data` holds the blank line that ends the headers, or if the request line is malformed.
+  init?(_ data: Data) {
+    guard let end = data.range(of: Data("\r\n\r\n".utf8)),
+          let text = String(data: data[..<end.lowerBound], encoding: .utf8),
+          let line = text.split(separator: "\r\n", omittingEmptySubsequences: false).first else { return nil }
+    let parts = line.split(separator: " ")
+    guard parts.count == 3, parts[2].hasPrefix("HTTP/") else { return nil }
+    method = String(parts[0])
+    path = String(parts[1].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0])
+  }
+}
+
+enum HTTPResponse {
+  static let boundary = "frame"
+  private static let common = "Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nConnection: close\r\n"
+
+  static func make(_ status: Int, contentType: String, body: Data) -> Data {
+    var head = "HTTP/1.1 \(status) \(reason(status))\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\n"
+    head += common + "\r\n"
+    return Data(head.utf8) + body
+  }
+
+  static func text(_ status: Int, _ message: String) -> Data {
+    make(status, contentType: "text/plain; charset=utf-8", body: Data((message + "\n").utf8))
+  }
+
+  static func mjpegHead() -> Data {
+    Data("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=\(boundary)\r\n\(common)\r\n".utf8)
+  }
+
+  static func mjpegPart(_ jpeg: Data) -> Data {
+    Data("--\(boundary)\r\nContent-Type: image/jpeg\r\nContent-Length: \(jpeg.count)\r\n\r\n".utf8) + jpeg + Data("\r\n".utf8)
+  }
+
+  private static func reason(_ status: Int) -> String {
+    switch status {
+    case 200: return "OK"
+    case 404: return "Not Found"
+    case 405: return "Method Not Allowed"
+    case 503: return "Service Unavailable"
+    default: return "Status"
+    }
+  }
+}
+
+/// A Bool read from any thread and written on the server's queue.
+private final class ManagedAtomicFlag {
+  private let lock = NSLock()
+  private var _value = false
+  var value: Bool {
+    get { lock.lock(); defer { lock.unlock() }; return _value }
+    set { lock.lock(); _value = newValue; lock.unlock() }
+  }
+}

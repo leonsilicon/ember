@@ -58,6 +58,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
   private let frameQueue = DispatchQueue(label: "soon2026.splatcapture.frames", qos: .userInitiated)
   private let writeQueue = DispatchQueue(label: "soon2026.splatcapture.write", qos: .userInitiated)
   private let detectionQueue = DispatchQueue(label: "soon2026.splatcapture.detection", qos: .userInitiated)
+  private let streamQueue = DispatchQueue(label: "soon2026.splatcapture.stream", qos: .userInitiated)
+  /// The camera for browsers on the same Wi-Fi (the web app's live mode). Encodes only while watched.
+  let cameraServer = CameraStreamServer(device: hardwareModel())
   private let ciContext = CIContext()
   private weak var session: ARSession?
   // main-thread state
@@ -76,6 +79,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
   private var lastStatusAt: TimeInterval = 0
   private var tracking = ("notAvailable", nil as String?)
   private var frontCamera = false
+  /// One stream frame encodes at a time; a frame arriving meanwhile is skipped.
+  private var streamEncoding = false
+  private var lastStreamAt: TimeInterval = 0
 
   static var supportsARKit: Bool { ARWorldTrackingConfiguration.isSupported }
   static var supportsLiDAR: Bool { ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) }
@@ -309,6 +315,57 @@ final class CaptureController: NSObject, ARSessionDelegate {
     return out
   }
 
+  // MARK: Wi-Fi camera
+
+  /// About this many frames a second go to the Wi-Fi camera's viewers.
+  private static let streamFPS = 12.0
+  /// The streamed picture's longer side, in pixels.
+  private static let streamMaxSize: CGFloat = 640
+
+  func startCameraStream(port: Int) {
+    cameraServer.start(port: UInt16(clamping: port))
+  }
+
+  func stopCameraStream() {
+    cameraServer.stop()
+  }
+
+  /// For the UI: whether the Wi-Fi camera is up, where browsers reach it, and how many are watching.
+  func cameraStreamStatus() -> [String: Any] {
+    var status: [String: Any] = ["viewers": cameraServer.viewerCount]
+    switch cameraServer.state {
+    case .stopped: status["state"] = "stopped"
+    case .starting: status["state"] = "starting"
+    case .ready(let port):
+      status["state"] = "ready"
+      status["port"] = Int(port)
+      status["urls"] = CameraStreamServer.localAddresses().map { "http://\($0):\(port)" }
+    case .failed(let message):
+      status["state"] = "failed"
+      status["error"] = message
+    }
+    return status
+  }
+
+  /// The frame upright (mirrored for the front camera, as its preview is), its longer side
+  /// `streamMaxSize`, as a JPEG with its size.
+  private func streamJPEG(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> (Data, Int, Int)? {
+    let upright = CIImage(cvPixelBuffer: buffer).oriented(orientation)
+    let scale = Self.streamMaxSize / max(upright.extent.width, upright.extent.height)
+    let width = (upright.extent.width * scale).rounded(.down)
+    let height = (upright.extent.height * scale).rounded(.down)
+    let image = upright
+      .transformed(by: CGAffineTransform(translationX: -upright.extent.minX, y: -upright.extent.minY))
+      .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+      .cropped(to: CGRect(x: 0, y: 0, width: width, height: height))
+    guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+          let jpeg = ciContext.jpegRepresentation(
+            of: image, colorSpace: colorSpace,
+            options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.6])
+    else { return nil }
+    return (jpeg, Int(width), Int(height))
+  }
+
   // MARK: ARSessionDelegate (frameQueue)
 
   func session(_ session: ARSession, didUpdate frame: ARFrame) {
@@ -354,6 +411,18 @@ final class CaptureController: NSObject, ARSessionDelegate {
     }
     if let live, let recording, !recording.frozen {
       live.offer(frame, trackingNormal: tracking.0 == "normal")
+    }
+    if cameraServer.wantsFrames, !streamEncoding, frame.timestamp - lastStreamAt >= 1 / Self.streamFPS {
+      lastStreamAt = frame.timestamp
+      streamEncoding = true
+      let image = frame.capturedImage
+      let orientation: CGImagePropertyOrientation = frontCamera ? .leftMirrored : .right
+      streamQueue.async {
+        if let (jpeg, width, height) = self.streamJPEG(image, orientation: orientation) {
+          self.cameraServer.publish(jpeg: jpeg, width: width, height: height)
+        }
+        self.frameQueue.async { self.streamEncoding = false }
+      }
     }
     if frame.timestamp - lastStatusAt >= 0.25 {
       lastStatusAt = frame.timestamp

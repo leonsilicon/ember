@@ -61,6 +61,12 @@ drop, click **Connect** again. No motion command is ever re-sent on reconnect.
 - **Capture panel** — webcam stand-in: Start camera → Choose folder (Chrome's File System Access API) → Record 1 fps
   writes `frame_0001.jpg…` into that folder; "Snap one" takes a single frame. Feed the folder to
   `pipeline/reconstruct.py`.
+- **iPhone camera** — the capture panel switches to the rover's iPhone as soon as its app is open on the same Wi-Fi:
+  the app announces its camera with Bonjour (`_rovercam._tcp`) and the dev server finds it (`src/phone-discovery.ts`,
+  `GET /api/phone-camera`; on Vercel there's no local network, so it finds none). Without discovery, enter the
+  address from the cast icon at the top of the app's camera screen (port 8787). The page must be on http, since
+  browsers block the phone's http stream from an https page. Without the phone, `python3
+  scripts/mock-phone-camera.py` serves and advertises a test picture (needs Pillow; advertising uses macOS's dns-sd).
 
 Code map:
 

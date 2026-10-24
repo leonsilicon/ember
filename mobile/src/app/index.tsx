@@ -31,6 +31,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SplatCapture, {
   SplatCaptureView,
   type CameraPosition,
+  type CameraStreamStatus,
   type CaptureStatus,
   type LiveStatus,
   type SavedCapture,
@@ -50,6 +51,7 @@ import { Spacing } from '@/constants/theme';
 import { useCameraZoom, useZoomLevel, zoomTo } from '@/hooks/use-camera-zoom';
 import { useDebugSettings } from '@/hooks/use-debug-settings';
 import { useDetections, type Detection, type Detections } from '@/hooks/use-detections';
+import { useCameraStream } from '@/hooks/use-camera-stream';
 import { useRoverBrain } from '@/hooks/use-rover-brain';
 import { compact } from '@/lib/captures';
 import { useRover } from '@/lib/rover';
@@ -111,6 +113,25 @@ function describeLive(live: LiveStatus): Indicator {
   }
   if (live.state === 'connecting') return { key, icon: 'cube-outline', tone: 'dim', label: 'Live 3D: connecting…' };
   return { key, icon: 'cube-off-outline', tone: 'warn', label: `Live 3D: ${live.error ?? live.state}` };
+}
+
+/** The Wi-Fi camera for the web app's live mode: the address to type in there, and who's watching. */
+function describeCameraStream(stream: CameraStreamStatus): Indicator {
+  const key = 'wifi-camera';
+  if (stream.state === 'ready') {
+    const url = stream.urls?.[0];
+    if (!url) return { key, icon: 'cast-off', tone: 'dim', label: 'Laptop view: join a Wi-Fi network so the web app can reach this phone' };
+    const viewers = stream.viewers;
+    return {
+      key,
+      icon: viewers > 0 ? 'cast-connected' : 'cast',
+      tone: viewers > 0 ? 'good' : undefined,
+      text: viewers > 0 ? String(viewers) : undefined,
+      label: `Laptop view: ${url.replace('http://', '')} in the web app's live mode${viewers > 0 ? ` · ${viewers} watching` : ''}`,
+    };
+  }
+  if (stream.state === 'failed') return { key, icon: 'cast-off', tone: 'warn', label: `Laptop view off: ${stream.error ?? 'failed to start'}` };
+  return { key, icon: 'cast', tone: 'dim', label: 'Laptop view: starting…' };
 }
 
 function describeDetections(detections: Detections): Indicator {
@@ -186,6 +207,8 @@ export default function CameraScreen() {
   // Places leaves in the world, scans LiDAR for obstacles, and runs the drive-to-leaf autopilot.
   // The front camera can't place anything in the world.
   const brain = useRoverBrain(detections.result, detection && capabilities.arkit && focused && camera === 'back');
+  // The web app's live mode watches this camera over the Wi-Fi while the screen is open.
+  const cameraStream = useCameraStream(capabilities.arkit && focused);
   const { stopAutopilot } = brain;
   const debug = useDebugSettings();
   const [caption, showCaption] = useCaption();
@@ -325,6 +348,7 @@ export default function CameraScreen() {
       },
     });
   }
+  if (cameraStream) indicators.push(describeCameraStream(cameraStream));
   const busy = recording || phase.kind === 'saving';
   const result = detections.result;
   const barHeight = BAR_PADDING + BAR_CONTENT + Math.max(insets.bottom, Spacing.three);

@@ -47,6 +47,20 @@ public class SplatCaptureModule: Module {
       CaptureController.shared.currentCamera(includeDepth: includeDepth) { promise.resolve($0) }
     }
 
+    // The Wi-Fi camera: an MJPEG stream of the preview for the web app's live mode (CameraStreamServer).
+    Function("startCameraStream") { (port: Int) -> [String: Any] in
+      CaptureController.shared.startCameraStream(port: port)
+      return CaptureController.shared.cameraStreamStatus()
+    }
+
+    Function("stopCameraStream") {
+      CaptureController.shared.stopCameraStream()
+    }
+
+    Function("cameraStreamStatus") {
+      CaptureController.shared.cameraStreamStatus()
+    }
+
     AsyncFunction("listCaptures") {
       CaptureController.listCaptures()
     }

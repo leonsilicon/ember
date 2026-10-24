@@ -5,13 +5,17 @@ import { CONNECTION_STYLES } from './components/connectionStyles'
 import { DPad } from './components/DPad'
 import { StopButton } from './components/StopButton'
 import { CapturePanel } from './components/CapturePanel'
+import { PhoneCameraPanel } from './components/PhoneCameraPanel'
 import { DEFAULT_SCENE, ScenePanel, type SceneSource } from './components/ScenePanel'
 import { SplatViewer } from './components/SplatViewer'
+import { usePhoneDiscovery } from './hooks/usePhoneDiscovery'
 import { useRover } from './hooks/useRover'
 import { useState } from 'react'
 
 export default function App() {
   const rover = useRover()
+  // The rover's iPhone, once its app is open on the same Wi-Fi: its camera links up by itself.
+  const phones = usePhoneDiscovery()
   const [scene, setScene] = useState<SceneSource>(DEFAULT_SCENE)
   const { snapshot, mode } = rover
   const connected = snapshot.connection === 'connected'
@@ -49,7 +53,9 @@ export default function App() {
           <SplatViewer source={scene?.url ?? null} label={scene?.label} />
           <div className="grid gap-4 md:grid-cols-2">
             <ScenePanel scene={scene} onChange={setScene} />
-            <CapturePanel />
+            {/* The iPhone riding on the rover, in live mode or as soon as its app is found on the Wi-Fi;
+                otherwise the laptop webcam stand-in. */}
+            {mode === 'live' || phones.length > 0 ? <PhoneCameraPanel discovered={phones[0] ?? null} /> : <CapturePanel />}
           </div>
         </div>
 

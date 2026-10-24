@@ -135,6 +135,17 @@ export type UploadProgress = {
   totalBytes: number;
 };
 
+/** The Wi-Fi camera (the web app's live mode watches it): where browsers reach it and who's watching. */
+export type CameraStreamStatus = {
+  state: 'stopped' | 'starting' | 'ready' | 'failed';
+  /** While ready: e.g. ["http://192.168.1.23:8787"], Wi-Fi first. */
+  urls?: string[];
+  port?: number;
+  /** Browsers with the stream open. */
+  viewers: number;
+  error?: string;
+};
+
 export type UploadResult = {
   status: number;
   body: string;
