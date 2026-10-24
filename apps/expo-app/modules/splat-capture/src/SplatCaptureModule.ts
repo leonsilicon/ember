@@ -2,6 +2,7 @@ import { NativeModule, requireNativeModule } from 'expo';
 
 import {
   Capabilities,
+  CameraStreamStatus,
   CaptureMode,
   DetectionCamera,
   DetectionFrame,
@@ -27,6 +28,13 @@ declare class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> 
    * before the first frame. The rover's steering loop polls this.
    */
   currentCamera(includeDepth: boolean): Promise<DetectionCamera | null>;
+  /**
+   * Serves the camera preview on the local network for the web app's live mode: an MJPEG stream at
+   * `/camera.mjpg` (plus `/frame.jpg` and `/status`). Frames are only encoded while someone watches.
+   */
+  startCameraStream(port: number): CameraStreamStatus;
+  stopCameraStream(): void;
+  cameraStreamStatus(): CameraStreamStatus;
   /** Saved captures, newest first. */
   listCaptures(): Promise<SavedCapture[]>;
   deleteCapture(captureId: string): Promise<void>;

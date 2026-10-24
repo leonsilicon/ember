@@ -12,7 +12,8 @@
       },
       "infoPlist": {
         "NSCameraUsageDescription": "Allow $(PRODUCT_NAME) to use the camera to identify objects in real time and to capture scenes as 3D splats.",
-        "NSLocalNetworkUsageDescription": "$(PRODUCT_NAME) connects to development tools on your local network.",
+        "NSLocalNetworkUsageDescription": "$(PRODUCT_NAME) shares its camera with the rover web app on your Wi-Fi, and connects to development tools on your local network.",
+        "NSBonjourServices": ["_rovercam._tcp"],
         "UIFileSharingEnabled": true,
         "LSSupportsOpeningDocumentsInPlace": true
       }

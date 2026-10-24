@@ -155,6 +155,18 @@ world (open patch, trunk, yard) all end with every leaf in the pile and no colli
 It never drives forward into less than 45 cm of clearance. The firmware also stops the motors on
 its own if commands stop arriving for 500 ms.
 
+### Watching the rover's camera from the laptop
+
+While its camera screen is open, the rover app serves the camera on the Wi-Fi as MJPEG (about 12 fps,
+640 px) and announces it with Bonjour (`_rovercam._tcp`). The web app's dev server listens for that
+(`frontend/phone-discovery.ts`, `GET /api/phone-camera`), so opening the app on the iPhone is enough: the
+Control page's camera panel switches to the **iPhone camera** and links up by itself, in either mode. If
+discovery can't help (another subnet, a static build), type the address from the cast icon at the top
+of the camera screen, e.g. `192.168.1.23` (port 8787).
+Frames are only encoded while someone watches. The server is `CameraStreamServer` in
+`modules/splat-capture/ios/SplatCaptureCore` (routes `/camera.mjpg`, `/frame.jpg`, `/status`), fed by
+`CaptureController`; `swift test` covers it. Phone and laptop must share a network.
+
 ### Coordinates (what "where the leaf is" means)
 
 - **World:** ARKit's gravity-aligned frame, in metres, with +y up. It's fixed for the session, so
