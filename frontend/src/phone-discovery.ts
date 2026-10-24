@@ -22,8 +22,10 @@ export type DiscoveredPhone = {
   name: string
   /** The phone model the app reports, e.g. "iPhone16,1". */
   device: string
-  /** Where its camera server is, e.g. "http://192.168.1.23:8787". */
+  /** Where its camera server is, e.g. "http://192.168.1.23:8787". Changes when the Wi-Fi hands out a new address. */
   origin: string
+  /** Stays the same for an install of the app (older builds don't send one), so the page can recognise its phone. */
+  id?: string
 }
 
 function isIPv4(address: string) {
@@ -39,6 +41,7 @@ function toPhone(service: Service): DiscoveredPhone | null {
     name: service.name,
     device: typeof txt.device === 'string' ? txt.device : service.name,
     origin: `http://${address}:${service.port}`,
+    ...(typeof txt.id === 'string' && txt.id ? { id: txt.id } : {}),
   }
 }
 

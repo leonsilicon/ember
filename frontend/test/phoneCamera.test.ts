@@ -15,17 +15,29 @@ describe('phoneCameraOrigin', () => {
 })
 
 describe('pickPhone', () => {
-  const mine = { origin: 'http://192.168.1.112:8787', device: 'iPhone18,1' }
-  const theirs = { origin: 'http://192.168.1.129:8788', device: 'Mac stand-in' }
+  const mine = { origin: 'http://192.168.1.112:8787', device: 'iPhone18,1', id: 'my-phone' }
+  const theirs = { origin: 'http://192.168.1.129:8788', device: 'Mac stand-in', id: 'mac-stand-in' }
+  const none = { id: null, origin: null }
 
   test('the first time, links up with the only phone found', () => {
-    expect(pickPhone([mine], null)).toBe(mine)
-    expect(pickPhone([theirs, mine], null)).toBeNull()
+    expect(pickPhone([mine], none)).toBe(mine)
+    expect(pickPhone([theirs, mine], none)).toBeNull()
   })
 
   test('after that, only with the one used last, never a stranger just because it is the only one', () => {
-    expect(pickPhone([theirs, mine], 'http://192.168.1.112:8787')).toBe(mine)
-    expect(pickPhone([theirs], 'http://192.168.1.112:8787')).toBeNull()
-    expect(pickPhone([], 'http://192.168.1.112:8787')).toBeNull()
+    const last = { id: 'my-phone', origin: 'http://192.168.1.112:8787' }
+    expect(pickPhone([theirs, mine], last)).toBe(mine)
+    expect(pickPhone([theirs], last)).toBeNull()
+    expect(pickPhone([], last)).toBeNull()
+  })
+
+  test('recognises the phone by its id after the Wi-Fi gives it a new address', () => {
+    const moved = { ...mine, origin: 'http://192.168.1.241:8787' }
+    expect(pickPhone([theirs, moved], { id: 'my-phone', origin: 'http://192.168.1.112:8787' })).toBe(moved)
+  })
+
+  test('an older build without an id is recognised by its address', () => {
+    const old = { origin: 'http://192.168.1.112:8787', device: 'iPhone18,1' }
+    expect(pickPhone([theirs, old], { id: null, origin: 'http://192.168.1.112:8787' })).toBe(old)
   })
 })

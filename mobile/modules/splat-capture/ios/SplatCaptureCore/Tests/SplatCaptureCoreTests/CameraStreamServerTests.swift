@@ -38,7 +38,7 @@ final class CameraStreamServerTests: XCTestCase {
 
   override func setUp() {
     super.setUp()
-    server = CameraStreamServer(device: "Test iPhone")
+    server = CameraStreamServer(device: "Test iPhone", id: "test-id")
     let ready = expectation(description: "listening")
     server.onStateChange = { [weak self] state in
       if case .ready(let port) = state {
@@ -76,6 +76,7 @@ final class CameraStreamServerTests: XCTestCase {
     XCTAssertEqual(headers["Access-Control-Allow-Origin"] as? String, "*")
     let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
     XCTAssertEqual(json["device"] as? String, "Test iPhone")
+    XCTAssertEqual(json["id"] as? String, "test-id")
     XCTAssertEqual(json["viewers"] as? Int, 0)
   }
 
@@ -97,7 +98,10 @@ final class CameraStreamServerTests: XCTestCase {
     browser.browseResultsChangedHandler = { results, _ in
       for result in results {
         guard case .service(let name, _, _, _) = result.endpoint, name.contains("Test iPhone"), !fulfilled else { continue }
-        if case .bonjour(let txt) = result.metadata { XCTAssertEqual(txt["device"], "Test iPhone") }
+        if case .bonjour(let txt) = result.metadata {
+          XCTAssertEqual(txt["device"], "Test iPhone")
+          XCTAssertEqual(txt["id"], "test-id")
+        }
         fulfilled = true
         found.fulfill()
       }

@@ -91,7 +91,7 @@ class Handler(BaseHTTPRequestHandler):
         params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
         if path == "/status":
             frames = int((time.time() - START) * FPS)
-            body = json.dumps({"device": "Mock iPhone", "viewers": viewers, "frames": frames, "width": WIDTH, "height": HEIGHT}).encode()
+            body = json.dumps({"id": "mock-iphone", "device": "Mock iPhone", "viewers": viewers, "frames": frames, "width": WIDTH, "height": HEIGHT}).encode()
             self.headers_common(200, "application/json", len(body))
             self.wfile.write(body)
         elif path == "/detections":
@@ -141,7 +141,7 @@ if __name__ == "__main__":
         if shutil.which("dns-sd"):
             advert = subprocess.Popen(
                 ["dns-sd", "-R", "Rover camera (Mock iPhone)", "_rovercam._tcp", "local", str(args.port),
-                 "device=Mock iPhone", "path=/camera.mjpg"],
+                 "device=Mock iPhone", "id=mock-iphone", "path=/camera.mjpg"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
             print("No dns-sd here (it's macOS's), so not advertised: enter the address by hand.")

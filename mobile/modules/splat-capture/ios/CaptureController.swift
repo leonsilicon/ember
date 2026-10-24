@@ -60,7 +60,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
   private let detectionQueue = DispatchQueue(label: "soon2026.splatcapture.detection", qos: .userInitiated)
   private let streamQueue = DispatchQueue(label: "soon2026.splatcapture.stream", qos: .userInitiated)
   /// The camera for browsers on the same Wi-Fi (the web app's live mode). Encodes only while watched.
-  let cameraServer = CameraStreamServer(device: hardwareModel())
+  let cameraServer = CameraStreamServer(device: hardwareModel(), id: cameraStreamId())
   private let ciContext = CIContext()
   private weak var session: ARSession?
   // main-thread state
@@ -777,6 +777,16 @@ private final class Recording {
     return CaptureController.describe(
       try CaptureController.library.save(dataset: dataset, summary: summary, thumbnail: thumbnail, video: video))
   }
+}
+
+/// The Wi-Fi camera's id: made once per install and kept, so the web app recognises this phone when its
+/// address changes.
+func cameraStreamId() -> String {
+  let key = "soon2026.cameraStreamId"
+  if let id = UserDefaults.standard.string(forKey: key) { return id }
+  let id = UUID().uuidString.lowercased()
+  UserDefaults.standard.set(id, forKey: key)
+  return id
 }
 
 /// e.g. "iPhone14,4" — readable from any thread, unlike UIDevice.

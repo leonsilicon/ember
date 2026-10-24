@@ -8,6 +8,8 @@ import { MjpegView } from './MjpegView'
 import { PHONE_CAMERA_PORT, phoneCameraOrigin, pickPhone } from '../phoneCamera'
 
 const STORAGE_KEY = 'rover.phoneCameraAddress'
+/** The id of the phone used last: how it's recognised after the Wi-Fi gives it a new address. */
+const ID_KEY = 'rover.phoneCameraId'
 const STATUS_TIMEOUT_MS = 3000
 const POLL_MS = 2000
 /** Missed status checks in a row before the phone counts as gone (an ended stream leaves its last frame up). */
@@ -18,13 +20,21 @@ const AUTO_RETRY_MS = 5000
 const CAPTURE_SIZE = 1920
 const CAPTURE_TIMEOUT_MS = 4000
 
-type PhoneStatus = { device: string; viewers: number; frames: number; width: number; height: number }
+type PhoneStatus = { id?: string; device: string; viewers: number; frames: number; width: number; height: number }
 
 type State =
   | { kind: 'idle' }
   | { kind: 'checking' }
   | { kind: 'streaming'; device: string }
   | { kind: 'error'; message: string }
+
+function readSavedId(): string | null {
+  try {
+    return localStorage.getItem(ID_KEY)
+  } catch {
+    return null
+  }
+}
 
 function readSaved(): string {
   try {
@@ -58,7 +68,8 @@ const displayAddress = (origin: string) => origin.replace(/^https?:\/\//, '').re
  */
 export function PhoneCameraPanel({ phones = [] }: { phones?: readonly DiscoveredPhone[] }) {
   const [address, setAddress] = useState(readSaved)
-  const discovered = pickPhone(phones, phoneCameraOrigin(address))
+  const [lastId, setLastId] = useState(readSavedId)
+  const discovered = pickPhone(phones, { id: lastId, origin: phoneCameraOrigin(address) })
   // A remembered phone is reconnected to as the panel opens.
   const [initialOrigin] = useState(() => phoneCameraOrigin(address))
   const [state, setState] = useState<State>(() => (initialOrigin ? { kind: 'checking' } : { kind: 'idle' }))
@@ -92,6 +103,14 @@ export function PhoneCameraPanel({ phones = [] }: { phones?: readonly Discovered
       shownFrames.current = 0
       lastFrames.current = null
       setState({ kind: 'streaming', device: status.device })
+      if (status.id) {
+        setLastId(status.id)
+        try {
+          localStorage.setItem(ID_KEY, status.id)
+        } catch {
+          // Private mode: it's just not remembered.
+        }
+      }
       // A fresh query each time, so reconnecting never reuses a stalled stream.
       setStreamUrl(`${target}/camera.mjpg?v=${Date.now()}`)
     } catch {

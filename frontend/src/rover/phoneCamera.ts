@@ -15,14 +15,23 @@ export function phoneCameraOrigin(input: string): string | null {
 }
 
 /** A phone the dev server found on the Wi-Fi (the shape of phone-discovery.ts's DiscoveredPhone). */
-type FoundPhone = { origin: string }
+type FoundPhone = { origin: string; id?: string }
+
+/** The phone used last: its id (stable), and its address (for builds without an id). */
+export type LastPhone = { id: string | null; origin: string | null }
 
 /**
  * Which found phone to link up with by itself: the one used last, and only that one, since on a shared
- * Wi-Fi teammates' phones (and stand-ins) show up too. The very first time, with none used yet, the
- * only one found. Otherwise none: the panel lists them to pick from.
+ * Wi-Fi teammates' phones (and stand-ins) show up too. It's recognised by its id, which survives the Wi-Fi
+ * handing it a new address, or by its address for builds without one. The very first time, with none
+ * used yet, the only one found. Otherwise none: the panel lists them to pick from.
  */
-export function pickPhone<P extends FoundPhone>(phones: readonly P[], lastOrigin: string | null): P | null {
-  if (lastOrigin) return phones.find((p) => p.origin === lastOrigin) ?? null
+export function pickPhone<P extends FoundPhone>(phones: readonly P[], last: LastPhone): P | null {
+  if (last.id) {
+    const byId = phones.find((p) => p.id === last.id)
+    if (byId) return byId
+  }
+  if (last.origin) return phones.find((p) => !p.id && p.origin === last.origin) ?? null
+  if (last.id) return null
   return phones.length === 1 ? phones[0] : null
 }

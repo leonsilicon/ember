@@ -8,7 +8,7 @@ import Network
 ///   plays as it arrives;
 /// - `GET /frame.jpg`: the newest frame once (503 before the first); with `?size=N`, a still encoded fresh
 ///   from the camera, its longer side N pixels, at high quality (via `stillProvider`), for capturing;
-/// - `GET /status`: JSON `{ device, viewers, frames, width, height }`, to check the phone is reachable;
+/// - `GET /status`: JSON `{ id, device, viewers, frames, width, height }`, to check the phone is reachable;
 /// - `GET /detections`: the leaf detector's boxes as they come (newline-delimited JSON, one line per
 ///   detector frame, the newest first on connect), for drawing over the picture as the phone does.
 ///
@@ -43,6 +43,9 @@ public final class CameraStreamServer {
 
   private let queue = DispatchQueue(label: "soon2026.camera-stream-server")
   private let device: String
+  /// Stays the same for this install while its address changes (Wi-Fi hands out new ones), so the web app
+  /// can recognise the phone it used last. In the Bonjour TXT record and `/status`.
+  public let id: String
   private var listener: NWListener?
   private var viewers: [ObjectIdentifier: Viewer] = [:]
   private var latest: Data?
@@ -55,8 +58,9 @@ public final class CameraStreamServer {
   private let watching = ManagedAtomicFlag()
 
   /// `device` is reported by `/status` (e.g. "iPhone 15 Pro").
-  public init(device: String) {
+  public init(device: String, id: String) {
     self.device = device
+    self.id = id
   }
 
   public var state: State { queue.sync { _state } }
@@ -74,7 +78,7 @@ public final class CameraStreamServer {
         parameters.allowLocalEndpointReuse = true
         let listener = try NWListener(using: parameters, on: port == 0 ? .any : NWEndpoint.Port(rawValue: port)!)
         // The TXT record says which device it is; Bonjour renames the service if the name is taken.
-        let txt = NWTXTRecord(["device": self.device, "path": "/camera.mjpg"])
+        let txt = NWTXTRecord(["device": self.device, "id": self.id, "path": "/camera.mjpg"])
         listener.service = NWListener.Service(name: "Rover camera (\(self.device))", type: Self.serviceType,
                                               txtRecord: txt)
         listener.stateUpdateHandler = { [weak self, weak listener] state in
@@ -267,6 +271,7 @@ public final class CameraStreamServer {
       }
     case "/status":
       let status: [String: Any] = [
+        "id": id,
         "device": device,
         "viewers": viewers.values.filter(\.streaming).count,
         "frames": frames,
