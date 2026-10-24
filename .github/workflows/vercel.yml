@@ -83,4 +83,6 @@ jobs:
 
       - name: Summary
         if: steps.token.outputs.ready == 'true'
-        run: echo "Deployed \`${GITHUB_SHA::7}\` to the $ENVIRONMENT environment: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+        # A block scalar: the colon in the message would end a plain YAML scalar.
+        run: |
+          echo "Deployed \`${GITHUB_SHA::7}\` to the $ENVIRONMENT environment: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
