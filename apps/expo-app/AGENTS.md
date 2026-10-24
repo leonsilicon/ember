@@ -53,6 +53,8 @@ Every push to `main` ships the production app to TestFlight: `.github/workflows/
 - The leaf detector is gitignored, so the workflow exports it (cached by `packages/owlvit`'s inputs) and points `LEAF_DETECTOR_DIST` at it, because `eas build --local` prebuilds a copy of the repo without gitignored files.
 - One-time setup: register the runner (only the repo owner can create its token), run `bunx eas-cli@24.12.1 credentials -p ios` once in `apps/expo-app` (profile `production`: reuse the account's distribution certificate, create the App Store provisioning profile, and assign the App Store Connect API key for submissions; `--non-interactive` builds can't create credentials).
 - Secrets: only `EXPO_TOKEN`, and it's optional: without it the runner's `eas login` is used.
+- Two repos, kept in sync: the runner is registered on github.com/leonsilicon/soon2026 (Leon owns it, which a self-hosted runner needs), while github.com/ParthJairam07/soon2026 stays the team's repo. `.github/workflows/sync.yml` (on every push to leonsilicon/soon2026 and every 10 minutes, with the `SYNC_TOKEN` secret) fast-forwards whichever side is behind on every branch, merges branches that moved on both when they merge cleanly, and fails, naming the branch, when they conflict. The TestFlight job only runs on leonsilicon/soon2026. Push to either repo.
+- leonsilicon/soon2026 is public and its runner is a personal Mac, so only collaborators may open pull requests, every outside contributor's workflow run needs approval, the workflow token is read-only and only GitHub's own actions plus `oven-sh/setup-bun` and `astral-sh/setup-uv` may run. Keep it that way; allow a new third-party action under Settings → Actions before using it.
 
 ## Rules
 

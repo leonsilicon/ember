@@ -1,0 +1,77 @@
+# Keeps every branch identical on leonsilicon/soon2026 (where Leon has the admin rights a self-hosted runner needs)
+# and ParthJairam07/soon2026 (the team's repo), in both directions. A branch that moved on one side is fast-forwarded
+# on the other; one that moved on both is merged when that merges cleanly, and left for a person when it doesn't.
+# A branch deleted on one side comes back from the other.
+#
+# Needs SYNC_TOKEN: a classic personal access token of Leon's with the `repo` and `workflow` scopes (`workflow`
+# because the branches carry workflow files). Its pushes trigger workflows, so commits that arrive from
+# ParthJairam07/soon2026 still get a TestFlight build here.
+name: Sync with ParthJairam07/soon2026
+
+on:
+  push:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync branches
+    if: github.repository == 'leonsilicon/soon2026'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+    steps:
+      - name: Check for the token
+        if: env.SYNC_TOKEN == ''
+        run: echo "::warning::SYNC_TOKEN is not set, so nothing is synced."
+
+      - name: Sync every branch
+        if: env.SYNC_TOKEN != ''
+        run: |
+          set -euo pipefail
+          git init -q --bare sync.git
+          cd sync.git
+          git config user.name 'soon2026 sync'
+          git config user.email 'leon@leonsilicon.com'
+          git remote add leon "https://x-access-token:${SYNC_TOKEN}@github.com/leonsilicon/soon2026.git"
+          git remote add parth "https://x-access-token:${SYNC_TOKEN}@github.com/ParthJairam07/soon2026.git"
+          git fetch -q leon '+refs/heads/*:refs/remotes/leon/*'
+          git fetch -q parth '+refs/heads/*:refs/remotes/parth/*'
+
+          conflicts=()
+          for branch in $(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/leon refs/remotes/parth | sort -u); do
+            leon=$(git rev-parse -q --verify "refs/remotes/leon/$branch" || true)
+            parth=$(git rev-parse -q --verify "refs/remotes/parth/$branch" || true)
+            if [ "$leon" = "$parth" ]; then
+              continue
+            elif [ -z "$parth" ] || { [ -n "$leon" ] && git merge-base --is-ancestor "$parth" "$leon"; }; then
+              echo "$branch: leonsilicon → ParthJairam07"
+              git push -q parth "$leon:refs/heads/$branch"
+            elif [ -z "$leon" ] || git merge-base --is-ancestor "$leon" "$parth"; then
+              echo "$branch: ParthJairam07 → leonsilicon"
+              git push -q leon "$parth:refs/heads/$branch"
+            elif tree=$(git merge-tree --write-tree "$leon" "$parth"); then
+              echo "$branch: diverged; merging both"
+              merge=$(git commit-tree "$tree" -p "$leon" -p "$parth" -m "Merge $branch of ParthJairam07/soon2026")
+              git push -q leon "$merge:refs/heads/$branch"
+              git push -q parth "$merge:refs/heads/$branch"
+            else
+              conflicts+=("$branch")
+            fi
+          done
+
+          if [ ${#conflicts[@]} -gt 0 ]; then
+            for branch in "${conflicts[@]}"; do
+              echo "::error::$branch has conflicting changes on the two repos; merge it by hand and push it to both."
+            done
+            exit 1
+          fi

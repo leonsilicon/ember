@@ -21,6 +21,9 @@ concurrency:
 jobs:
   testflight:
     name: Build and submit to TestFlight
+    # The runner is registered on leonsilicon/soon2026 only; sync.yml mirrors the branches to ParthJairam07/soon2026,
+    # where this job would wait for a runner forever.
+    if: github.repository == 'leonsilicon/soon2026'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 120
     env:
@@ -93,13 +96,10 @@ jobs:
 
       # Internal testers only, which needs no Beta App Review: the internal "SOON" group distributes every build
       # automatically once App Store Connect has processed it (5–15 minutes after the upload).
+      # No --what-to-test: EAS Submit takes a changelog on its Enterprise plan only.
       - name: Upload to TestFlight
         working-directory: apps/expo-app
-        env:
-          WHAT_TO_TEST: ${{ github.event.head_commit.message }}
-        run: >-
-          bunx "$EAS_CLI" submit --platform ios --profile production --path "$RUNNER_TEMP/soon2026.ipa" --non-interactive --verbose
-          ${WHAT_TO_TEST:+--what-to-test "$WHAT_TO_TEST"}
+        run: bunx "$EAS_CLI" submit --platform ios --profile production --path "$RUNNER_TEMP/soon2026.ipa" --non-interactive --verbose
 
       - name: Summary
         run: |
