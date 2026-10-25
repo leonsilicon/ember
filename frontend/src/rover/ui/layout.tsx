@@ -225,7 +225,7 @@ export function Rail({ children, footer }: { children: ReactNode; footer?: React
           <span className="absolute inset-y-6 left-[3px] w-[2px] rounded-full bg-transparent transition-colors group-hover:bg-line-strong group-focus-visible:bg-ember group-active:bg-ember" />
         </div>
       )}
-      <div className="flex min-h-0 flex-1 flex-col gap-2 lg:overflow-y-auto lg:overscroll-contain">
+      <div className="relative flex min-h-0 flex-1 flex-col gap-2 lg:overflow-y-auto lg:overscroll-contain">
         {children}
         {footer}
       </div>

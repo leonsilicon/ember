@@ -35,6 +35,11 @@ Geist for UI, Geist Mono (`.num`) only for measurements, times, addresses and co
 
 The stage owns the screen. Floating overlays on it (status readout top-left, camera toolbar top-right, transport bottom-centre) use `panel/95`, a hairline and `shadow-float`. Radii: 10px modules and overlays, 6px controls, 2px LEDs. Motion: 150–200ms colour and height transitions only; LEDs blink in steps; all of it is off under reduced motion.
 
+## Stages
+
+- `/control`, live mode: `LiveMapView`, the rover brain's map streamed from the phone (rover-brain `live-map.ts`, map lines on the camera server's `/detections`), drawn like the sim's top view on the `--map-*` tokens; the rover's pose eases between the 5 Hz updates. Simulated mode: the splat viewer (captures or the sample).
+- `/sim`: the 3D yard, with the top view as a rail module.
+
 ## Rules
 
 - Ember appears once per region at most. If two things want it, one of them is not primary.
