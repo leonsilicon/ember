@@ -1,6 +1,6 @@
 import { Button, ProgressBar, Slider, Tag } from '@blueprintjs/core'
 import { ArrowLeft, Cross, Flame, Shield, Tree, Wind } from '@blueprintjs/icons'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Dryness } from './live'
 import type { FbpInputs } from './sim/fbp'
 import { CLEARED_FACTOR } from './sim/protocol'
@@ -178,8 +178,9 @@ interface SimProps {
   status: 'idle' | 'running' | 'done'
   t: number
   weather: FbpInputs
+  liveWeather: FbpInputs
   windSource: string
-  onWeather: (w: FbpInputs) => void
+  onWeather: (w: FbpInputs | null) => void
   actions: SimActions
   byFid: Map<number, BuildingRow>
   drawingBreak: boolean
@@ -191,11 +192,16 @@ interface SimProps {
   dryness: number
 }
 
-export function SimTab({ run, baseline, status, t, weather, windSource, onWeather, actions, byFid, drawingBreak, onDrawBreak, onClearTop, onResetActions, onPick, onExit, dryness }: SimProps) {
+export function SimTab({ run, baseline, status, t, weather, liveWeather, windSource, onWeather, actions, byFid, drawingBreak, onDrawBreak, onClearTop, onResetActions, onPick, onExit, dryness }: SimProps) {
   const ign = run ? [...run.ignitedAt.entries()].sort((a, b) => a[1] - b[1]) : []
   const ignitedNow = ign.filter(([, m]) => m <= t).length
   const saved = baseline && run && baseline !== run ? baseline.result.ignitedHomes - run.result.ignitedHomes : 0
   const hasActions = actions.cleared.size > 0 || actions.breaks.length > 0
+  const [whatIf, setWhatIf] = useState(false)
+  const isLive =
+    Math.round(weather.ffmc) === Math.round(liveWeather.ffmc) &&
+    Math.round(weather.windKmh) === Math.round(liveWeather.windKmh) &&
+    Math.round(weather.windFromDeg) === Math.round(liveWeather.windFromDeg)
   return (
     <>
       <div className="flex items-center gap-2 border-b px-2 py-2 hair">
@@ -208,10 +214,35 @@ export function SimTab({ run, baseline, status, t, weather, windSource, onWeathe
         <Big label="Homes ignited" value={run ? `${ignitedNow}` : '–'} unit={run ? `of ${run.result.ignitedHomes} by 12 h` : ''} tone="var(--ops-red)" />
         <Big label="Homes saved" value={hasActions && run ? `${saved}` : '–'} unit={hasActions ? 'vs. no action' : 'add an action'} tone="#3dcc91" />
       </div>
-      <Section title="Weather driving the run" right={<span className="label">{windSource}</span>}>
-        <Knob label="Fine fuel moisture (FFMC)" value={weather.ffmc} min={70} max={96} fmt={(v) => v.toFixed(0)} onChange={(v) => onWeather({ ...weather, ffmc: v })} />
-        <Knob label="Wind speed" value={weather.windKmh} min={0} max={50} fmt={(v) => `${v.toFixed(0)} km/h`} onChange={(v) => onWeather({ ...weather, windKmh: v })} />
-        <Knob label="Wind from" value={weather.windFromDeg} min={0} max={359} fmt={(v) => `${v.toFixed(0)}°`} onChange={(v) => onWeather({ ...weather, windFromDeg: v })} />
+      <Section title="Weather driving the run" right={<span className="label" style={isLive ? undefined : { color: 'var(--ops-amber, #f5a623)' }}>{isLive ? windSource : 'what-if · not live'}</span>}>
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="mono" style={{ color: 'var(--ops-cyan)' }}>
+            FFMC {weather.ffmc.toFixed(0)} · wind {weather.windKmh.toFixed(0)} km/h from {weather.windFromDeg.toFixed(0)}°
+          </span>
+          <Button small minimal rightIcon={whatIf ? 'chevron-up' : 'chevron-down'} onClick={() => setWhatIf((v) => !v)} aria-expanded={whatIf}>
+            What-if weather
+          </Button>
+        </div>
+        {!isLive && !whatIf && (
+          <Button small minimal intent="primary" className="mt-1" onClick={() => onWeather(null)}>
+            Reset to live
+          </Button>
+        )}
+        {whatIf && (
+          <div className="mt-2 rounded border p-2 hair">
+            <p className="mb-2 text-[11px]" style={{ color: 'var(--ops-muted)' }}>
+              Change the weather to see how the same fire would run. Live today: FFMC {liveWeather.ffmc.toFixed(0)} · {liveWeather.windKmh.toFixed(0)} km/h from {liveWeather.windFromDeg.toFixed(0)}°.
+            </p>
+            <Knob label="Fine fuel moisture (FFMC)" value={weather.ffmc} min={70} max={96} fmt={(v) => v.toFixed(0)} onChange={(v) => onWeather({ ...weather, ffmc: v })} />
+            <Knob label="Wind speed" value={weather.windKmh} min={0} max={50} fmt={(v) => `${v.toFixed(0)} km/h`} onChange={(v) => onWeather({ ...weather, windKmh: v })} />
+            <Knob label="Wind from" value={weather.windFromDeg} min={0} max={359} fmt={(v) => `${v.toFixed(0)}°`} onChange={(v) => onWeather({ ...weather, windFromDeg: v })} />
+            {!isLive && (
+              <Button small minimal intent="primary" onClick={() => onWeather(null)}>
+                Reset to live
+              </Button>
+            )}
+          </div>
+        )}
         {run && (
           <div className="label pt-1">
             ISI {run.result.isi.toFixed(1)} · fastest fuel {run.result.headRosMPerMin.toFixed(1)} m/min · dryness ×{drynessMultiplier(dryness).toFixed(2)} · solved in {Math.round(run.result.elapsedMs)} ms

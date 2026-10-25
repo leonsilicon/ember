@@ -554,6 +554,7 @@ export default function WildfireApp() {
               status={sim.status}
               t={t}
               weather={activeWeather}
+              liveWeather={liveWeather}
               windSource={wind.source === 'open-meteo' ? 'live · open-meteo + cwfis' : 'default wind'}
               onWeather={setWeather}
               actions={actions}
