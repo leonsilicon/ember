@@ -6,8 +6,10 @@ from `frontend/public/wildfire/`:
 
 | file | what |
 | --- | --- |
-| `hazard.pmtiles` | vector tiles of raster cells grouped by raw fuel code (`code`, `cat`, `fuel`) |
+| `zones.geojson` | high fire-risk zones (`zones.py`): smoothed polygons with area, fuel mix, leaf-off share, homes inside / within 30 m / within 500 m, distance to water and an inside label point |
 | `buildings.pmtiles` | layers `buildings` (footprints with screening results) and `rings` (exact 30 m buffers, same ids) (`hazard_overlap`, `hazard_within_30m`, `needs_evaluation`, `coverage_complete`, `nearest_hazard_m`, fuel codes) |
+| `density.geojson` | high-density home areas (`density.py`): smooth blobs where ≥ 2 homes/ha within 150 m, with `homes`, `area_ha`, `homes_per_ha` and a label point |
+| `roads.geojson` | drivable roads (`roads.py`, from Overture segments) used as back-burn anchors in the suggested actions |
 | `coverage.json` | pilot bbox, source metadata, summary stats |
 | `categories.json` | copy of the shared code → category → colour config |
 
@@ -58,8 +60,20 @@ Pass it to the pipeline with `--leafoff`. Each building then gets `leafoff_30m` 
 the High/Extreme cover and proximity in the 30 m zone, leaf-off is the drop scaled to 0.35, and neighbours is
 the count of other structures within 30 m capped at 4 (`RISK_WEIGHTS`, `NEIGHBOUR_CAP`). The UI shows
 Ignition Risk = 100 × exposure × (0.4 + 0.6 × today's CWFIS fine-fuel dryness), so the number moves with the
-weather. `leafoff.pmtiles` holds the drop classes (≥0.25 / ≥0.32 / ≥0.40) where there was canopy (leaf-on
-NDVI > 0.4); `fuel.bin` is the hazard grid resampled for the fire-spread simulation.
+weather. `fuel.bin` is the hazard grid resampled for the fire-spread simulation.
+
+## High fire-risk zones
+
+`zones.py` (run at the end of the pipeline, or on its own against an existing `buildings.json`) scores every 30 m
+cell as 0.6 × fuel weight (the same per-category weights as the home score) + 0.4 × leaf-off (NDVI drop / 0.35,
+only where there was canopy), keeps cells ≥ 0.6, closes gaps under ~120 m, drops strands thinner than ~90 m and
+blobs under 5 ha, and writes `zones.geojson`. On the pilot that is 307 zones, ~6,000 ha. They are almost all
+High/Extreme conifer; hardwood leaf-off alone does not reach the threshold, so leaf-off mostly shows up as a
+driver on the zone card rather than creating zones. Today's dryness (CWFIS FFMC) is one value for the whole pilot,
+so it is not part of where the zones are.
+
+    python zones.py --raster pilot_hazard_30m_epsg3978.tif --leafoff pilot_leafoff_30m_epsg3978.tif \
+        --bbox=-79.35,45.20,-78.95,45.45
 
 Satellites can't see a leaf pile; the drop measures canopy greenness loss, not litter on the ground.
 

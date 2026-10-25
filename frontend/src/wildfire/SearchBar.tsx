@@ -43,9 +43,9 @@ export function SearchBar({ bias, onPick }: Props) {
   }
 
   return (
-    <div className="pointer-events-auto relative w-full max-w-md">
-      <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/80 px-3 py-2 shadow-2xl shadow-black/50 backdrop-blur-md">
-        <svg className="h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+    <div className="pointer-events-auto relative w-full">
+      <div className="flex items-center gap-2.5 rounded-2xl border border-white/10 bg-slate-950/75 px-4 py-3 shadow-2xl shadow-black/50 backdrop-blur-md">
+        <svg className="h-5 w-5 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
           <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 3.3 9.9l3.65 3.65a.75.75 0 1 0 1.06-1.06l-3.65-3.65A5.5 5.5 0 0 0 9 3.5ZM5 9a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z" clipRule="evenodd" />
         </svg>
         <input
@@ -71,7 +71,7 @@ export function SearchBar({ bias, onPick }: Props) {
           }}
           placeholder="Search an address or place…"
           aria-label="Search address"
-          className="w-full bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
+          className="w-full bg-transparent text-base text-slate-100 placeholder:text-slate-500 focus:outline-none"
         />
         {status === 'loading' && <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-slate-600 border-t-cyan-400" />}
         {q && status !== 'loading' && (

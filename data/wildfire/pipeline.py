@@ -180,18 +180,6 @@ def write_fuel_grid(arr: np.ndarray, transform, crs, nodata, bbox, out: Path) ->
     }
 
 
-def leafoff_features(drop: np.ndarray, ndvi_on: np.ndarray, transform, to_wgs84, clip=None):
-    """Polygons of fresh leaf-drop classes (only where there was canopy to begin with)."""
-    cls = np.zeros(drop.shape, dtype=np.uint8)
-    canopy = np.isfinite(drop) & (ndvi_on > 0.4)
-    for thr, c in LEAFOFF_CLASSES:
-        cls[canopy & (drop >= thr)] = c
-    for g, v in rasterio.features.shapes(cls, mask=cls > 0, transform=transform):
-        g84 = clip_to(shp_transform(to_wgs84, shape(g)), clip)
-        if g84 is not None:
-            yield {"type": "Feature", "geometry": mapping(g84), "properties": {"drop_class": int(v)}}
-
-
 def codes_under(geom, arr: np.ndarray, transform, nodata) -> tuple[set[int], bool]:
     """Distinct raster codes touched by geom; second value is True if geom leaves the raster."""
     minx, miny, maxx, maxy = geom.bounds
@@ -250,33 +238,6 @@ def hazard_polygons(arr, transform, nodata):
         if category_of(int(code), nodata) in HAZARD_CATS:
             cat_mask[arr == code] = 1
     return [shape(g) for g, v in rasterio.features.shapes(cat_mask, mask=cat_mask == 1, transform=transform) if v == 1]
-
-
-def clip_to(geom84, clip):
-    """Clip a WGS84 geometry to the coverage polygon; None if nothing is left."""
-    if clip is None or clip.contains(geom84):
-        return geom84
-    g = geom84.intersection(clip)
-    return None if g.is_empty else g
-
-
-def hazard_features(arr, transform, nodata, to_wgs84, clip=None):
-    """One polygon per contiguous run of the same raw code, with code/category/fuel, clipped to coverage."""
-    arr_i32 = arr.astype(np.int32)
-    valid = arr != nodata if nodata is not None else np.ones(arr.shape, bool)
-    for g, v in rasterio.features.shapes(arr_i32, mask=valid, transform=transform):
-        code = int(v)
-        cat = category_of(code, nodata)
-        if cat == "water":
-            continue
-        g84 = clip_to(shp_transform(to_wgs84, shape(g)), clip)
-        if g84 is None:
-            continue
-        yield {
-            "type": "Feature",
-            "geometry": mapping(g84),
-            "properties": {"code": code, "cat": cat, "fuel": fuel_of(code)},
-        }
 
 
 def run_tippecanoe(tippecanoe: str, layers: dict[str, Path], dst: Path, extra: list[str]):
@@ -339,20 +300,6 @@ def main():
     hz_tree = STRtree(hz_geoms) if hz_geoms else None
 
     coverage_poly = box(*bbox)
-    print("writing hazard features…", file=sys.stderr)
-    hazard_geojson = work / "hazard.geojson"
-    with hazard_geojson.open("w") as f:
-        f.write('{"type":"FeatureCollection","features":[')
-        first = True
-        n_hz = 0
-        for feat in hazard_features(arr, transform, nodata, to_wgs84, coverage_poly):
-            if not first:
-                f.write(",")
-            f.write(json.dumps(feat, separators=(",", ":")))
-            first = False
-            n_hz += 1
-        f.write("]}")
-
     print("analyzing buildings…", file=sys.stderr)
     raw = json.loads(buildings_path.read_text())
     footprints = []  # (feature, wgs84 geom, raster-crs geom)
@@ -416,19 +363,14 @@ def main():
         args.tippecanoe, {"buildings": buildings_geojson, "rings": rings_geojson}, out / "buildings.pmtiles",
         ["-Z10", "-z16", "--no-feature-limit", "--no-tile-size-limit", "--use-attribute-for-id=fid", "--detect-shared-borders"],
     )
-    run_tippecanoe(
-        args.tippecanoe, {"hazard": hazard_geojson}, out / "hazard.pmtiles",
-        ["-Z7", "-z14", "--no-feature-limit", "--no-tile-size-limit", "--detect-shared-borders", "--coalesce-smallest-as-needed"],
-    )
+    print("high fire-risk zones…", file=sys.stderr)
+    import zones  # imports this module, so only once it has finished loading
 
-    if drop is not None:
-        leafoff_geojson = work / "leafoff.geojson"
-        feats = list(leafoff_features(drop, ndvi_on, transform, to_wgs84, coverage_poly))
-        leafoff_geojson.write_text(json.dumps({"type": "FeatureCollection", "features": feats}, separators=(",", ":")))
-        run_tippecanoe(
-            args.tippecanoe, {"leafoff": leafoff_geojson}, out / "leafoff.pmtiles",
-            ["-Z8", "-z14", "--no-feature-limit", "--no-tile-size-limit", "--detect-shared-borders", "--coalesce-smallest-as-needed"],
-        )
+    centroids = np.array([[g.centroid.x, g.centroid.y] for _, _, g in footprints]) if footprints else np.zeros((0, 2))
+    zones_meta = zones.write_zones(zones.build_zones(arr, transform, nodata, drop, ndvi_on, centroids, to_wgs84, coverage_poly), out)
+    import density
+
+    density_meta = density.write_density(density.build_density(centroids, to_wgs84), out)
 
     coverage = {
         "area_name": args.area_name,
@@ -438,8 +380,9 @@ def main():
         "source": CATEGORIES["source"],
         "buildings_source": "Overture Maps buildings (OSM + Microsoft ML + Google + Esri), ODbL/CDLA",
         "stats": stats,
-        "hazard_features": n_hz,
-        "tiles": {"buildings": "buildings.pmtiles", "hazard": "hazard.pmtiles", **({"leafoff": "leafoff.pmtiles"} if drop is not None else {})},
+        "tiles": {"buildings": "buildings.pmtiles"},
+        "zones": zones_meta,
+        "density": density_meta,
         "leafoff": {**leafoff_meta, "classes": [{"min_drop": t, "drop_class": c} for t, c in LEAFOFF_CLASSES], "full_drop": LEAFOFF_FULL} if leafoff_meta is not None else None,
         "files": {"buildings": "buildings.json"},
         "grid": grid,

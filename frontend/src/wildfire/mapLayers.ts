@@ -7,6 +7,13 @@ export const BUILDINGS_SOURCE = 'wf-buildings'
 export const SATELLITE_SOURCE = 'wf-satellite'
 export const ISO_SOURCE = 'wf-isochrones'
 export const BREAKS_SOURCE = 'wf-breaks'
+export const ZONES_SOURCE = 'wf-zones'
+export const ZONE_POINTS_SOURCE = 'wf-zone-points'
+export const DENSITY_SOURCE = 'wf-density'
+export const DENSITY_POINTS_SOURCE = 'wf-density-points'
+export const SUGGEST_SOURCE = 'wf-suggest'
+export const FLAME_IMAGE = 'wf-flame'
+export const ZONE_ORANGE = '#ff8a1f'
 export const L = {
   satellite: 'wf-satellite',
   buildingsFill: 'wf-buildings-fill',
@@ -17,6 +24,15 @@ export const L = {
   isoLabel: 'wf-iso-label',
   breaksLine: 'wf-breaks-line',
   fire: 'wf-fire',
+  zonesGlow: 'wf-zones-glow',
+  zonesFill: 'wf-zones-fill',
+  zonesLine: 'wf-zones-line',
+  zonesIcon: 'wf-zones-icon',
+  densityGlow: 'wf-density-glow',
+  densityFill: 'wf-density-fill',
+  densityLine: 'wf-density-line',
+  densityCount: 'wf-density-count',
+  suggestLine: 'wf-suggest-line',
 } as const
 
 export function satelliteLayer(): LayerSpecification {
@@ -46,6 +62,8 @@ const CLEARED = ['boolean', ['feature-state', 'cleared'], false] as ExpressionSp
 const SELECTED = ['boolean', ['feature-state', 'selected'], false] as ExpressionSpecification
 const lineColor = (multiplier: number): ExpressionSpecification => ['case', SELECTED, '#48aff0', IGNITED, '#ff6e00', CLEARED, '#3dcc91', riskColor(multiplier)]
 
+const ROUND = { 'line-join': 'round', 'line-cap': 'round' } as const
+
 export function buildingLayers(multiplier: number): LayerSpecification[] {
   return [
     {
@@ -55,6 +73,7 @@ export function buildingLayers(multiplier: number): LayerSpecification[] {
       'source-layer': 'buildings',
       minzoom: 12,
       filter: ['>=', riskExpr(multiplier), ELEVATED],
+      layout: ROUND,
       paint: { 'line-color': riskColor(multiplier), 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 16, 8], 'line-blur': 6, 'line-opacity': 0.55 },
     },
     {
@@ -73,6 +92,7 @@ export function buildingLayers(multiplier: number): LayerSpecification[] {
       source: BUILDINGS_SOURCE,
       'source-layer': 'buildings',
       minzoom: 13,
+      layout: ROUND,
       paint: { 'line-color': lineColor(multiplier), 'line-width': ['case', SELECTED, 3, IGNITED, 1.5, 0.7], 'line-opacity': 0.9 },
     },
   ]
@@ -96,6 +116,7 @@ export function selectedLayers(): LayerSpecification[] {
       source: BUILDINGS_SOURCE,
       'source-layer': 'rings',
       filter: NO_SELECTION,
+      layout: ROUND,
       paint: { 'line-color': '#48aff0', 'line-width': 1.5, 'line-dasharray': [3, 2], 'line-opacity': 0.9 },
     },
   ]
@@ -131,9 +152,12 @@ export function breaksLayer(): LayerSpecification {
     type: 'line',
     source: BREAKS_SOURCE,
     layout: { 'line-cap': 'round' },
-    paint: { 'line-color': '#3dcc91', 'line-width': ['interpolate', ['exponential', 2], ['zoom'], 12, 2, 18, 40], 'line-opacity': 0.75 },
+    paint: { 'line-color': ACTION_COLOR, 'line-width': ['interpolate', ['exponential', 2], ['zoom'], 12, 2, 18, 40], 'line-opacity': 0.75 },
   }
 }
+
+/** Green = fuel break / back-burn (stops the fire), red-orange = retardant (slows it). */
+export const ACTION_COLOR: ExpressionSpecification = ['match', ['get', 'kind'], 'retardant', '#ff5c5c', 'burnout', '#1fb978', '#3dcc91']
 
 export function firstSymbolLayer(layers: LayerSpecification[]): string | undefined {
   return layers.find((l) => l.type === 'symbol')?.id
@@ -142,4 +166,124 @@ export function firstSymbolLayer(layers: LayerSpecification[]): string | undefin
 /** Basemap layers that should hide under satellite imagery (everything except labels). */
 export function basemapLayerIds(style: StyleSpecification): string[] {
   return style.layers.filter((l) => l.type !== 'symbol' && l.type !== 'background').map((l) => l.id)
+}
+
+const ZSEL = ['boolean', ['feature-state', 'selected'], false] as ExpressionSpecification
+const ZHOVER = ['boolean', ['feature-state', 'hover'], false] as ExpressionSpecification
+
+/** High fire-risk zones: one orange, soft glowing edge, one flame per zone (collisions hide the smaller ones). */
+export function zoneLayers(): LayerSpecification[] {
+  return [
+    {
+      id: L.zonesGlow,
+      type: 'line',
+      source: ZONES_SOURCE,
+      layout: ROUND,
+      paint: { 'line-color': ZONE_ORANGE, 'line-width': ['interpolate', ['linear'], ['zoom'], 9, 3, 15, 14], 'line-blur': ['interpolate', ['linear'], ['zoom'], 9, 3, 15, 12], 'line-opacity': 0.45 },
+    },
+    {
+      id: L.zonesFill,
+      type: 'fill',
+      source: ZONES_SOURCE,
+      paint: { 'fill-color': ZONE_ORANGE, 'fill-opacity': ['case', ZSEL, 0.45, ZHOVER, 0.36, 0.26] },
+    },
+    {
+      id: L.zonesLine,
+      type: 'line',
+      source: ZONES_SOURCE,
+      layout: ROUND,
+      paint: { 'line-color': ['case', ZSEL, '#ffd9a8', ZONE_ORANGE], 'line-width': ['case', ZSEL, 2.5, 1.2], 'line-opacity': 0.9 },
+    },
+  ]
+}
+
+export function zoneIconLayer(): LayerSpecification {
+  return {
+    id: L.zonesIcon,
+    type: 'symbol',
+    source: ZONE_POINTS_SOURCE,
+    layout: {
+      'icon-image': FLAME_IMAGE,
+      'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.45, 13, 0.75, 16, 1],
+      'symbol-sort-key': ['-', 0, ['get', 'area_ha']],
+      'icon-padding': 6,
+    },
+  }
+}
+
+/** Flame icon drawn on a canvas (MapLibre glyph fonts cannot render emoji). 64 px at pixelRatio 2. */
+export function flameImage(): ImageData | null {
+  if (typeof document === 'undefined') return null
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const ctx = c.getContext('2d')
+  if (!ctx) return null
+  ctx.translate(6, 4)
+  ctx.scale(52 / 24, 56 / 24)
+  const outer = new Path2D('M12 1.5C12.6 5 14.6 6.6 16.6 8.7 18.8 11 20 13.2 20 15.8 20 20 16.4 23 12 23S4 20 4 15.8C4 12.8 5.5 10.6 7.3 9.1 7.4 10.9 8.2 12.3 9.6 13 9.2 8.6 10.6 4.6 12 1.5Z')
+  const inner = new Path2D('M12 12.2C13.6 13.8 15.6 15.3 15.6 17.7 15.6 19.7 14 21 12 21S8.4 19.7 8.4 17.7C8.4 15.9 9.7 14.6 10.9 13.5 11.1 14.6 11.6 15.3 12.3 15.6 12 14.5 11.9 13.4 12 12.2Z')
+  const g = ctx.createLinearGradient(0, 23, 0, 1)
+  g.addColorStop(0, '#e2401c')
+  g.addColorStop(1, '#ff9a2e')
+  ctx.lineWidth = 1.4
+  ctx.strokeStyle = 'rgba(16,22,26,0.8)'
+  ctx.stroke(outer)
+  ctx.fillStyle = g
+  ctx.fill(outer)
+  ctx.fillStyle = '#ffd54a'
+  ctx.fill(inner)
+  return ctx.getImageData(0, 0, 64, 64)
+}
+
+export const DENSITY_BLUE = '#3d8bff'
+const DSEL = ['boolean', ['feature-state', 'selected'], false] as ExpressionSpecification
+
+/** High-density home areas: blue blobs in the same style as the fire-risk zones. Off by default. */
+export function densityLayers(): LayerSpecification[] {
+  return [
+    {
+      id: L.densityGlow,
+      type: 'line',
+      source: DENSITY_SOURCE,
+      layout: { ...ROUND, visibility: 'none' },
+      paint: { 'line-color': DENSITY_BLUE, 'line-width': ['interpolate', ['linear'], ['zoom'], 9, 3, 15, 14], 'line-blur': ['interpolate', ['linear'], ['zoom'], 9, 3, 15, 12], 'line-opacity': 0.45 },
+    },
+    {
+      id: L.densityFill,
+      type: 'fill',
+      source: DENSITY_SOURCE,
+      layout: { visibility: 'none' },
+      paint: { 'fill-color': DENSITY_BLUE, 'fill-opacity': ['case', DSEL, 0.45, 0.28] },
+    },
+    {
+      id: L.densityLine,
+      type: 'line',
+      source: DENSITY_SOURCE,
+      layout: { ...ROUND, visibility: 'none' },
+      paint: { 'line-color': ['case', DSEL, '#cfe3ff', DENSITY_BLUE], 'line-width': ['case', DSEL, 2.5, 1.2], 'line-opacity': 0.9 },
+    },
+    {
+      id: L.densityCount,
+      type: 'symbol',
+      source: DENSITY_POINTS_SOURCE,
+      layout: { visibility: 'none', 'text-field': ['concat', ['get', 'homes'], ' homes'], 'text-font': ['Noto Sans Regular'], 'text-size': 12, 'symbol-sort-key': ['-', 0, ['get', 'homes']] },
+      paint: { 'text-color': '#e3efff', 'text-halo-color': '#10161a', 'text-halo-width': 1.4 },
+    },
+  ]
+}
+
+/** Suggested fuel breaks, dashed until applied. */
+export function suggestLayer(): LayerSpecification {
+  return {
+    id: L.suggestLine,
+    type: 'line',
+    source: SUGGEST_SOURCE,
+    layout: { 'line-cap': 'round' },
+    paint: {
+      'line-color': ACTION_COLOR,
+      'line-width': ['interpolate', ['exponential', 2], ['zoom'], 12, 2, 18, 40],
+      'line-opacity': 0.6,
+      'line-dasharray': [1, 1],
+    },
+  }
 }

@@ -117,3 +117,69 @@ export function useWind(lon: number, lat: number) {
   }, [lon, lat])
   return wind
 }
+
+export interface WindField {
+  /** west, south, east, north of the sample lattice */
+  bbox: [number, number, number, number]
+  cols: number
+  rows: number
+  /** km/h towards east / north per sample, row 0 = south */
+  u: Float32Array
+  v: Float32Array
+  speedMin: number
+  speedMax: number
+}
+
+/** Current 10 m wind on an n x n lattice over the area from Open-Meteo (one request); null until loaded or offline. */
+export function useWindField(bbox: [number, number, number, number] | null, enabled: boolean, n = 4) {
+  const [field, setField] = useState<WindField | null>(null)
+  const key = bbox && enabled ? bbox.join(',') : null
+  useEffect(() => {
+    if (!key) return
+    const [w, s, e, nb] = key.split(',').map(Number)
+    const lats: number[] = [], lons: number[] = []
+    for (let r = 0; r < n; r++)
+      for (let c = 0; c < n; c++) {
+        lats.push(s + ((nb - s) * r) / (n - 1))
+        lons.push(w + ((e - w) * c) / (n - 1))
+      }
+    const ctrl = new AbortController()
+    const u = new URL('https://api.open-meteo.com/v1/forecast')
+    u.searchParams.set('latitude', lats.map((x) => x.toFixed(3)).join(','))
+    u.searchParams.set('longitude', lons.map((x) => x.toFixed(3)).join(','))
+    u.searchParams.set('current', 'wind_speed_10m,wind_direction_10m')
+    u.searchParams.set('wind_speed_unit', 'kmh')
+    fetch(u, { signal: ctrl.signal })
+      .then((r) => r.json())
+      .then((j: { current?: { wind_speed_10m: number; wind_direction_10m: number } }[]) => {
+        if (!Array.isArray(j) || j.length !== n * n || j.some((p) => !p.current)) return
+        const uu = new Float32Array(n * n), vv = new Float32Array(n * n)
+        let lo = Infinity, hi = -Infinity
+        j.forEach((p, i) => {
+          const sp = p.current!.wind_speed_10m
+          const to = ((p.current!.wind_direction_10m + 180) * Math.PI) / 180 // compass bearing the air moves towards
+          uu[i] = sp * Math.sin(to)
+          vv[i] = sp * Math.cos(to)
+          lo = Math.min(lo, sp)
+          hi = Math.max(hi, sp)
+        })
+        setField({ bbox: [w, s, e, nb], cols: n, rows: n, u: uu, v: vv, speedMin: lo, speedMax: hi })
+      })
+      .catch(() => {})
+    return () => ctrl.abort()
+  }, [key, n])
+  return key ? field : null
+}
+
+/** Bilinear wind (km/h east, north) at a point; clamps to the lattice edge outside the area. */
+export function sampleWind(f: WindField, lon: number, lat: number): [number, number] {
+  const [w, s, e, n] = f.bbox
+  const x = Math.min(f.cols - 1, Math.max(0, ((lon - w) / (e - w)) * (f.cols - 1)))
+  const y = Math.min(f.rows - 1, Math.max(0, ((lat - s) / (n - s)) * (f.rows - 1)))
+  const c0 = Math.min(f.cols - 2, Math.floor(x)), r0 = Math.min(f.rows - 2, Math.floor(y))
+  const fx = x - c0, fy = y - r0
+  const at = (a: Float32Array, r: number, c: number) => a[r * f.cols + c]
+  const lerp = (a: Float32Array) =>
+    (at(a, r0, c0) * (1 - fx) + at(a, r0, c0 + 1) * fx) * (1 - fy) + (at(a, r0 + 1, c0) * (1 - fx) + at(a, r0 + 1, c0 + 1) * fx) * fy
+  return [lerp(f.u), lerp(f.v)]
+}

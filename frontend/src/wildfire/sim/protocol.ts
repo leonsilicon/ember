@@ -19,6 +19,10 @@ export interface SimRequest {
   cleared: Uint8Array
   /** per cell: 1 = fuel break (no fuel carries fire through this cell) */
   blocked: Uint8Array | null
+  /** per cell: 1 = retardant dropped; fire still crosses but at RETARDANT_FACTOR of its speed */
+  slowed: Uint8Array | null
+  /** per building: 1 = sprinklers / structure protection; exposure x PROTECTED_FACTOR, vegetation untouched */
+  protect: Uint8Array | null
   /** minutes at which to draw isochrones */
   isochroneMin: number[]
 }
@@ -40,7 +44,26 @@ export interface SimResult {
   elapsedMs: number
 }
 
+/** Many what-if runs that differ only in actions; used to search for the most useful mitigation. */
+export interface BatchRequest {
+  type: 'batch'
+  batchId: number
+  base: SimRequest
+  variants: { id: number; cleared: Uint8Array; blocked: Uint8Array | null; slowed: Uint8Array | null; protect: Uint8Array | null }[]
+}
+
+export interface BatchResult {
+  type: 'batch'
+  batchId: number
+  results: { id: number; ignitedHomes: number; burnedHa: number }[]
+  elapsedMs: number
+}
+
 /** Exposure below which a home does not ignite even when the front passes (FireSmart "clean zone"). */
 export const IGNITION_FLOOR = 0.2
 /** Fraction of exposure left after clearing the 30 m Home Ignition Zone. */
 export const CLEARED_FACTOR = 0.3
+/** Fraction of exposure left with sprinklers / structure protection on the home (no fuel removed around it). */
+export const PROTECTED_FACTOR = 0.5
+/** Fraction of the spread rate left in a cell under a retardant line. */
+export const RETARDANT_FACTOR = 0.35

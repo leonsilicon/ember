@@ -1,4 +1,4 @@
-import type { Polygon } from 'geojson'
+import type { FeatureCollection, LineString, MultiPolygon, Polygon } from 'geojson'
 
 export type CategoryKey =
   | 'extreme' | 'high' | 'moderate' | 'low' | 'pine_eval' | 'water' | 'not_rated' | 'unknown' | 'nodata'
@@ -26,7 +26,10 @@ export interface Coverage {
   source: Categories['source']
   buildings_source: string
   stats: { total: number; hazard_overlap: number; hazard_within_30m: number; needs_evaluation: number; incomplete: number; exposure_60?: number }
-  tiles: { buildings: string; hazard: string; leafoff?: string }
+  tiles: { buildings: string }
+  zones?: { file: string; count: number; weights: { fuel: number; leafoff: number }; min_score: number; min_ha: number; formula: string }
+  density?: { file: string; count: number; search_m: number; min_homes_per_ha: number; min_ha: number }
+  roads?: { file: string; count: number; classes: string[]; source: string }
   files?: { buildings: string }
   grid?: {
     file: string
@@ -46,6 +49,56 @@ export interface Coverage {
     classes: { min_drop: number; drop_class: number }[]
     full_drop: number
   } | null
+}
+
+/** One high fire-risk zone from zones.geojson (pipeline `zones.py`). */
+export interface ZoneProps {
+  zid: number
+  area_ha: number
+  /** mean cell score 0-1: 0.6 x fuel weight + 0.4 x leaf-off */
+  score: number
+  /** share of the zone's cells per fuel category */
+  fuel_mix: Partial<Record<'extreme' | 'high' | 'pine_eval' | 'moderate' | 'low' | 'other', number>>
+  top_fuel: string | null
+  /** share of cells with a Sentinel-2 NDVI drop >= 0.25 */
+  leafoff_share: number
+  homes_in: number
+  homes_30m: number
+  homes_500m: number
+  /** metres to the nearest lake or river >= 1 ha; null if none in the pilot */
+  water_m: number | null
+  /** label point, inside the zone */
+  lon: number
+  lat: number
+}
+
+export type Zones = FeatureCollection<Polygon | MultiPolygon, ZoneProps>
+
+/** One high-density home area from density.geojson (pipeline `density.py`). */
+export interface DensityProps {
+  did: number
+  area_ha: number
+  homes: number
+  homes_per_ha: number
+  lon: number
+  lat: number
+}
+
+export type DensityAreas = FeatureCollection<Polygon | MultiPolygon, DensityProps>
+
+export interface RoadProps {
+  rid: number
+  name: string | null
+  class: string
+}
+
+export type Roads = FeatureCollection<LineString, RoadProps>
+
+export interface Area {
+  id: string
+  name: string
+  /** URL prefix of this area's static files, e.g. /wildfire/newmarket/ */
+  base: string
 }
 
 /** Compact per-building rows from buildings.json (same order as `fields`). */

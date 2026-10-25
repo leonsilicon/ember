@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import { contours } from 'd3-contour'
 import { directionalRos, headDirectionRad, headRos, isi as isiOf, lengthToBreadth } from './fbp'
-import { CLEARED_FACTOR, IGNITION_FLOOR, type SimRequest, type SimResult } from './protocol'
+import { CLEARED_FACTOR, IGNITION_FLOOR, PROTECTED_FACTOR, RETARDANT_FACTOR, type BatchRequest, type BatchResult, type SimRequest, type SimResult } from './protocol'
 
 /**
  * Fire-arrival-time grid by Dijkstra over a 16-neighbour lattice (minimum travel time, the same idea as
@@ -53,6 +53,11 @@ class MinHeap {
   }
 }
 
+/** A home's exposure after its owner's actions: clearing the 30 m zone and/or structure protection. */
+function exposureOf(req: SimRequest, b: number): number {
+  return req.buildingExposure[b] * (req.cleared[b] ? CLEARED_FACTOR : 1) * (req.protect?.[b] ? PROTECTED_FACTOR : 1)
+}
+
 export function run(req: SimRequest): SimResult {
   const t0 = performance.now()
   const { width, height, fuel, codes, cellM, weather, horizonMin } = req
@@ -73,7 +78,7 @@ export function run(req: SimRequest): SimResult {
   for (let b = 0; b < req.buildingCell.length; b++) {
     const c = req.buildingCell[b]
     if (c < 0) continue
-    const e = req.buildingExposure[b] * (req.cleared[b] ? CLEARED_FACTOR : 1)
+    const e = exposureOf(req, b)
     // a home that cannot ignite (below the floor) does not carry fire to its neighbours either
     if (e >= IGNITION_FLOOR) structRos[c] = Math.max(structRos[c], 0.3 + 0.7 * e)
     if (req.cleared[b]) {
@@ -86,6 +91,7 @@ export function run(req: SimRequest): SimResult {
     }
   }
   const blocked = req.blocked
+  const slowed = req.slowed
 
   const lbForest = lengthToBreadth(weather.windKmh)
   const lbGrass = lengthToBreadth(weather.windKmh, true)
@@ -111,7 +117,8 @@ export function run(req: SimRequest): SimResult {
     if (blocked && blocked[c]) return 0
     const v = dirRos[fuel[c] * OFF.length + k] * fuelScale[c]
     const s = structRos[c] * dirStruct[k]
-    return v > s ? v : s
+    const r = v > s ? v : s
+    return slowed && slowed[c] ? r * RETARDANT_FACTOR : r
   }
 
   const arrival = new Float32Array(n).fill(Infinity)
@@ -155,7 +162,7 @@ export function run(req: SimRequest): SimResult {
   for (let b = 0; b < req.buildingCell.length; b++) {
     const c = req.buildingCell[b]
     if (c < 0) continue
-    const e = req.buildingExposure[b] * (req.cleared[b] ? CLEARED_FACTOR : 1)
+    const e = exposureOf(req, b)
     if (c !== req.ignitionCell && e < IGNITION_FLOOR) continue
     const t = arrival[c]
     if (!isFinite(t)) continue
@@ -168,12 +175,15 @@ export function run(req: SimRequest): SimResult {
 
   // Isochrones: d3-contour encloses cells with value >= threshold, so contour -arrival at -minutes
   // (unreached = -1e9) to get the polygon of cells reached by each hour rather than its complement.
-  const vals = new Float64Array(n)
-  for (let i = 0; i < n; i++) vals[i] = isFinite(arrival[i]) ? -arrival[i] : -1e9
-  // d3 sorts thresholds ascending, so map the polygons back to the requested order by value
-  const gen = contours().size([width, height]).thresholds(req.isochroneMin.map((m) => -m)).smooth(true)
-  const byValue = new Map(gen(Array.from(vals)).map((c) => [c.value, c.coordinates]))
-  const isochrones = req.isochroneMin.map((m) => ({ type: 'MultiPolygon' as const, coordinates: byValue.get(-m) ?? [] }))
+  let isochrones: SimResult['isochrones'] = []
+  if (req.isochroneMin.length) {
+    const vals = new Float64Array(n)
+    for (let i = 0; i < n; i++) vals[i] = isFinite(arrival[i]) ? -arrival[i] : -1e9
+    // d3 sorts thresholds ascending, so map the polygons back to the requested order by value
+    const gen = contours().size([width, height]).thresholds(req.isochroneMin.map((m) => -m)).smooth(true)
+    const byValue = new Map(gen(Array.from(vals)).map((c) => [c.value, c.coordinates]))
+    isochrones = req.isochroneMin.map((m) => ({ type: 'MultiPolygon' as const, coordinates: byValue.get(-m) ?? [] }))
+  }
 
   return {
     type: 'result',
@@ -190,11 +200,26 @@ export function run(req: SimRequest): SimResult {
   }
 }
 
+/** Same fire, same weather, one run per variant of the actions; only the counts come back. */
+export function runBatch(req: BatchRequest): BatchResult {
+  const t0 = performance.now()
+  const results = req.variants.map((v) => {
+    const r = run({ ...req.base, cleared: v.cleared, blocked: v.blocked, slowed: v.slowed, protect: v.protect, isochroneMin: [] })
+    return { id: v.id, ignitedHomes: r.ignitedHomes, burnedHa: r.burnedHa }
+  })
+  return { type: 'batch', batchId: req.batchId, results, elapsedMs: performance.now() - t0 }
+}
+
 // guarded so the solver can be imported by unit tests outside a worker
 if (typeof self !== 'undefined' && 'postMessage' in self) {
-  self.onmessage = (ev: MessageEvent<SimRequest>) => {
-    if (ev.data.type !== 'run') return
-    const res = run(ev.data)
+  self.onmessage = (ev: MessageEvent<SimRequest | BatchRequest>) => {
+    const msg = ev.data
+    if (msg.type === 'batch') {
+      ;(self as unknown as Worker).postMessage(runBatch(msg))
+      return
+    }
+    if (msg.type !== 'run') return
+    const res = run(msg)
     ;(self as unknown as Worker).postMessage(res, [res.arrival.buffer, res.ignition.buffer])
   }
 }
