@@ -49,7 +49,7 @@ form. The app itself sends the token as a bearer token to `/api/*`.
 
 ## Deploying
 
-`.github/workflows/vercel.yml` deploys every push to `main` of SOON-2026/soon2026 to production, and pull requests
+`.github/workflows/vercel.yml` deploys every push to `main` of SOON-2026/Ember to production, and pull requests
 from branches in that repo to previews, with the Vercel CLI (`vercel pull`, `vercel build`, `vercel deploy
 --prebuilt`). It needs the `VERCEL_TOKEN` repository secret. Everything else (root directory `frontend`, the install
 command, env vars, region `yul1`) is the Vercel project's settings (`improvelabs/soon2026`), pulled at build time.

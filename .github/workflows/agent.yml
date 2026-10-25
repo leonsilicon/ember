@@ -30,8 +30,8 @@ concurrency:
 jobs:
   deploy:
     name: Update the Mac agent
-    # The runner is registered on SOON-2026/soon2026 only; on a mirror or a fork this job would wait for one forever.
-    if: github.repository == 'SOON-2026/soon2026'
+    # The runner is registered on SOON-2026/Ember only; on a mirror or a fork this job would wait for one forever.
+    if: github.repository == 'SOON-2026/Ember'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 45
     env:

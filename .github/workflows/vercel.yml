@@ -27,7 +27,7 @@ jobs:
     name: ${{ github.event_name == 'pull_request' && 'Preview' || 'Production' }}
     # Only this repo holds the token; a mirror or a fork can't deploy.
     if: >-
-      github.repository == 'SOON-2026/soon2026' &&
+      github.repository == 'SOON-2026/Ember' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 20

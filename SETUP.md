@@ -95,7 +95,7 @@ bun test                  # starts a throwaway Redis, so redis-server must be in
 
 `.github/workflows/vercel.yml` handles it:
 
-- A push to `main` on `SOON-2026/soon2026` deploys to production (https://soon2026.vercel.app).
+- A push to `main` on `SOON-2026/Ember` deploys to production (https://soon2026.vercel.app).
 - A pull request from a branch in that repo gets a preview deploy.
 - The workflow needs the `VERCEL_TOKEN` repository secret. Root directory, env
   vars and region (`yul1`) come from the Vercel project settings.
@@ -178,7 +178,7 @@ and `EXPO_PUBLIC_SPLAT_TOKEN` (in `mobile/.env.local` or EAS environment variabl
 
 ### Step 3: ship to TestFlight
 
-**Automatic.** Every push to `main` on `SOON-2026/soon2026` runs
+**Automatic.** Every push to `main` on `SOON-2026/Ember` runs
 `.github/workflows/testflight.yml` on the self-hosted Mac runner. It builds the
 leaf detector (cached), runs `eas build --local`, and uploads with `eas submit`.
 The internal "SOON" TestFlight group gets each build automatically, about 5–15
