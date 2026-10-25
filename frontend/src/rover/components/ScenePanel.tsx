@@ -1,19 +1,33 @@
-import { useRef } from 'react'
-import { SAMPLE_SPLAT_URL } from './SplatViewer'
+import { useRef, useState } from 'react'
+import type { Job } from '#jobs.ts'
+import { captureScene, viewable, type CapturesState } from '../hooks/useCaptures'
+import { Button, Hint, IconButton, Icons, INPUT, Led, type Tone } from '../ui/kit'
+import { Module } from '../ui/layout'
+import { SAMPLE_SPLAT_URL, type SceneCamera, type SceneFormat } from './SplatViewer'
 
-export type SceneSource = { url: string; label: string } | null
+export type SceneSource = { url: string; label: string; format?: SceneFormat; camera?: SceneCamera; captureId?: string } | null
 
-/** Scene shown when the page opens: generated leaf-covered ground (scripts/make-leaf-splat.mjs). */
+/** Generated leaf-covered ground (scripts/make-leaf-splat.mjs): shown until a capture loads, or without any. */
 export const DEFAULT_SCENE: SceneSource = { url: SAMPLE_SPLAT_URL, label: 'leaf floor (sample)' }
 
 type Props = {
   scene: SceneSource
   onChange: (scene: SceneSource) => void
+  captures: CapturesState
+  onRefresh: () => void
 }
 
-export function ScenePanel({ scene, onChange }: Props) {
+const STATE_TONE: Partial<Record<Job['state'], Tone>> = { done: 'ok', training: 'live', paused: 'warn', failed: 'danger' }
+
+function when(iso: string) {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+export function ScenePanel({ scene, onChange, captures, onRefresh }: Props) {
   const fileInput = useRef<HTMLInputElement>(null)
   const urlInput = useRef<HTMLInputElement>(null)
+  const [opening, setOpening] = useState<string | null>(null)
 
   const pickFile = (file: File | undefined) => {
     if (!file) return
@@ -21,35 +35,87 @@ export function ScenePanel({ scene, onChange }: Props) {
     onChange({ url: URL.createObjectURL(file), label: file.name })
   }
 
+  const openCapture = async (job: Job) => {
+    setOpening(job.id)
+    try {
+      onChange(await captureScene(job))
+    } finally {
+      setOpening(null)
+    }
+  }
+
+  const list = captures.kind === 'ready' ? captures.captures.filter(viewable) : []
+  const meta = captures.kind === 'ready' ? `${list.length} capture${list.length === 1 ? '' : 's'}` : captures.kind === 'loading' ? 'loading…' : 'offline'
+
   return (
-    <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold tracking-wide text-zinc-300 uppercase">Scene</h2>
-        <span className="max-w-[55%] truncate font-mono text-xs text-zinc-400">{scene?.label ?? 'none'}</span>
+    <Module
+      id="scene"
+      title="Scene"
+      meta={meta}
+      actions={
+        <IconButton label="Refresh captures" onClick={onRefresh} className="h-7 w-7">
+          <Icons.restart />
+        </IconButton>
+      }
+    >
+      <div className="-mx-1.5">
+        {captures.kind === 'loading' && (
+          <div className="flex flex-col gap-1.5 px-1.5" aria-label="Loading captures">
+            {[0, 1, 2].map((i) => (
+              <span key={i} className="h-10 animate-pulse rounded-md bg-well" />
+            ))}
+          </div>
+        )}
+        {captures.kind === 'error' && (
+          <p className="mx-1.5 rounded-md border border-line bg-well px-3 py-2 text-xs leading-relaxed text-ink-2">
+            Couldn't list the captures: <span className="text-danger">{captures.message}</span>. They're stored with the deployed app; a
+            local server needs its Redis and Blob settings (<span className="num">vercel env pull</span>).
+          </p>
+        )}
+        {captures.kind === 'ready' && list.length === 0 && (
+          <p className="mx-1.5 text-xs leading-relaxed text-ink-3">No trained captures yet. Record one in the app; it shows here once the Mac has trained a first snapshot.</p>
+        )}
+        {list.length > 0 && (
+          <ul className="flex max-h-64 flex-col overflow-y-auto" aria-label="Captures">
+            {list.map((job) => {
+              const current = scene?.captureId === job.id
+              return (
+                <li key={job.id}>
+                  <button
+                    type="button"
+                    aria-pressed={current}
+                    disabled={opening != null}
+                    onClick={() => void openCapture(job)}
+                    className={`flex w-full items-center gap-2.5 rounded-md px-1.5 py-2 text-left transition-colors disabled:cursor-wait ${current ? 'bg-ember-soft' : 'hover:bg-well'}`}
+                  >
+                    <Led tone={STATE_TONE[job.state] ?? 'off'} blink={opening === job.id} />
+                    <span className="min-w-0 flex-1">
+                      <span className="num block truncate text-[13px] text-ink">{job.id}</span>
+                      <span className="block truncate text-[11px] text-ink-3">
+                        {job.state === 'done' ? 'trained' : job.state}
+                        {job.gaussians ? ` · ${job.gaussians.toLocaleString()} gaussians` : ''} · {when(job.createdAt)}
+                      </span>
+                    </span>
+                    {current && <span className="text-[11px] font-medium text-ember-ink">Showing</span>}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
       </div>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => onChange(DEFAULT_SCENE)}
-          className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
-        >
-          Leaf floor
-        </button>
-        <button
-          type="button"
-          onClick={() => fileInput.current?.click()}
-          className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
-        >
-          Open .splat / .ply…
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(null)}
-          disabled={!scene}
-          className="rounded-md px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:bg-zinc-800 disabled:opacity-40"
-        >
+
+      <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3">
+        <Button size="sm" onClick={() => onChange(DEFAULT_SCENE)} aria-pressed={scene?.url === SAMPLE_SPLAT_URL}>
+          Leaf floor sample
+        </Button>
+        <Button size="sm" onClick={() => fileInput.current?.click()}>
+          <Icons.folder />
+          Open file…
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => onChange(null)} disabled={!scene}>
           Clear
-        </button>
+        </Button>
         <input
           ref={fileInput}
           type="file"
@@ -62,27 +128,20 @@ export function ScenePanel({ scene, onChange }: Props) {
         />
       </div>
       <form
-        className="mt-3 flex gap-2"
+        className="mt-2 flex gap-2"
         onSubmit={(e) => {
           e.preventDefault()
           const url = urlInput.current?.value.trim()
           if (url) onChange({ url, label: url.split('/').pop() ?? url })
         }}
       >
-        <input
-          ref={urlInput}
-          type="text"
-          placeholder="/splats/scene.splat"
-          className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-100 outline-none focus:border-sky-500"
-        />
-        <button type="submit" className="rounded-md bg-zinc-800 px-3 py-1 text-xs font-semibold text-zinc-100 hover:bg-zinc-700">
-          Load URL
-        </button>
+        <label htmlFor="scene-url" className="sr-only">
+          Scene URL
+        </label>
+        <input id="scene-url" ref={urlInput} type="text" placeholder="/splats/scene.splat" spellCheck={false} className={`${INPUT} num flex-1`} />
+        <Button type="submit">Load URL</Button>
       </form>
-      <p className="mt-3 text-xs text-zinc-500">
-        Make a scene with <span className="font-mono">pipeline/reconstruct.py &lt;images&gt;</span>, then drop the
-        output into <span className="font-mono">frontend/public/splats/</span> or open it here.
-      </p>
-    </section>
+      <Hint className="mt-3">Captures are the phone's recordings, trained into splats on the Mac. The newest opens by itself.</Hint>
+    </Module>
   )
 }

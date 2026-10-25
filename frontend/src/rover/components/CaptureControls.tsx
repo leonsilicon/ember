@@ -1,47 +1,40 @@
 import type { FrameCapture } from '../hooks/useFrameCapture'
-
-const btn = 'rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-40'
+import { Button, Hint, Icons } from '../ui/kit'
 
 /** Folder, record and snap buttons for a camera panel, and where the frames go. */
 export function CaptureControls({ capture, ready }: { capture: FrameCapture; ready: boolean }) {
   return (
     <>
       <div className="mt-3 flex flex-wrap gap-2">
-        {capture.supportsFolder && (
-          <button
-            type="button"
-            onClick={() => void capture.chooseFolder()}
-            disabled={capture.recording}
-            className={`${btn} bg-zinc-800 text-zinc-100 hover:bg-zinc-700`}
-          >
-            {capture.dirName ? `Folder: ${capture.dirName}` : 'Choose folder…'}
-          </button>
-        )}
         {capture.recording ? (
-          <button type="button" onClick={capture.stop} className={`${btn} bg-red-600 text-white hover:bg-red-500`}>
-            Stop (1 fps)
-          </button>
+          <Button size="sm" variant="danger" onClick={capture.stop}>
+            <Icons.square />
+            Stop recording
+          </Button>
         ) : (
-          <button type="button" onClick={capture.start} disabled={!ready} className={`${btn} bg-sky-600 text-white hover:bg-sky-500`}>
+          <Button size="sm" variant="primary" onClick={capture.start} disabled={!ready}>
+            <Icons.record />
             Record 1 fps
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
-          onClick={() => void capture.snap()}
-          disabled={!ready}
-          className={`${btn} bg-zinc-800 text-zinc-100 hover:bg-zinc-700`}
-        >
+        <Button size="sm" onClick={() => void capture.snap()} disabled={!ready}>
+          <Icons.camera />
           Snap one
-        </button>
+        </Button>
+        {capture.supportsFolder && (
+          <Button size="sm" variant="ghost" onClick={() => void capture.chooseFolder()} disabled={capture.recording} className="max-w-full">
+            <Icons.folder />
+            <span className="truncate">{capture.dirName ? capture.dirName : 'Choose folder…'}</span>
+          </Button>
+        )}
       </div>
 
-      <p className="mt-3 text-xs text-zinc-500">
-        Frames are saved as <span className="font-mono">frame_0001.jpg…</span>
-        {capture.supportsFolder ? ' into the chosen folder' : ' via downloads (choose a folder needs Chrome)'}. Walk slowly
-        around the object with lots of overlap; 30–80 frames is a good first run.
-      </p>
-      {capture.error && <p className="mt-2 text-xs text-red-300">{capture.error}</p>}
+      <Hint className="mt-3">
+        Frames are saved as <span className="num">frame_0001.jpg…</span>
+        {capture.supportsFolder ? ' into the chosen folder' : ' via downloads (choosing a folder needs Chrome)'}. Walk slowly round the
+        object with lots of overlap; 30–80 frames is a good first run.
+      </Hint>
+      {capture.error && <p className="mt-2 text-xs text-danger">{capture.error}</p>}
     </>
   )
 }
