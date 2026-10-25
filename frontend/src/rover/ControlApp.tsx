@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArmPanel } from './components/ArmPanel'
 import { CapturePanel } from './components/CapturePanel'
 import { ConnectionPanel } from './components/ConnectionPanel'
 import { CONNECTION_STYLES } from './components/connectionStyles'
 import { DPad } from './components/DPad'
 import { LiveJobPanel } from './components/LiveJobPanel'
 import { LiveMapView, type MapSource } from './components/LiveMapView'
+import { PercentSlider } from './components/PercentSlider'
 import { PhoneCameraPanel, type PhoneLink } from './components/PhoneCameraPanel'
 import { DEFAULT_SCENE, ScenePanel, type SceneSource } from './components/ScenePanel'
+import { ServoPanel } from './components/ServoPanel'
 import { SplatViewer } from './components/SplatViewer'
 import { StopButton } from './components/StopButton'
 import { captureScene, useCaptures, viewable } from './hooks/useCaptures'
@@ -17,6 +18,7 @@ import { useWebAutopilot } from './hooks/useWebAutopilot'
 import { usePhoneDiscovery } from './hooks/usePhoneDiscovery'
 import { applyJob, useLiveJob } from './liveJob'
 import { useRover } from './hooks/useRover'
+import { HEARTBEAT_MS, LEASE_MS, reportedDirection } from './protocol'
 import { useAccount } from './ui/account'
 import { Button, Hint, Icons, Led } from './ui/kit'
 import { Module } from './ui/layout'
@@ -40,6 +42,8 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ['S', '↓'], label: 'Drive back (hold)' },
   { keys: ['A', '←'], label: 'Turn left (hold)' },
   { keys: ['D', '→'], label: 'Turn right (hold)' },
+  { keys: ['Q', 'E'], label: 'Pan back / forward (hold)' },
+  { keys: ['F', 'R'], label: 'Lift back / forward (hold)' },
   { keys: ['Space', 'Esc'], label: 'Stop' },
 ]
 
@@ -102,6 +106,8 @@ export default function App() {
   }
   const connected = snapshot.connection === 'connected'
   const conn = CONNECTION_STYLES[snapshot.connection]
+  // What the rover's wheel outputs amount to, from its status report; unknown until the first one.
+  const reported = snapshot.status ? reportedDirection(snapshot.status.pwm) : null
 
   return (
     <Shell
@@ -195,11 +201,11 @@ export default function App() {
 
           {mode === 'live' && <LiveJobPanel job={job} onChange={setJob} map={phoneMap} placing={placingPile} onPlacing={setPlacingPile} />}
 
-          <Module id="drive" title="Drive" meta={`${pilot.on ? 'autopilot' : 'rover'}: ${snapshot.drive}`}>
+          <Module id="drive" title="Drive" meta={`${pilot.on ? 'autopilot' : 'rover'}: ${reported ?? 'stop'}`}>
             <div className="flex flex-col items-center gap-3.5">
               <DPad
                 held={pilot.on ? pilot.pressing : rover.held}
-                reportedDrive={snapshot.drive}
+                reportedDrive={reported}
                 disabled={!connected && !pilot.on}
                 onPress={pressByHand}
                 onRelease={rover.release}
@@ -207,8 +213,18 @@ export default function App() {
               />
               <StopButton disabled={!connected && !pilot.on} onStop={stopByHand} />
             </div>
+            <div className="mt-4">
+              <PercentSlider
+                id="wheel-power"
+                label="Wheel power"
+                value={snapshot.motion.power}
+                onChange={rover.setPower}
+                hint="PWM duty, not a speed: equal power does not mean equal wheel speeds. Takes effect on the next frame."
+              />
+            </div>
             <Hint className="mt-3">
-              Hold a key or button to drive; let go to stop. Commands repeat every 100 ms, and the rover stops by itself after 300 ms of silence.
+              Hold a key or button to drive; let go to stop. The frame repeats every {HEARTBEAT_MS} ms while held, and the rover stops by itself {LEASE_MS} ms after the
+              last one.
             </Hint>
           </Module>
 
@@ -221,7 +237,7 @@ export default function App() {
             onDisconnect={rover.disconnect}
           />
 
-          <ArmPanel arm={snapshot.arm} connected={connected} onRun={rover.runArm} />
+          <ServoPanel jogs={rover.jogs} status={snapshot.status} speed={snapshot.motion.speed} connected={connected} onJog={rover.jog} onSpeed={rover.setSpeed} />
 
           {/* The iPhone riding on the rover, in live mode or as soon as its app is found on the Wi-Fi;
               otherwise the laptop webcam stand-in. */}

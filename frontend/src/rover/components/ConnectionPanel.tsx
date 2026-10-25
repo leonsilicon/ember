@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { RoverSnapshot } from '../clients/RoverClient'
 import type { Mode } from '../hooks/useRover'
+import { DEFAULT_ROVER_URL, LEASE_MS, ROVER_WIFI } from '../protocol'
 import { Button, Hint, INPUT, Led, Readout, Segmented } from '../ui/kit'
 import { Module } from '../ui/layout'
 import { CONNECTION_STYLES } from './connectionStyles'
@@ -29,7 +30,7 @@ export function ConnectionPanel({ mode, url, snapshot, onSwitchMode, onConnect, 
   const [draftUrl, setDraftUrl] = useState(url)
   const now = useNow(500)
 
-  const { connection, lastMessageAt, lastError } = snapshot
+  const { connection, lastMessageAt, lastError, status } = snapshot
   const connected = connection === 'connected'
   const ageMs = lastMessageAt === null ? null : Math.max(0, now - lastMessageAt)
   const stale = mode === 'live' && connected && ageMs !== null && ageMs > STALE_AFTER_MS
@@ -55,14 +56,14 @@ export function ConnectionPanel({ mode, url, snapshot, onSwitchMode, onConnect, 
           }}
         >
           <label htmlFor="rover-url" className="sr-only">
-            Rover WebSocket address
+            Rover address
           </label>
           <input
             id="rover-url"
-            type="text"
+            type="url"
             value={draftUrl}
             onChange={(e) => setDraftUrl(e.target.value)}
-            placeholder="ws://192.168.4.1/ws"
+            placeholder={DEFAULT_ROVER_URL}
             spellCheck={false}
             autoComplete="off"
             className={`${INPUT} num flex-1`}
@@ -83,6 +84,13 @@ export function ConnectionPanel({ mode, url, snapshot, onSwitchMode, onConnect, 
         </Hint>
       )}
 
+      {mode === 'live' && !connected && connection !== 'connecting' && (
+        <Hint className="mt-2">
+          Join the rover's Wi-Fi <span className="num text-ink">{ROVER_WIFI.ssid}</span> (password <span className="num text-ink">{ROVER_WIFI.password}</span>) on this laptop, then
+          Connect. The rover takes one controller at a time; connecting here takes it over.
+        </Hint>
+      )}
+
       <dl className="mt-2">
         <Readout label="Status">
           <span className="inline-flex items-center gap-2 font-sans">
@@ -96,12 +104,33 @@ export function ConnectionPanel({ mode, url, snapshot, onSwitchMode, onConnect, 
           </Readout>
         )}
         <Readout label="Last message">{ageMs === null ? '—' : `${(ageMs / 1000).toFixed(1)}s ago`}</Readout>
+        {status && (
+          <>
+            <Readout label="Rover ready" tone={status.ready ? undefined : 'warn'}>
+              {status.ready ? 'yes' : 'no (wheel PWM not initialised)'}
+            </Readout>
+            <Readout label="Frame">
+              <span className="num">#{status.sequence}</span>
+            </Readout>
+            <Readout label="Wheel PWM">
+              <span className="num" title="duty 0–255 on GPIO 25, 26, 32, 33">
+                {status.pwm.join(' · ')}
+              </span>
+            </Readout>
+          </>
+        )}
         {lastError && (
           <Readout label="Last error" tone="danger">
             <span className="font-sans">{lastError}</span>
           </Readout>
         )}
       </dl>
+      {mode === 'live' && (
+        <Hint className="mt-2">
+          Plain http through this site's own server (the rover has no CORS), so drive from the dev server on the laptop, not the site on Vercel. The rover stops
+          anything held {LEASE_MS} ms after the last frame.
+        </Hint>
+      )}
     </Module>
   )
 }

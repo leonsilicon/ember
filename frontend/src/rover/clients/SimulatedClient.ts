@@ -1,19 +1,24 @@
-import { ARM_SEQUENCE_MS, DRIVE_TIMEOUT_MS, isDriveCommand, type Command } from '../protocol'
+import { ManualState } from '../manualControl'
+import { HEARTBEAT_MS, isMoving, percent, type MotionState } from '../protocol'
 import { BaseRoverClient } from './RoverClient'
 
 const CONNECT_DELAY_MS = 400
+const TICK_MS = 20
 
 /**
- * In-browser stand-in for the ESP32. Mirrors the firmware rules:
- * - drive stops if no drive command arrives within DRIVE_TIMEOUT_MS
- * - arm_run is rejected while the sequence is running
- * - the sequence "completes" after ARM_SEQUENCE_MS
+ * In-browser stand-in for the rover. Runs the firmware's own control rules (ManualState, a port of
+ * ManualControl.h): session and sequence checks, the 500 ms lease, servo jog integration, and the
+ * PWM duties /status would report. Nothing here reflects hardware.
  */
 export class SimulatedClient extends BaseRoverClient {
   readonly kind = 'simulated' as const
+  private readonly firmware = new ManualState()
+  private token = 0
+  private seq = 0
   private connectTimer: ReturnType<typeof setTimeout> | null = null
-  private watchdogTimer: ReturnType<typeof setTimeout> | null = null
-  private armTimer: ReturnType<typeof setTimeout> | null = null
+  private ticker: ReturnType<typeof setInterval> | null = null
+  private lastDuties = ''
+  private lastFrameAt = 0
 
   constructor() {
     super('simulated')
@@ -21,56 +26,50 @@ export class SimulatedClient extends BaseRoverClient {
 
   connect(): void {
     if (this.snapshot.connection === 'connected' || this.snapshot.connection === 'connecting') return
-    this.update({ connection: 'connecting', lastError: null })
+    this.update({ connection: 'connecting', lastError: null, motion: { ...this.snapshot.motion, wheel: 0, pan: 0, lift: 0 } })
     this.connectTimer = setTimeout(() => {
       this.connectTimer = null
-      this.update({ connection: 'connected', lastMessageAt: Date.now() })
+      this.token = Math.floor(Math.random() * 0x3fffffff) + 1
+      this.seq = 0
+      this.firmware.session(this.token, performance.now())
+      this.update({ connection: 'connected', lastMessageAt: Date.now(), status: this.firmware.status() })
+      this.ticker = setInterval(() => this.tick(), TICK_MS)
     }, CONNECT_DELAY_MS)
   }
 
   disconnect(): void {
-    this.clearTimer('connectTimer')
-    this.clearTimer('watchdogTimer')
-    this.clearTimer('armTimer')
-    this.update({ connection: 'disconnected', drive: 'stop', arm: 'idle' })
+    if (this.connectTimer !== null) clearTimeout(this.connectTimer)
+    if (this.ticker !== null) clearInterval(this.ticker)
+    this.connectTimer = this.ticker = null
+    this.firmware.stop()
+    this.token = 0
+    this.update({ connection: 'disconnected', motion: { ...this.snapshot.motion, wheel: 0, pan: 0, lift: 0 }, status: null })
   }
 
-  send(cmd: Command): void {
-    if (this.snapshot.connection !== 'connected') {
-      this.update({ lastError: 'Not connected' })
-      return
-    }
-
-    if (isDriveCommand(cmd)) {
-      this.clearTimer('watchdogTimer')
-      if (cmd !== 'stop') {
-        this.watchdogTimer = setTimeout(() => {
-          this.watchdogTimer = null
-          this.update({ drive: 'stop', lastMessageAt: Date.now() })
-        }, DRIVE_TIMEOUT_MS)
-      }
-      this.update({ drive: cmd, lastMessageAt: Date.now(), lastError: null })
-      return
-    }
-
-    if (cmd === 'arm_run') {
-      if (this.snapshot.arm === 'running') {
-        this.update({ lastError: 'arm busy', lastMessageAt: Date.now() })
-        return
-      }
-      this.update({ arm: 'running', lastMessageAt: Date.now(), lastError: null })
-      this.armTimer = setTimeout(() => {
-        this.armTimer = null
-        this.update({ arm: 'completed', lastMessageAt: Date.now() })
-      }, ARM_SEQUENCE_MS)
-    }
+  set(patch: Partial<MotionState>): void {
+    if (patch.power !== undefined) percent(patch.power)
+    if (patch.speed !== undefined) percent(patch.speed)
+    const motion = { ...this.snapshot.motion, ...patch }
+    this.update({ motion })
+    if (this.snapshot.connection !== 'connected') return
+    this.frame(motion)
   }
 
-  private clearTimer(name: 'connectTimer' | 'watchdogTimer' | 'armTimer'): void {
-    const timer = this[name]
-    if (timer !== null) {
-      clearTimeout(timer)
-      this[name] = null
-    }
+  private frame(motion: MotionState) {
+    this.lastFrameAt = performance.now()
+    const accepted = this.firmware.accept(this.token, ++this.seq, motion.wheel, motion.pan, motion.lift, motion.power, motion.speed, this.lastFrameAt)
+    this.update({ lastMessageAt: Date.now(), lastError: accepted ? null : 'Simulated rover refused the frame (409)', status: this.firmware.status() })
+  }
+
+  /** The firmware's loop (lease, servo travel) plus the client's heartbeat, and a status report whenever the outputs change. */
+  private tick() {
+    const now = performance.now()
+    if (isMoving(this.snapshot.motion) && now - this.lastFrameAt >= HEARTBEAT_MS) this.frame(this.snapshot.motion)
+    this.firmware.tick(now)
+    const status = this.firmware.status()
+    const key = `${status.pwm.join(',')}|${status.pan}|${status.lift}|${this.firmware.linked}`
+    if (key === this.lastDuties) return
+    this.lastDuties = key
+    this.update({ status, lastMessageAt: Date.now() })
   }
 }
