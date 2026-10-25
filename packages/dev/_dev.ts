@@ -43,6 +43,18 @@ function describePid(pid: string) {
   return `pid ${pid}: ${run('ps', ['-o', 'command=', '-p', pid]) ?? 'unknown'}`;
 }
 
+/** Whether pm2 has the agent service (frontend/pm2.config.cjs) online. */
+function serviceAgentOnline() {
+  const list = run('pm2', ['jlist']);
+  if (!list) return false;
+  try {
+    const processes = JSON.parse(list) as { name: string; pm2_env: { status: string } }[];
+    return processes.some((p) => p.name === 'soon2026-agent' && p.pm2_env.status === 'online');
+  } catch {
+    return false;
+  }
+}
+
 async function waitForRelease(port: number, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs;
   while (listenerPid(port)) {
@@ -73,16 +85,18 @@ async function freePort(port: number) {
 
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
-  console.log('Usage: vpx _dev [--force] [--port <metro port>] [expo start args…]');
+  console.log('Usage: vpx _dev [--force] [--agent] [--port <metro port>] [expo start args…]');
   process.exit(0);
 }
 
 let force = false;
+let withAgent = false;
 let metroPort: number | null = null;
 const expoArgs: string[] = [];
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
   if (arg === '--force') force = true;
+  else if (arg === '--agent') withAgent = true;
   else if (arg === '--port') metroPort = Number(args[++i]);
   else if (arg.startsWith('--port=')) metroPort = Number(arg.slice('--port='.length));
   else expoArgs.push(arg);
@@ -129,7 +143,8 @@ if (metroPid) {
 const node = run('node', ['-p', 'process.execPath']) ?? fail('node is not on PATH');
 const expoCli = path.join(path.dirname(createRequire(path.join(APP_DIR, 'package.json')).resolve('expo/package.json')), 'bin/cli');
 
-const config = {
+type Pane = { cmd: string[]; cwd: string; env?: Record<string, string>; stop: string };
+const config: { server: string; proc_log: object; procs: Record<string, Pane> } = {
   server: `127.0.0.1:${CONTROL_PORT}`,
   proc_log: { dir: LOG_DIR, file: '{name}.log', mode: 'truncate' },
   procs: {
@@ -140,14 +155,21 @@ const config = {
       env: { EXPO_PUBLIC_APP_VARIANT: 'development' },
       stop: 'SIGINT',
     },
-    'splat-agent': {
-      cmd: [process.execPath, 'src/agent/main.ts'],
-      // Bun loads frontend/.env.local from here.
-      cwd: NEXT_APP_DIR,
-      stop: 'SIGINT',
-    },
   },
 };
+// The agent as a service (frontend/pm2.config.cjs, kept running by .github/workflows/agent.yml) and one in this stack
+// would both take work from the same Redis, so while the service is online the stack leaves the agent to it. `--agent`
+// runs one here anyway (stop the service first: pm2 stop soon2026-agent).
+if (withAgent || !serviceAgentOnline()) {
+  config.procs['splat-agent'] = {
+    cmd: [process.execPath, 'src/agent/main.ts'],
+    // Bun loads frontend/.env.local from here.
+    cwd: NEXT_APP_DIR,
+    stop: 'SIGINT',
+  };
+} else {
+  console.log('_dev: the pm2 service soon2026-agent is running, so no splat-agent pane (pass --agent to run one here)');
+}
 mkdirSync(LOG_DIR, { recursive: true });
 mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
 writeFileSync(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`);

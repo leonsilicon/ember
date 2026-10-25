@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import type Redis from 'ioredis';
+
 import {
   AGENT_BEAT_SECONDS,
   AGENT_TTL_SECONDS,
@@ -43,18 +45,35 @@ function startDepthWorker(config: ServerConfig): Promise<DepthEstimator> {
  * The Mac's half of the splat server. It trains the captures the app queues, and runs the live
  * reconstruction for the phones and viewers whose sockets the app relays to it (see bus.ts).
  */
+/** Another agent's heartbeat, once a lingering one (its agent killed, not stopped) has had time to expire. */
+async function otherAgent(redis: Redis, key: string): Promise<AgentInfo | null> {
+  const deadline = Date.now() + (AGENT_TTL_SECONDS + 10) * 1000;
+  for (let waited = false; ; waited = true) {
+    const json = await redis.get(key);
+    if (!json) return null;
+    const other = JSON.parse(json) as AgentInfo;
+    if (Date.now() > deadline) return other;
+    if (!waited) {
+      console.log(`Another Mac agent's heartbeat is in Redis (${other.id.slice(0, 8)} on ${other.host}); waiting up to ${AGENT_TTL_SECONDS} s for it to stop…`);
+    }
+    await sleep(5000);
+  }
+}
+
 export async function startAgent({ config, redisUrl, prefix, storage, startEstimator }: AgentOptions) {
   const k = keys(prefix);
   // Blocking reads tie up a connection, so the live stream and the queue get their own.
   const redis = connect(redisUrl);
   const liveReader = connect(redisUrl);
   const queueReader = connect(redisUrl);
-  // Two agents would both answer every phone and viewer.
+  // Two agents would both answer every phone and viewer. An agent that was killed rather than stopped leaves its
+  // heartbeat behind for up to AGENT_TTL_SECONDS (a stopped one removes its own), so a restart waits that long for the
+  // key to clear before giving up; a live agent keeps renewing it, and then this one does give up.
   const id = randomUUID();
-  const other = await redis.get(k.agent);
+  const other = await otherAgent(redis, k.agent);
   if (other) {
     for (const client of [redis, liveReader, queueReader]) client.disconnect();
-    throw new Error(`another Mac agent is already running (on ${(JSON.parse(other) as AgentInfo).host}); stop it first`);
+    throw new Error(`another Mac agent is already running (on ${other.host}); stop it first`);
   }
   let running = true;
 

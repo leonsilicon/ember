@@ -76,6 +76,10 @@ cd frontend && bun run agent
 
 Logs go to `.mprocs-logs/metro.log` and `.mprocs-logs/splat-agent.log` at the repo root.
 
+On Leon's MacBook the agent also runs as a pm2 service (`soon2026-agent`) that GitHub Actions updates on every push to
+`main`; `vpx _dev` then leaves out its agent pane, since two agents would take the same work. See "The Mac agent as a
+service" in `frontend/README.md`.
+
 ### Checks
 
 ```bash

@@ -33,6 +33,19 @@ from branches in that repo to previews, with the Vercel CLI (`vercel pull`, `ver
 --prebuilt`). It needs the `VERCEL_TOKEN` repository secret. Everything else (root directory `frontend`, the install
 command, env vars, region `yul1`) is the Vercel project's settings (`improvelabs/soon2026`), pulled at build time.
 
+### The Mac agent as a service
+
+The agent (`src/agent`) runs on Leon's MacBook as the pm2 process `soon2026-agent` (`pm2.config.cjs`; `pm2 ls`, `pm2
+logs soon2026-agent`), from the service's own checkout in `~/.soon2026/agent/repo`. `.github/workflows/agent.yml`
+keeps it current: every push to `main` that touches `frontend/` runs on the self-hosted runner (that Mac), fetches the
+commit into that checkout, installs dependencies, Brush and the depth worker when needed (`scripts/install-*.sh`),
+pulls the project's development env (`REDIS_URL`, and the OIDC token the Blob SDK refreshes through the Mac's `vercel
+login`), runs `scripts/install-agent-service.sh` (pm2 delete + start, `pm2 save`, and a launchd agent that runs `pm2
+resurrect` at login) and waits for the new process's heartbeat with `scripts/agent-status.ts`. pm2 restarts the agent
+after a crash and gives up, visibly (`errored`), after ten quick ones. Only one agent may run against the Redis
+instance (both would take the same work), so `vpx _dev` leaves out its agent pane while the service is online; to run
+the dev stack's agent instead, `pm2 stop soon2026-agent` and `vpx _dev --agent`, then `pm2 start soon2026-agent`.
+
 ## Rover control (`/control`)
 
 Talks to the ESP32 (`firmware/rover_ws`) over a WebSocket. Browsers refuse a plain `ws://` connection from an

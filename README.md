@@ -14,7 +14,7 @@ bunx vercel link && bunx vercel env pull .env.local   # first time only
 bun run dev
 ```
 
-**Mobile app:** builds the leaf model, then installs on a real iPhone (no Expo Go, no simulator ARKit); every push to `main` ships to TestFlight.
+**Mobile app:** builds the leaf model, then installs on a real iPhone (no Expo Go, no simulator ARKit); every push to `main` that changes it ships to TestFlight.
 
 ```bash
 bun run --filter @soon2026/owlvit build      # required before any build (or: cd packages/owlvit && uv run export.py --precision fp32)
@@ -62,8 +62,9 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
 | `frontend` | The web app, a Next.js app on Vercel (https://soon2026.vercel.app): the splat server, which trains captures into splats and rebuilds recordings live in 3D through a Bun agent on a Mac (see "Train and preview the splat" in [`mobile/SPLATS.md`](mobile/SPLATS.md)), plus the laptop pages: rover remote control at `/control`, the autopilot simulator at `/sim` and the wildfire hazard map at `/wildfire`. See [`frontend/README.md`](frontend/README.md). |
 | `packages/owlvit` | Builds the on-device OWL-ViT leaf detector the app embeds. |
 | `packages/dev` | The `vpx _dev` and `vpx _ios` scripts. |
-| `.github/workflows/testflight.yml` | Ships every push to `main` to TestFlight from a self-hosted Mac; see "TestFlight" in [`mobile/AGENTS.md`](mobile/AGENTS.md). |
+| `.github/workflows/testflight.yml` | Ships every push to `main` that changes the app to TestFlight from a self-hosted Mac; see "TestFlight" in [`mobile/AGENTS.md`](mobile/AGENTS.md). |
 | `.github/workflows/vercel.yml` | Deploys every push to `main` to Vercel from GitHub Actions; see "Deploying" in [`frontend/README.md`](frontend/README.md). |
+| `.github/workflows/agent.yml` | Keeps the splat server's Mac agent running on the self-hosted Mac as a pm2 service and updates it on every push to `main`; see "The Mac agent as a service" in [`frontend/README.md`](frontend/README.md). |
 | `firmware/rover_ws` | ESP32 Arduino sketch: Wi-Fi access point + WebSocket command endpoint for the web app. |
 | `data/wildfire` | Ontario wildfire hazard pipeline that feeds the web app's map. |
 | `backend` | Python on the Mac: the same leaf detector and depth logic as the app, for testing with a webcam, photo or RealSense, plus an HTTP perception service. See [`backend/README.md`](backend/README.md). |

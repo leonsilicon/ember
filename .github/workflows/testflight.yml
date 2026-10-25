@@ -7,6 +7,16 @@ name: TestFlight
 on:
   push:
     branches: [main]
+    # Only what goes into the app: a frontend-only push shouldn't tie up the runner Mac for a 20-minute build (the
+    # Mac agent job, .github/workflows/agent.yml, shares that runner).
+    paths:
+      - mobile/**
+      - packages/**
+      - bun.lock
+      - bunfig.toml
+      - package.json
+      - .github/workflows/testflight.yml
+      - '!**/*.md'
   workflow_dispatch:
 
 permissions:

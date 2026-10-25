@@ -1,0 +1,127 @@
+# Keeps the splat server's Mac agent (frontend/src/agent: the trainer and the live reconstruction, which need a Mac with
+# a GPU) running on Leon's MacBook as a pm2 process, and updates it on every push to main that touches it. The job runs
+# on the self-hosted runner, which is that Mac, like Haniverse's development Metro on the Mac mini: it fetches the commit
+# into the service's own checkout (~/.soon2026/agent/repo, not the runner's workspace, which other jobs' checkouts
+# clean out, and not Leon's working copy), installs what the agent needs, pulls the Vercel project's env, restarts the
+# process and waits for its heartbeat in Redis. pm2 restarts the agent after a crash, and pm2's launchd hook brings it
+# back after a reboot. Details: "The Mac agent as a service" in frontend/README.md.
+name: Mac agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - frontend/**
+      - bun.lock
+      - bunfig.toml
+      - package.json
+      - .github/workflows/agent.yml
+      - '!**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The newest push wins: a deploy still running is abandoned for it, and the next run repairs anything it left half done.
+concurrency:
+  group: mac-agent
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Update the Mac agent
+    # The runner is registered on SOON-2026/soon2026 only; on a mirror or a fork this job would wait for one forever.
+    if: github.repository == 'SOON-2026/soon2026'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
+    env:
+      REPO: ${{ github.workspace }}/../../../../.soon2026/agent/repo
+      VERCEL_ORG_ID: team_CLXL7Uovrp5rDNAfasIFgz6P
+      VERCEL_PROJECT_ID: prj_FpI4ssXl41I3tSAquktWkhsLJrJh
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - name: Find the service's checkout and the tools
+        run: |
+          # $HOME isn't available to the `env:` map above; ~/.soon2026/agent/repo is the real location.
+          echo "REPO=$HOME/.soon2026/agent/repo" >> "$GITHUB_ENV"
+          for tool in bun node git; do
+            command -v "$tool" > /dev/null || { echo "::error::$tool is not on the runner's PATH"; exit 1; }
+          done
+          command -v pm2 > /dev/null || bun add -g pm2@7.1.1
+          echo "bun $(bun --version), node $(node --version), pm2 $(pm2 --version | tail -1)"
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::VERCEL_TOKEN is not set; the agent's env comes from the Vercel project."
+            exit 1
+          fi
+
+      # Nothing ignored is removed: node_modules, the Brush and depth worker binaries, the model, .env.local, the
+      # project link and the agent's data stay.
+      - name: Check out the commit into the service's checkout
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$REPO" && cd "$REPO"
+          if [ ! -d .git ]; then
+            git init -q
+            git remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          fi
+          auth=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64)
+          git -c http.extraheader="AUTHORIZATION: basic $auth" fetch -q --depth 1 origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+          git clean -fdq
+          git log -1 --oneline
+
+      - name: Install dependencies
+        working-directory: ${{ env.REPO }}
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # Brush is a 150 MB download and the depth worker a Swift build plus a Core ML compile, so only when they're
+      # missing or their install scripts changed.
+      - name: Install Brush and the depth worker
+        working-directory: ${{ env.REPO }}/frontend
+        run: |
+          key=$(cat scripts/install-brush.sh scripts/install-depth.sh | shasum -a 256 | cut -c1-16)
+          if [ "$(cat bin/.installed 2> /dev/null)" = "$key" ] && [ -x bin/brush_app ] && [ -x bin/depth_worker ] \
+            && [ -d models/DepthAnythingV2SmallF16.mlmodelc ]; then
+            echo "Brush and the depth worker are installed ($key)"
+            exit 0
+          fi
+          ./scripts/install-brush.sh
+          ./scripts/install-depth.sh
+          echo "$key" > bin/.installed
+
+      # The development environment, as `vercel env pull` gives a developer: REDIS_URL, and the OIDC token the Blob SDK
+      # uses for the private store. That token lasts 12 hours; the SDK then refreshes it through the Mac's own
+      # `vercel login`, for which this directory has to be linked (.vercel/project.json, written by `vercel pull`).
+      - name: Pull the Vercel project's environment
+        working-directory: ${{ env.REPO }}/frontend
+        run: |
+          vercel="$REPO/node_modules/.bin/vercel"
+          "$vercel" pull --yes --environment=development --token="$VERCEL_TOKEN"
+          "$vercel" env pull .env.local --yes --environment=development --token="$VERCEL_TOKEN"
+
+      # The script deletes and starts the pm2 process (so a changed pm2.config.cjs applies in full), saves pm2's list
+      # and installs the launchd agent that resurrects it at login. The heartbeat id from before tells the next step
+      # when the new process has taken over.
+      - name: Start the agent under pm2
+        working-directory: ${{ env.REPO }}/frontend
+        run: |
+          before=$(bun scripts/agent-status.ts --id 2> /dev/null || true)
+          echo "AGENT_BEFORE=$before" >> "$GITHUB_ENV"
+          ./scripts/install-agent-service.sh
+
+      - name: Wait for the agent's heartbeat
+        working-directory: ${{ env.REPO }}/frontend
+        run: bun scripts/agent-status.ts --wait --timeout 120 --this-host --not "$AGENT_BEFORE" --require-tools
+
+      - name: Show the agent's log
+        if: failure()
+        run: RUNNER_TRACKING_ID= pm2 logs soon2026-agent --nostream --lines 80 || true
+
+      - name: Show pm2's process list
+        if: always()
+        run: RUNNER_TRACKING_ID= pm2 ls || true
+
+      - name: Summary
+        run: |
+          echo "The Mac agent on $(hostname) now runs \`${GITHUB_SHA::7}\` (pm2 process \`soon2026-agent\`, checkout \`$REPO\`)." >> "$GITHUB_STEP_SUMMARY"
