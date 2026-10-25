@@ -93,6 +93,7 @@ export default function WildfireApp() {
   const containerRef = useRef<HTMLDivElement>(null)
   const smokeCanvasRef = useRef<HTMLCanvasElement>(null)
   const mapRef = useRef<MLMap | null>(null)
+  const loadedMapRef = useRef<MLMap | null>(null) // the map whose style has loaded; `ready` can lag one render behind an area switch
   const fireRef = useRef<FireLayer | null>(null)
   const smokeRef = useRef<Smoke | null>(null)
   const basemapIdsRef = useRef<string[]>([])
@@ -227,6 +228,7 @@ export default function WildfireApp() {
       for (const l of selectedLayers()) map.addLayer(l, before)
       map.addLayer(suggestLayer(), before)
       map.addLayer(zoneIconLayer())
+      loadedMapRef.current = map
       setReady(true)
     })
 
@@ -258,19 +260,20 @@ export default function WildfireApp() {
       smokeRef.current = null
       map.remove()
       mapRef.current = null
+      loadedMapRef.current = null
     }
   }, [data])
 
   // today's dryness recolours every footprint
   useEffect(() => {
     const map = mapRef.current
-    if (!ready || !map) return
+    if (!ready || map !== loadedMapRef.current || !map) return
     restyleBuildings(map, drynessMultiplier(dry))
   }, [ready, dry])
 
   useEffect(() => {
     const map = mapRef.current
-    if (!ready || !map) return
+    if (!ready || map !== loadedMapRef.current || !map) return
     map.setLayoutProperty(L.satellite, 'visibility', satellite ? 'visible' : 'none')
     for (const id of basemapIdsRef.current) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', satellite ? 'none' : 'visible')
   }, [ready, satellite])
@@ -279,7 +282,7 @@ export default function WildfireApp() {
   const prevSelected = useRef<number | null>(null)
   useEffect(() => {
     const map = mapRef.current
-    if (!ready || !map) return
+    if (!ready || map !== loadedMapRef.current || !map) return
     const fs = (fid: number, v: boolean) => map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { selected: v })
     if (prevSelected.current != null) fs(prevSelected.current, false)
     if (selected != null) fs(selected, true)
@@ -290,7 +293,7 @@ export default function WildfireApp() {
   const prevZone = useRef<number | null>(null)
   useEffect(() => {
     const map = mapRef.current
-    if (!ready || !map) return
+    if (!ready || map !== loadedMapRef.current || !map) return
     if (prevZone.current != null) map.setFeatureState({ source: ZONES_SOURCE, id: prevZone.current }, { selected: false })
     if (selectedZone != null) map.setFeatureState({ source: ZONES_SOURCE, id: selectedZone }, { selected: true })
     prevZone.current = selectedZone
@@ -309,7 +312,7 @@ export default function WildfireApp() {
   const prevDensity = useRef<number | null>(null)
   useEffect(() => {
     const map = mapRef.current
-    if (!ready || !map) return
+    if (!ready || map !== loadedMapRef.current || !map) return
     if (prevDensity.current != null) map.setFeatureState({ source: DENSITY_SOURCE, id: prevDensity.current }, { selected: false })
     if (selectedDensity != null) map.setFeatureState({ source: DENSITY_SOURCE, id: selectedDensity }, { selected: true })
     prevDensity.current = selectedDensity
@@ -318,7 +321,7 @@ export default function WildfireApp() {
   // layer toggles
   useEffect(() => {
     const map = mapRef.current
-    if (!ready || !map) return
+    if (!ready || map !== loadedMapRef.current || !map) return
     const vis = (ids: string[], on: boolean) => {
       for (const id of ids) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none')
     }
@@ -330,7 +333,7 @@ export default function WildfireApp() {
   const windField = useWindField(data?.coverage.bbox ?? null, layers.wind)
   useEffect(() => {
     const map = mapRef.current, canvas = windCanvasRef.current
-    if (!ready || !map || !canvas || !layers.wind) return
+    if (!ready || map !== loadedMapRef.current || !map || !canvas || !layers.wind) return
     const w = new WindLayer(canvas, map)
     windRef.current = w
     return () => {
@@ -346,7 +349,7 @@ export default function WildfireApp() {
   const prevCleared = useRef<Set<number>>(new Set())
   useEffect(() => {
     const map = mapRef.current
-    if (!ready || !map) return
+    if (!ready || map !== loadedMapRef.current || !map) return
     for (const fid of prevCleared.current) if (!actions.cleared.has(fid)) map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { cleared: false })
     for (const fid of actions.cleared) map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { cleared: true })
     prevCleared.current = new Set(actions.cleared)
@@ -355,7 +358,7 @@ export default function WildfireApp() {
   // fuel breaks on the map
   useEffect(() => {
     const map = mapRef.current
-    if (!ready || !map) return
+    if (!ready || map !== loadedMapRef.current || !map) return
     const src = map.getSource(BREAKS_SOURCE) as GeoJSONSource | undefined
     const line = (coords: Polyline, kind: string) => ({ type: 'Feature' as const, properties: { kind }, geometry: { type: 'LineString' as const, coordinates: coords } })
     src?.setData({
@@ -369,7 +372,7 @@ export default function WildfireApp() {
   const suggestNow = sim.suggest && sim.suggest.forRun === sim.run ? sim.suggest : null
   useEffect(() => {
     const map = mapRef.current
-    if (!ready || !map) return
+    if (!ready || map !== loadedMapRef.current || !map) return
     const src = map.getSource(SUGGEST_SOURCE) as GeoJSONSource | undefined
     src?.setData({
       type: 'FeatureCollection',
@@ -396,7 +399,7 @@ export default function WildfireApp() {
   useEffect(() => {
     const map = mapRef.current
     const grid = data?.grid
-    if (!ready || !map || !grid) return
+    if (!ready || map !== loadedMapRef.current || !map || !grid) return
     const run = sim.run
     fireRef.current?.setArrival(run?.result.arrival ?? null)
     if (smokeRef.current) {
@@ -458,7 +461,7 @@ export default function WildfireApp() {
       smokeRef.current.playing = playing
     }
     map?.triggerRepaint()
-    if (!map || !ready) return
+    if (!map || !ready || map !== loadedMapRef.current) return
     map.setPaintProperty(L.isoLine, 'line-opacity', ['case', ['<=', ['get', 'minutes'], Math.floor(t)], 0.95, 0.35])
     // ignite homes as the front reaches them (pointer walks the time-sorted list; scrubbing back resets)
     const fs = (fid: number, v: boolean) => map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { ignited: v })
