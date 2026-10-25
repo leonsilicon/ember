@@ -1,63 +1,104 @@
+import { useEffect, useRef, useState } from 'react'
 import { ArmPanel } from './components/ArmPanel'
+import { CapturePanel } from './components/CapturePanel'
 import { ConnectionPanel } from './components/ConnectionPanel'
 import { CONNECTION_STYLES } from './components/connectionStyles'
 import { DPad } from './components/DPad'
-import { StopButton } from './components/StopButton'
-import { CapturePanel } from './components/CapturePanel'
 import { PhoneCameraPanel } from './components/PhoneCameraPanel'
 import { DEFAULT_SCENE, ScenePanel, type SceneSource } from './components/ScenePanel'
 import { SplatViewer } from './components/SplatViewer'
+import { StopButton } from './components/StopButton'
+import { captureScene, useCaptures, viewable } from './hooks/useCaptures'
 import { usePhoneDiscovery } from './hooks/usePhoneDiscovery'
 import { useRover } from './hooks/useRover'
-import { useState } from 'react'
+import { Button, Hint, Led } from './ui/kit'
+import { Module } from './ui/layout'
+import { Shell, type Shortcut } from './ui/Shell'
 
+const SHORTCUTS: Shortcut[] = [
+  { keys: ['W', '↑'], label: 'Drive forward (hold)' },
+  { keys: ['S', '↓'], label: 'Drive back (hold)' },
+  { keys: ['A', '←'], label: 'Turn left (hold)' },
+  { keys: ['D', '→'], label: 'Turn right (hold)' },
+  { keys: ['Space', 'Esc'], label: 'Stop' },
+]
+
+/** The laptop remote (/control): drive and arm, the connection, the splat scene and the rover's camera. */
 export default function App() {
   const rover = useRover()
   // The rover's iPhone, once its app is open on the same Wi-Fi: its camera links up by itself.
   const phones = usePhoneDiscovery()
   const [scene, setScene] = useState<SceneSource>(DEFAULT_SCENE)
+  const captures = useCaptures()
+  // The newest trained capture replaces the sample once the list arrives, unless a scene was picked first.
+  const picked = useRef(false)
+  const pickScene = (next: SceneSource) => {
+    picked.current = true
+    setScene(next)
+  }
+  useEffect(() => {
+    if (picked.current || captures.state.kind !== 'ready') return
+    const newest = captures.state.captures.find(viewable)
+    if (!newest) return
+    picked.current = true
+    let cancelled = false
+    void captureScene(newest).then((next) => {
+      if (!cancelled) setScene(next)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [captures.state])
   const { snapshot, mode } = rover
   const connected = snapshot.connection === 'connected'
+  const conn = CONNECTION_STYLES[snapshot.connection]
 
   return (
-    <div className="flex min-h-full flex-col">
-      {mode === 'simulated' && (
-        <div className="bg-amber-500 px-4 py-1 text-center text-xs font-bold tracking-widest text-zinc-950 uppercase">
-          Simulated mode — no hardware connected
-        </div>
-      )}
-      <header className="flex items-center justify-between border-b border-zinc-800 px-6 py-3">
-        <div>
-          <h1 className="text-lg font-bold tracking-tight">Rover Control</h1>
-          <p className="text-xs text-zinc-500">soon2026 · laptop remote for rover + arm</p>
-        </div>
-        <div className="flex items-center gap-4 text-sm">
-          <span className="flex items-center gap-2">
-            <span className={`inline-block h-2.5 w-2.5 rounded-full ${CONNECTION_STYLES[snapshot.connection].dot}`} />
-            {CONNECTION_STYLES[snapshot.connection].label}
+    <Shell
+      page="/control"
+      shortcuts={SHORTCUTS}
+      status={
+        <span className="hidden items-center gap-3 text-[13px] md:flex">
+          <span className="flex items-center gap-2 text-ink">
+            <Led tone={conn.tone} blink={snapshot.connection === 'connecting'} />
+            {conn.label}
           </span>
           <span
-            className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-              mode === 'simulated' ? 'bg-amber-500/20 text-amber-300' : 'bg-sky-500/20 text-sky-300'
+            className={`rounded-[5px] px-2 py-0.5 text-[11px] font-semibold tracking-[0.12em] uppercase ${
+              mode === 'simulated' ? 'hatch border border-warn/50 text-warn' : 'bg-ember-soft text-ember-ink'
             }`}
           >
-            {mode === 'simulated' ? 'SIMULATED' : 'LIVE'}
+            {mode === 'simulated' ? 'Simulated' : 'Live'}
           </span>
-        </div>
-      </header>
-
-      <main className="grid flex-1 gap-4 p-4 lg:grid-cols-[1fr_380px] lg:p-6">
-        <div className="flex min-h-[420px] flex-col gap-4">
-          <SplatViewer source={scene?.url ?? null} label={scene?.label} />
-          <div className="grid gap-4 md:grid-cols-2">
-            <ScenePanel scene={scene} onChange={setScene} />
-            {/* The iPhone riding on the rover, in live mode or as soon as its app is found on the Wi-Fi;
-                otherwise the laptop webcam stand-in. */}
-            {mode === 'live' || phones.length > 0 ? <PhoneCameraPanel phones={phones} /> : <CapturePanel />}
+        </span>
+      }
+      actions={<StopButton compact disabled={!connected} onStop={rover.stop} />}
+      banner={
+        mode === 'simulated' && (
+          <div className="hatch mx-2 mb-2 flex items-center justify-between gap-3 rounded-[10px] border border-warn/40 py-1.5 pr-1.5 pl-3.5 lg:mx-2.5">
+            <p className="text-[13px] text-ink">
+              <span className="font-semibold">Simulated mode.</span> <span className="text-ink-2">No hardware connected; every reading is generated in the browser.</span>
+            </p>
+            <Button size="sm" onClick={() => rover.switchMode('live')}>
+              Connect a rover
+            </Button>
           </div>
-        </div>
+        )
+      }
+      // A new key per scene: each one brings its own camera (the sample is -y up, captures +y up).
+      stage={<SplatViewer key={scene?.url ?? 'none'} source={scene?.url ?? null} label={scene?.label} format={scene?.format} camera={scene?.camera} />}
+      modules={
+        <>
+          <Module id="drive" title="Drive" meta={`rover: ${snapshot.drive}`}>
+            <div className="flex flex-col items-center gap-3.5">
+              <DPad held={rover.held} reportedDrive={snapshot.drive} disabled={!connected} onPress={rover.press} onRelease={rover.release} />
+              <StopButton disabled={!connected} onStop={rover.stop} />
+            </div>
+            <Hint className="mt-3">
+              Hold a key or button to drive; let go to stop. Commands repeat every 100 ms, and the rover stops by itself after 300 ms of silence.
+            </Hint>
+          </Module>
 
-        <aside className="flex flex-col gap-4">
           <ConnectionPanel
             mode={mode}
             url={rover.url}
@@ -67,33 +108,15 @@ export default function App() {
             onDisconnect={rover.disconnect}
           />
 
-          <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold tracking-wide text-zinc-300 uppercase">Drive</h2>
-              <span className="text-xs text-zinc-500">
-                {mode === 'simulated' ? 'simulated' : 'device'} reports:{' '}
-                <span className="font-mono text-zinc-200">{snapshot.drive}</span>
-              </span>
-            </div>
-            <div className="flex flex-col items-center gap-4">
-              <DPad
-                held={rover.held}
-                reportedDrive={snapshot.drive}
-                disabled={!connected}
-                onPress={rover.press}
-                onRelease={rover.release}
-              />
-              <StopButton disabled={!connected} onStop={rover.stop} />
-            </div>
-            <p className="mt-3 text-xs text-zinc-500">
-              Hold a button or WASD / arrow key to drive; release to stop. Commands repeat every 100 ms and the
-              firmware stops on its own after 300 ms of silence.
-            </p>
-          </section>
-
           <ArmPanel arm={snapshot.arm} connected={connected} onRun={rover.runArm} />
-        </aside>
-      </main>
-    </div>
+
+          {/* The iPhone riding on the rover, in live mode or as soon as its app is found on the Wi-Fi;
+              otherwise the laptop webcam stand-in. */}
+          {mode === 'live' || phones.length > 0 ? <PhoneCameraPanel phones={phones} /> : <CapturePanel />}
+
+          <ScenePanel scene={scene} onChange={pickScene} captures={captures.state} onRefresh={() => void captures.refresh()} />
+        </>
+      }
+    />
   )
 }

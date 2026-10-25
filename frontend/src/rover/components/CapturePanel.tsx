@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFrameCapture } from '../hooks/useFrameCapture'
+import { Button, Icons, Led } from '../ui/kit'
+import { Module } from '../ui/layout'
 import { CaptureControls } from './CaptureControls'
 
 /**
@@ -51,43 +53,40 @@ export function CapturePanel() {
     }
   }
 
-  const btn = 'rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-40'
-
   return (
-    <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold tracking-wide text-zinc-300 uppercase">Capture</h2>
-        <span
-          className={`rounded-full px-2.5 py-0.5 text-xs ${
-            capture.recording ? 'bg-red-500/20 text-red-300' : 'bg-zinc-800 text-zinc-400'
-          }`}
-        >
-          {capture.recording ? `recording · ${capture.count}` : on ? 'laptop webcam' : 'webcam stand-in'}
+    <Module
+      id="camera"
+      title="Camera"
+      meta={
+        <span className="inline-flex items-center gap-1.5">
+          <Led tone={capture.recording ? 'danger' : on ? 'ok' : 'off'} blink={capture.recording} />
+          {capture.recording ? `rec · ${capture.count}` : on ? 'laptop webcam' : 'off'}
         </span>
-      </div>
-
-      <div className="relative aspect-video overflow-hidden rounded-lg bg-black">
+      }
+      flush
+    >
+      <div className="relative aspect-video overflow-hidden bg-stage">
         <video ref={video} muted playsInline className="h-full w-full object-cover" />
         {!on && (
-          <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-zinc-500">
-            Open the leaf detector app on the iPhone (same Wi-Fi) to capture from it; or use the laptop webcam.
+          <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-xs leading-relaxed text-[#a8a29a]">
+            Open the leaf detector app on the iPhone (same Wi-Fi) to capture from it, or use the laptop webcam.
           </div>
         )}
       </div>
-
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="border-t border-line px-3.5 pt-3 pb-3.5">
         {on ? (
-          <button type="button" onClick={stopCamera} className={`${btn} bg-zinc-800 text-zinc-100 hover:bg-zinc-700`}>
+          <Button size="sm" onClick={stopCamera}>
             Stop webcam
-          </button>
+          </Button>
         ) : (
-          <button type="button" onClick={startCamera} className={`${btn} bg-zinc-800 text-zinc-100 hover:bg-zinc-700`}>
+          <Button size="sm" onClick={startCamera}>
+            <Icons.camera />
             Use laptop webcam
-          </button>
+          </Button>
         )}
+        <CaptureControls capture={capture} ready={on} />
+        {cameraError && <p className="mt-2 text-xs text-danger">{cameraError}</p>}
       </div>
-      <CaptureControls capture={capture} ready={on} />
-      {cameraError && <p className="mt-2 text-xs text-red-300">{cameraError}</p>}
-    </section>
+    </Module>
   )
 }

@@ -1,8 +1,9 @@
 # frontend — the web app
 
 One Next.js app (`@soon2026/frontend`), on Vercel at https://soon2026.vercel.app. `/` is the landing page with the
-sign-in form, and everything else is behind it (see "Signing in"), under one tab bar (`src/app/tool-shell.tsx`) that
-switches between the four tools and signs out; sign-in lands on `/control`. Two sides share the app:
+sign-in form, and everything else is behind it (see "Signing in"): the splat pages under a tab bar (`src/app/tool-shell.tsx`)
+that switches between the four tools and signs out, the rover pages under Ember's own top bar (`src/rover/ui/Shell.tsx`)
+with the same four; sign-in lands on `/control`. Two sides share the app:
 
 - **The splat server** (`/live`, `/view/[id]`, `/api/*`; `src/app/(splat)`, `src/web`, `src/live`): the Live 3D tab also
   lists the captures (finished splats, and the ones still uploading or training; `live/captures-panel.tsx`). It

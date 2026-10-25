@@ -1,5 +1,6 @@
 import type { PointerEvent } from 'react'
 import type { Direction, DriveCommand } from '../protocol'
+import { Icons } from '../ui/kit'
 
 interface DPadProps {
   held: Direction | null
@@ -9,16 +10,16 @@ interface DPadProps {
   onRelease: (direction: Direction) => void
 }
 
-const LABELS: Record<Direction, { glyph: string; key: string; label: string }> = {
-  forward: { glyph: '▲', key: 'W', label: 'Forward' },
-  back: { glyph: '▼', key: 'S', label: 'Back' },
-  left: { glyph: '◀', key: 'A', label: 'Left' },
-  right: { glyph: '▶', key: 'D', label: 'Right' },
+const LABELS: Record<Direction, { rotate: number; key: string; label: string }> = {
+  forward: { rotate: 0, key: 'W', label: 'Forward' },
+  back: { rotate: 180, key: 'S', label: 'Back' },
+  left: { rotate: -90, key: 'A', label: 'Left' },
+  right: { rotate: 90, key: 'D', label: 'Right' },
 }
 
 export function DPad({ held, reportedDrive, disabled, onPress, onRelease }: DPadProps) {
   const button = (direction: Direction, extra: string) => {
-    const { glyph, key, label } = LABELS[direction]
+    const { rotate, key, label } = LABELS[direction]
     const isHeld = held === direction
     const isReported = reportedDrive === direction
     const handleDown = (e: PointerEvent<HTMLButtonElement>) => {
@@ -33,6 +34,7 @@ export function DPad({ held, reportedDrive, disabled, onPress, onRelease }: DPad
         type="button"
         aria-label={label}
         aria-pressed={isHeld}
+        aria-keyshortcuts={key}
         disabled={disabled}
         onPointerDown={handleDown}
         onPointerUp={handleUp}
@@ -41,34 +43,30 @@ export function DPad({ held, reportedDrive, disabled, onPress, onRelease }: DPad
         onContextMenu={(e) => e.preventDefault()}
         className={[
           extra,
-          'relative flex h-20 w-20 flex-col items-center justify-center rounded-xl border text-2xl transition select-none',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400',
+          'relative flex h-16 w-16 flex-col items-center justify-center gap-0.5 rounded-xl border transition-[background-color,border-color,color,transform] duration-100 select-none',
           disabled
-            ? 'cursor-not-allowed border-zinc-800 bg-zinc-900 text-zinc-600'
+            ? 'cursor-not-allowed border-line bg-well text-ink-3 opacity-60'
             : isHeld
-              ? 'border-sky-400 bg-sky-500 text-white shadow-lg shadow-sky-500/40'
-              : 'border-zinc-700 bg-zinc-800 text-zinc-100 hover:bg-zinc-700 active:bg-sky-600',
+              ? 'translate-y-px border-ink bg-ink text-panel'
+              : 'border-line border-b-[3px] bg-panel text-ink hover:border-line-strong active:translate-y-px active:border-b',
         ].join(' ')}
       >
-        <span>{glyph}</span>
-        <span className="mt-1 text-[10px] font-medium tracking-wide text-zinc-400">{key}</span>
-        {isReported && (
-          <span
-            aria-hidden
-            className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-emerald-400"
-            title="Device reports this direction active"
-          />
-        )}
+        <span style={{ transform: `rotate(${rotate}deg)` }}>
+          <Icons.arrow />
+        </span>
+        <span className={`num text-[10px] ${isHeld ? 'text-panel/70' : 'text-ink-3'}`}>{key}</span>
+        {isReported && <span aria-hidden className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-[1px] bg-ok" title="The rover reports this direction" />}
       </button>
     )
   }
 
   return (
-    <div className="grid grid-cols-3 grid-rows-3 gap-2" role="group" aria-label="Drive controls">
+    <div className="grid grid-cols-3 grid-rows-3 gap-1.5" role="group" aria-label="Drive controls">
       {button('forward', 'col-start-2 row-start-1')}
       {button('left', 'col-start-1 row-start-2')}
-      <div className="col-start-2 row-start-2 flex items-center justify-center text-xs text-zinc-500">
-        hold
+      <div className="col-start-2 row-start-2 flex flex-col items-center justify-center rounded-xl bg-well text-center">
+        <span className="text-[10px] tracking-[0.12em] text-ink-3 uppercase">rover</span>
+        <span className="num text-xs text-ink">{reportedDrive}</span>
       </div>
       {button('right', 'col-start-3 row-start-2')}
       {button('back', 'col-start-2 row-start-3')}

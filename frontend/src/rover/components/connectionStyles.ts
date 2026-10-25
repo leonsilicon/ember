@@ -1,8 +1,9 @@
 import type { ConnectionState } from '../clients/RoverClient'
+import type { Tone } from '../ui/kit'
 
-export const CONNECTION_STYLES: Record<ConnectionState, { dot: string; label: string }> = {
-  disconnected: { dot: 'bg-zinc-500', label: 'Disconnected' },
-  connecting: { dot: 'bg-amber-400 animate-pulse', label: 'Connecting…' },
-  connected: { dot: 'bg-emerald-400', label: 'Connected' },
-  error: { dot: 'bg-red-500', label: 'Error' },
+export const CONNECTION_STYLES: Record<ConnectionState, { tone: Tone; label: string }> = {
+  disconnected: { tone: 'off', label: 'Disconnected' },
+  connecting: { tone: 'warn', label: 'Connecting…' },
+  connected: { tone: 'ok', label: 'Connected' },
+  error: { tone: 'danger', label: 'Error' },
 }

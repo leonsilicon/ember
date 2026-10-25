@@ -16,10 +16,11 @@ export const TOOLS = [
 export type Tool = (typeof TOOLS)[number]['href'];
 
 /**
- * Every signed-in page: the top bar that switches between the four tools, with who's signed in and
- * Sign out, and the page under it filling the rest of the window. `current` is the tab to light; a
- * page that isn't one of the tools (a capture's splat viewer) leaves it out. The tools are split
- * across two root layouts (`(splat)` and `(rover)`), so a tab across that line is a full page load.
+ * The splat pages' frame (Live 3D and a capture's splat viewer): the top bar that switches between the
+ * four tools, with who's signed in and Sign out, and the page under it filling the rest of the window.
+ * `current` is the tab to light; the splat viewer, which isn't one of the tools, leaves it out. The
+ * rover pages (`(rover)`, another root layout) have Ember's own top bar instead (`src/rover/ui/Shell.tsx`)
+ * with the same four destinations, so a tab across that line is a full page load.
  */
 export async function ToolShell({ current, children }: { current?: Tool; children: React.ReactNode }) {
   const who = await currentLogin();
