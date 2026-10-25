@@ -205,7 +205,7 @@ export default function GalleryScreen() {
           </Pressable>
         )}
         {current && (
-          // Its splat: sent to the Mac to train the first time the capture is opened here, with pause and cancel.
+          // Its splat: sent to the Mac as soon as it was recorded (or from here, if that never happened), with pause and cancel.
           <SplatStatus key={`splat-${current.captureId}`} capture={current} serverUrl={splat.serverUrl} autoStart onDark />
         )}
         {current?.videoUri && (

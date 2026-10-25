@@ -87,8 +87,8 @@ axis convention — i.e. poses, intrinsics and depth unprojection line up.
 
 ## Train and preview the splat from the phone
 
-The app trains each capture into a splat with the reference pipeline and shows the result, the first
-time the capture is opened in the gallery. It has two halves, so a phone only ever needs the public URL:
+The app trains each capture into a splat with the reference pipeline, sending it off the moment its
+recording stops, and shows the result in the gallery. It has two halves, so a phone only ever needs the public URL:
 
 - **The splat server** (`frontend`): a Next.js app on Vercel, https://soon2026.vercel.app (project
   `improvelabs/soon2026`, root directory `frontend`, region `yul1`; every push to `main` deploys
@@ -126,8 +126,10 @@ A browser signs in once by opening any page with `?token=<SPLAT_TOKEN>` (or with
 landing page, see `frontend/README.md`);
 it keeps it in a cookie. API clients send `Authorization: Bearer <SPLAT_TOKEN>`.
 
-In the app, the first time a capture is opened in the gallery it's sent off: the phone asks the
-server for an upload URL, uploads the zip straight to Blob, and the agent picks it up. The gallery
+In the app, a capture is sent off as soon as its recording stops (`src/lib/splat-upload.ts`): the
+phone asks the server for an upload URL, uploads the zip straight to Blob, natively, so it carries on
+while the user does other things in the app, and the agent picks it up. The gallery sends a capture
+that never went (recorded before this, or with the app closed first) the first time it's opened. The gallery
 (and the capture's Info sheet) shows how it's going, with **Pause** / **Resume** (Brush is stopped and
 continued on the Mac) and **Cancel** (nothing is kept; **Make splat** sends it again when wanted), and
 **Open splat** renders it. The viewer page, `<server>/view/<capture id>`, works in any signed-in

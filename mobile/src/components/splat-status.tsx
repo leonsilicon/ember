@@ -1,14 +1,14 @@
-import { useEventListener } from 'expo';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
+import { type SavedCapture } from '../../modules/splat-capture';
 
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { compact } from '@/lib/captures';
-import { controlJob, getJob, SPLAT_TOKEN, viewerUrl, type SplatJob } from '@/lib/splat-server';
+import { controlJob, getJob, viewerUrl, type SplatJob } from '@/lib/splat-server';
+import { isUploading, subscribeUpload, uploadCapture, uploadOf, type UploadState } from '@/lib/splat-upload';
 
 type State =
   | { kind: 'checking' }
@@ -20,23 +20,17 @@ type State =
 
 const POLL_MS = 2000;
 
-/**
- * Captures `autoStart` has sent, for the session: the gallery mounts a page more than once (and the
- * Info sheet shows the same capture), and each must not send it again. And the ones being sent
- * right now, so two views of one capture can't upload it twice.
- */
-const autoStarted = new Set<string>();
-const uploading = new Set<string>();
-
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
 /**
  * A capture's splat, trained on the Mac behind the splat server: how far it has got, with pause,
- * cancel and open. With `autoStart`, a capture the server has never seen is sent as soon as this
- * shows (the gallery does that the first time a capture is opened); one that was cancelled or
- * failed waits to be asked. `onDark`: over the gallery's black, in white.
+ * cancel and open. The camera sends each recording off as it's saved (src/lib/splat-upload.ts), and
+ * this follows that upload wherever the capture is shown. With `autoStart`, a capture the server
+ * has never seen and nothing has tried to send (one from before, or whose app was closed first) is
+ * sent as soon as this shows (the gallery does that); one that was cancelled or failed waits to be
+ * asked. `onDark`: over the gallery's black, in white.
  */
 export function SplatStatus({
   capture,
@@ -50,30 +44,12 @@ export function SplatStatus({
   onDark?: boolean;
 }) {
   const theme = useTheme();
-  const [state, setState] = useState<State>({ kind: 'checking' });
-
-  useEventListener(SplatCapture, 'onUploadProgress', (p) => {
-    if (p.captureId !== capture.captureId) return;
-    setState((s) => (s.kind === 'uploading' ? { kind: 'uploading', sent: p.sentBytes, total: p.totalBytes } : s));
+  // This session's upload of the capture, wherever it was started: its progress, then what came of it.
+  const [state, setState] = useState<State>(() => {
+    const upload = uploadOf(capture.captureId);
+    return upload ? fromUpload(upload) : { kind: 'checking' };
   });
-
-  async function upload() {
-    const { captureId } = capture;
-    if (uploading.has(captureId)) return;
-    uploading.add(captureId);
-    autoStarted.add(captureId);
-    setState({ kind: 'uploading', sent: 0, total: capture.bytes });
-    try {
-      const res = await SplatCapture.uploadCapture(captureId, serverUrl, SPLAT_TOKEN);
-      const body = JSON.parse(res.body || '{}');
-      if (res.status !== 201) throw new Error(body.error ?? `server replied ${res.status}`);
-      setState({ kind: 'job', job: body as SplatJob });
-    } catch (error) {
-      setState({ kind: 'error', message: `Upload failed: ${message(error)}` });
-    } finally {
-      uploading.delete(captureId);
-    }
-  }
+  useEffect(() => subscribeUpload(capture.captureId, (upload) => setState(fromUpload(upload))), [capture.captureId]);
 
   // Pick up a splat that was already made, and follow training while it runs.
   const jobState = state.kind === 'job' ? state.job.state : null;
@@ -82,12 +58,13 @@ export function SplatStatus({
     if (state.kind !== 'checking' && !following) return;
     let alive = true;
     const poll = async () => {
+      // While this phone is sending it, the upload's own progress is what to show.
+      if (isUploading(capture.captureId)) return;
       try {
         const job = await getJob(serverUrl, capture.captureId);
-        if (!alive) return;
+        if (!alive || isUploading(capture.captureId)) return;
         if (job) setState({ kind: 'job', job });
-        else if (uploading.has(capture.captureId)) setState({ kind: 'uploading', sent: 0, total: capture.bytes });
-        else if (autoStart && !autoStarted.has(capture.captureId)) upload();
+        else if (autoStart && !uploadOf(capture.captureId)) uploadCapture(capture, serverUrl);
         else setState({ kind: 'idle' });
       } catch (error) {
         if (alive) setState({ kind: 'error', message: `Server unreachable: ${message(error)}` });
@@ -99,7 +76,7 @@ export function SplatStatus({
       alive = false;
       clearInterval(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `upload` and `autoStart` are stable for a capture
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `capture` and `autoStart` are stable for a capture
   }, [capture.captureId, serverUrl, state.kind, following]);
 
   async function control(action: 'pause' | 'resume' | 'cancel') {
@@ -134,7 +111,13 @@ export function SplatStatus({
       </Text>
       <View style={styles.row}>
         {state.kind === 'uploading' && <ActivityIndicator color={color} />}
-        {canStart && <Action label={job?.state === 'done' ? 'Train again' : 'Make splat'} color={color} onPress={upload} />}
+        {canStart && (
+          <Action
+            label={job?.state === 'done' ? 'Train again' : 'Make splat'}
+            color={color}
+            onPress={() => uploadCapture(capture, serverUrl)}
+          />
+        )}
         {(job?.state === 'queued' || job?.state === 'training') && (
           <Action label="Pause" color={color} onPress={() => control('pause')} />
         )}
@@ -152,6 +135,12 @@ export function SplatStatus({
       </View>
     </View>
   );
+}
+
+function fromUpload(upload: UploadState): State {
+  if (upload.kind === 'uploading') return { kind: 'uploading', sent: upload.sent, total: upload.total };
+  if (upload.kind === 'sent') return { kind: 'job', job: upload.job };
+  return { kind: 'error', message: `Upload failed: ${upload.message}` };
 }
 
 function describe(job: SplatJob) {

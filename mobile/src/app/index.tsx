@@ -60,6 +60,7 @@ import { updateSplatSettings, useSplatSettings } from '@/hooks/use-splat-setting
 import { compact } from '@/lib/captures';
 import { useRover } from '@/lib/rover';
 import { liveFollowEmbedUrl, SPLAT_TOKEN } from '@/lib/splat-server';
+import { uploadCapture } from '@/lib/splat-upload';
 
 type Phase =
   | { kind: 'ready' }
@@ -356,8 +357,13 @@ export default function CameraScreen() {
     setPhase({ kind: 'saving' });
     try {
       // Like the Camera app, the gallery button turning into the new capture is the confirmation.
-      setLatest({ capture: await SplatCapture.stopCapture(), fresh: true });
+      const capture = await SplatCapture.stopCapture();
+      setLatest({ capture, fresh: true });
       setPhase({ kind: 'ready' });
+      // Off to the splat server at once, so the Mac is training it before anyone looks for it.
+      uploadCapture(capture, splat.serverUrl).then((sent) => {
+        if (sent.kind === 'failed') showCaption(`Couldn't send the capture for its splat: ${sent.message}`);
+      });
     } catch (error) {
       setPhase({ kind: 'ready' });
       Alert.alert("Couldn't save the capture", message(error));
