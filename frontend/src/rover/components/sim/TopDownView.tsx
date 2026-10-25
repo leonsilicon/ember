@@ -56,11 +56,21 @@ export function TopDownView({ controller, overlays }: Props) {
       const { sim, frame } = controller
       const w = canvas.clientWidth
       const h = canvas.clientHeight
-      ctx.fillStyle = C.background
+      // Ground, grid and rover follow the page's light/dark theme (the --map-* tokens in rover.css).
+      const css = getComputedStyle(canvas)
+      const T = {
+        background: css.getPropertyValue('--map-bg').trim() || C.background,
+        grid: css.getPropertyValue('--map-grid').trim() || C.grid,
+        rover: css.getPropertyValue('--map-ink').trim() || C.rover,
+        roverFill: css.getPropertyValue('--map-ink-fill').trim() || C.roverFill,
+        muted: css.getPropertyValue('--map-muted').trim() || C.muted,
+        work: css.getPropertyValue('--map-work').trim() || C.work,
+      }
+      ctx.fillStyle = T.background
       ctx.fillRect(0, 0, w, h)
 
       // 1 m grid.
-      ctx.strokeStyle = C.grid
+      ctx.strokeStyle = T.grid
       ctx.lineWidth = 1
       for (let x = Math.ceil(VIEW.x0); x <= VIEW.x1; x++) {
         ctx.beginPath()
@@ -81,24 +91,24 @@ export function TopDownView({ controller, overlays }: Props) {
         // The work circle, labelled with its size where it crosses the top.
         if (Number.isFinite(frame.workRadiusM)) {
           ctx.setLineDash([7, 5])
-          circle(c[0], c[2], frame.workRadiusM, 'rgba(125,211,252,.05)', C.work, 1.5)
+          circle(c[0], c[2], frame.workRadiusM, undefined, T.work, 1.5)
           ctx.setLineDash([])
           const label = `${controller.workRadiusFt} ft`
-          ctx.font = '600 11px system-ui'
+          ctx.font = '600 11px ui-sans-serif, system-ui'
           ctx.textAlign = 'center'
           ctx.textBaseline = 'middle'
           const lx = px(c[0])
           const ly = py(c[2] - frame.workRadiusM)
           const w = ctx.measureText(label).width + 10
-          ctx.fillStyle = C.background
+          ctx.fillStyle = T.background
           ctx.fillRect(lx - w / 2, ly - 8, w, 16)
-          ctx.fillStyle = C.work
+          ctx.fillStyle = T.work
           ctx.fillText(label, lx, ly)
           ctx.textBaseline = 'alphabetic'
         }
         circle(c[0], c[2], frame.pile.radiusM, o.pileZone ? C.pileFill : undefined, C.pile, 1.5)
         ctx.fillStyle = C.pile
-        ctx.font = '600 11px system-ui'
+        ctx.font = '600 11px ui-sans-serif, system-ui'
         ctx.textAlign = 'center'
         ctx.fillText('PILE', px(c[0]), py(c[2] + frame.pile.radiusM) - 6)
       }
@@ -159,7 +169,7 @@ export function TopDownView({ controller, overlays }: Props) {
       if (o.belief) {
         for (const t of frame.tracked) {
           if (t.state === 'collected') continue
-          const color = t.state === 'failed' ? C.blocked : t.state === 'tentative' ? C.muted : C.belief
+          const color = t.state === 'failed' ? C.blocked : t.state === 'tentative' ? T.muted : C.belief
           circle(t.world[0], t.world[2], t.id === target ? 0.16 : 0.11, undefined, color, t.id === target ? 2.5 : 1.25)
         }
       }
@@ -168,18 +178,18 @@ export function TopDownView({ controller, overlays }: Props) {
       const fwd = [Math.sin(yaw), -Math.cos(yaw)]
       const ax = cam[0] - fwd[0] * sim.options.axleBackM
       const az = cam[2] - fwd[1] * sim.options.axleBackM
-      circle(ax, az, sim.options.bodyRadiusM, C.roverFill, C.rover, 2)
+      circle(ax, az, sim.options.bodyRadiusM, T.roverFill, T.rover, 2)
       const lip = sim.brain.options.autopilot.scoopLipM
       const half = sim.brain.options.autopilot.scoopWidthM / 2
       const right = [-fwd[1], fwd[0]]
-      ctx.strokeStyle = frame.scoop === 'down' ? C.scoopDown : frame.scoop === 'dump' ? C.pile : C.rover
+      ctx.strokeStyle = frame.scoop === 'down' ? C.scoopDown : frame.scoop === 'dump' ? C.pile : T.rover
       ctx.lineWidth = frame.scoop === 'down' ? 5 : 3
       ctx.beginPath()
       ctx.moveTo(px(cam[0] + fwd[0] * lip - right[0] * half), py(cam[2] + fwd[1] * lip - right[1] * half))
       ctx.lineTo(px(cam[0] + fwd[0] * lip + right[0] * half), py(cam[2] + fwd[1] * lip + right[1] * half))
       ctx.stroke()
       if (frame.stats.inScoop > 0) circle(cam[0] + fwd[0] * 0.05, cam[2] + fwd[1] * 0.05, 0.06, C.leaf)
-      circle(cam[0], cam[2], 0.035, C.rover)
+      circle(cam[0], cam[2], 0.035, T.rover)
 
       // Placing the pile: a ghost where it would go, red where it can't.
       if (controller.placingPile && hover) {

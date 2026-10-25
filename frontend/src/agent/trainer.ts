@@ -110,7 +110,9 @@ export class Trainer {
         await this.train(id);
       } catch (error) {
         if (this.closed) return;
-        // e.g. the Brush binary can't be spawned, or Blob is unreachable. Fail this job, keep the queue moving.
+        // e.g. the Brush binary can't be spawned, or Blob stayed unreachable. Fail this job, keep the queue
+        // moving, and don't leave its Brush on the GPU while the next job's starts.
+        this.stopBrush();
         const job = await this.store.get(id).catch(() => null);
         if (job) await this.store.put({ ...job, state: 'failed', error: String(error) }).catch(() => {});
       } finally {
@@ -201,7 +203,11 @@ export class Trainer {
     while (!done) {
       await Promise.race([exit, sleep(1000)]);
       if (this.closed || this.cancelled.has(id)) break;
-      if (!done) await this.publishSnapshot(job, false, save);
+      // A snapshot that can't be published now (the network stayed down past storage's own retries)
+      // is still on disk, so the next tick tries again; Brush carries on meanwhile.
+      if (!done) {
+        await this.publishSnapshot(job, false, save).catch((error) => console.warn(`${id}: couldn't publish a snapshot yet: ${error}`));
+      }
     }
 
     const code = await exit;
@@ -212,9 +218,16 @@ export class Trainer {
       await save({ state: 'cancelled', step: 0, snapshots: [], gaussians: null, trainSeconds: null, error: null });
       return;
     }
-    // Brush may have written its last snapshots while an upload was still going.
-    await this.publishSnapshot(job, true, save);
     const trainSeconds = Math.round((performance.now() - started) / 100) / 10;
+    // Brush may have written its last snapshots while an upload was still going.
+    try {
+      await this.publishSnapshot(job, true, save);
+    } catch (error) {
+      // The splat stays on disk in runDir; the capture's zip too, in storage, for a later try.
+      const message = error instanceof Error ? error.message : String(error);
+      await save({ state: 'failed', trainSeconds, error: `trained, but the splat couldn't be stored: ${message}` });
+      return;
+    }
     if (code === 0 && job.step > 0) {
       await save({ state: 'done', trainSeconds });
     } else {

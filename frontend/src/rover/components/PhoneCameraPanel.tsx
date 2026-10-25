@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DiscoveredPhone } from '../../phone-discovery'
 import { useFrameCapture } from '../hooks/useFrameCapture'
+import { Button, INPUT, Led } from '../ui/kit'
+import { Module } from '../ui/layout'
 import { CaptureControls } from './CaptureControls'
 import { useDetectionStream } from '../hooks/useDetectionStream'
 import { DetectionBoxes } from './DetectionBoxes'
@@ -66,7 +68,9 @@ const displayAddress = (origin: string) => origin.replace(/^https?:\/\//, '').re
  * found on the Wi-Fi (usePhoneDiscovery): the panel links up by itself with the only one, or the one used last;
  * with a choice to make (a shared Wi-Fi), it lists them to pick from. Not after the user pressed Stop.
  */
-export function PhoneCameraPanel({ phones = [] }: { phones?: readonly DiscoveredPhone[] }) {
+export type PhoneLink = { origin: string; device: string }
+
+export function PhoneCameraPanel({ phones = [], onLink }: { phones?: readonly DiscoveredPhone[]; onLink?: (link: PhoneLink | null) => void }) {
   const [address, setAddress] = useState(readSaved)
   const [lastId, setLastId] = useState(readSavedId)
   const discovered = pickPhone(phones, { id: lastId, origin: phoneCameraOrigin(address) })
@@ -196,6 +200,13 @@ export function PhoneCameraPanel({ phones = [] }: { phones?: readonly Discovered
   const busy = state.kind === 'checking'
   const streaming = state.kind === 'streaming'
 
+  // Tells the page which phone is linked (the live top view reads its map from the same phone).
+  const linkedDevice = state.kind === 'streaming' ? state.device : null
+  useEffect(() => {
+    onLink?.(linkedDevice && origin ? { origin, device: linkedDevice } : null)
+  }, [linkedDevice, origin, onLink])
+  useEffect(() => () => onLink?.(null), [onLink])
+
   // The leaf detector's boxes, while linked: drawn over the picture, never into captured frames.
   const [showBoxes, setShowBoxes] = useState(true)
   const { frame: detections, unsupported: boxesUnsupported } = useDetectionStream(streaming && showBoxes ? origin : null)
@@ -220,114 +231,30 @@ export function PhoneCameraPanel({ phones = [] }: { phones?: readonly Discovered
     if (!streaming) stopRecording()
   }, [streaming, stopRecording])
 
+  const statusText = streaming
+    ? fps === 0
+      ? 'picture frozen'
+      : `${fps != null ? `${fps} fps` : 'live'}${viewers > 1 ? ` · ${viewers} watching` : ''}`
+    : busy
+      ? 'connecting…'
+      : state.kind === 'error'
+        ? 'not connected'
+        : 'off'
+  const tone = capture.recording ? 'danger' : streaming ? (fps === 0 ? 'warn' : 'ok') : state.kind === 'error' ? 'danger' : busy ? 'warn' : 'off'
+
   return (
-    <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold tracking-wide text-zinc-300 uppercase">
-          Capture
-          <span
-            className={`rounded-full px-2 py-0.5 text-[11px] font-medium tracking-normal normal-case ${
-              capture.recording ? 'bg-red-500/20 text-red-300' : 'bg-sky-500/15 text-sky-300'
-            }`}
-          >
-            {capture.recording ? `recording · ${capture.count}` : 'iPhone camera'}
-          </span>
-        </h2>
-        <span className="flex items-center gap-1.5 text-xs text-zinc-400">
-          <span
-            className={`inline-block h-2 w-2 rounded-full ${
-              streaming ? (fps === 0 ? 'bg-amber-400' : 'bg-emerald-400') : state.kind === 'error' ? 'bg-red-400' : busy ? 'bg-amber-400' : 'bg-zinc-600'
-            }`}
-          />
-          {streaming
-            ? fps === 0
-              ? `${state.device} · picture frozen: camera screen closed?`
-              : `${state.device}${fps != null ? ` · ${fps} fps` : ''}${viewers > 1 ? ` · ${viewers} watching` : ''}`
-            : busy
-              ? 'Connecting…'
-              : state.kind === 'error'
-                ? 'Not connected'
-                : 'Off'}
+    <Module
+      id="camera"
+      title="Rover camera"
+      meta={
+        <span className="inline-flex items-center gap-1.5">
+          <Led tone={tone} blink={busy || capture.recording} />
+          {capture.recording ? `rec · ${capture.count}` : statusText}
         </span>
-      </div>
-
-      <form
-        className="flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault()
-          connect()
-        }}
-      >
-        <label className="sr-only" htmlFor="phone-camera-address">
-          Phone address
-        </label>
-        <input
-          id="phone-camera-address"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-          placeholder="192.168.1.23"
-          inputMode="url"
-          autoComplete="off"
-          spellCheck={false}
-          className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus-visible:border-sky-500 focus-visible:ring-2 focus-visible:ring-sky-500/30"
-        />
-        {streaming ? (
-          <button
-            type="button"
-            onClick={disconnect}
-            className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-sky-400"
-          >
-            Stop
-          </button>
-        ) : (
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-md bg-sky-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-sky-400 focus-visible:outline-2 focus-visible:outline-sky-300 disabled:opacity-60"
-          >
-            {state.kind === 'error' ? 'Retry' : 'Connect'}
-          </button>
-        )}
-      </form>
-
-      {(phones.length > 1 || (phones.length > 0 && !discovered)) && (
-        <div className="mt-3">
-          <p className="mb-1.5 text-xs text-zinc-400">
-            {phones.length === 1 ? 'A camera' : `${phones.length} cameras`} on this Wi-Fi{discovered ? '' : ': pick yours'}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {phones.map((phone) => {
-              const current = phone.origin === origin && (streaming || busy)
-              return (
-                <button
-                  key={phone.origin}
-                  type="button"
-                  aria-pressed={current}
-                  onClick={() => {
-                    setAddress(displayAddress(phone.origin))
-                    try {
-                      localStorage.setItem(STORAGE_KEY, displayAddress(phone.origin))
-                    } catch {
-                      // Private mode: the choice just isn't remembered.
-                    }
-                    setStopped(false)
-                    setStreamUrl(null)
-                    setState({ kind: 'checking' })
-                    void check(phone.origin)
-                  }}
-                  className={`rounded-md px-2.5 py-1 text-xs focus-visible:outline-2 focus-visible:outline-sky-400 ${
-                    current ? 'bg-sky-500 font-semibold text-zinc-950' : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
-                  }`}
-                >
-                  {phone.device} <span className={current ? 'text-zinc-800' : 'text-zinc-500'}>· {displayAddress(phone.origin)}</span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      <div className="relative mt-3 flex aspect-[3/4] max-h-[420px] w-full items-center justify-center overflow-hidden rounded-lg bg-zinc-950">
+      }
+      flush
+    >
+      <div className="relative flex aspect-[3/4] max-h-[440px] w-full items-center justify-center overflow-hidden bg-stage">
         {streamUrl ? (
           // Sized to the frame, so the boxes' fractions land on the picture, not the letterbox.
           <div className="relative h-full max-w-full" style={{ aspectRatio: frameAspect }}>
@@ -346,36 +273,109 @@ export function PhoneCameraPanel({ phones = [] }: { phones?: readonly Discovered
               }}
             />
             {showBoxes && detections && <DetectionBoxes boxes={detections.boxes} />}
-            <button
-              type="button"
-              aria-pressed={showBoxes}
-              onClick={() => setShowBoxes((v) => !v)}
-              className="absolute right-2 bottom-2 rounded-md bg-zinc-950/80 px-2 py-1 text-[11px] font-semibold text-zinc-200 hover:bg-zinc-900 focus-visible:outline-2 focus-visible:outline-sky-400"
-            >
-              {showBoxes
-                ? `Boxes on${detections ? ` · ${detections.boxes.length}` : boxesUnsupported ? ' · phone app too old' : ''}`
-                : 'Boxes off'}
-            </button>
           </div>
         ) : (
-          <p className="max-w-[30ch] px-4 text-center text-xs leading-relaxed text-zinc-500">
+          <p className="max-w-[32ch] px-4 text-center text-xs leading-relaxed text-[#a8a29a]">
             {state.kind === 'error'
               ? state.message
               : busy
                 ? 'Looking for the phone…'
-                : "Open the rover app on the iPhone, on the same Wi-Fi: it links up here by itself. (Or enter the address from the cast icon at the top of its camera screen.)"}
+                : 'Open the rover app on the iPhone, on the same Wi-Fi: it links up here by itself. (Or enter the address from the cast icon at the top of its camera screen.)'}
           </p>
+        )}
+        {streaming && (
+          <>
+            <span className="num pointer-events-none absolute top-2 left-2 rounded-md bg-black/55 px-2 py-0.5 text-[11px] text-white/90">{state.device}</span>
+            <button
+              type="button"
+              aria-pressed={showBoxes}
+              onClick={() => setShowBoxes((v) => !v)}
+              className="absolute right-2 bottom-2 rounded-md bg-black/60 px-2 py-1 text-[11px] font-medium text-white/90 transition-colors hover:bg-black/75"
+            >
+              {showBoxes
+                ? `Leaf boxes on${detections ? ` · ${detections.boxes.length}` : boxesUnsupported ? ' · phone app too old' : ''}`
+                : 'Leaf boxes off'}
+            </button>
+          </>
         )}
       </div>
 
-      <CaptureControls capture={capture} ready={streaming} />
+      <div className="border-t border-line px-3.5 pt-3 pb-3.5">
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            connect()
+          }}
+        >
+          <label className="sr-only" htmlFor="phone-camera-address">
+            Phone address
+          </label>
+          <input
+            id="phone-camera-address"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="192.168.1.23"
+            inputMode="url"
+            autoComplete="off"
+            spellCheck={false}
+            className={`${INPUT} num flex-1`}
+          />
+          {streaming ? (
+            <Button onClick={disconnect}>Disconnect</Button>
+          ) : (
+            <Button type="submit" variant="primary" disabled={busy}>
+              {state.kind === 'error' ? 'Retry' : 'Connect'}
+            </Button>
+          )}
+        </form>
 
-      {insecurePage && (
-        <p className="mt-2 text-xs text-amber-300">
-          This page is on https, which browsers won't let load the phone's http stream. Open the web app over http (e.g. the
-          dev server) for live view.
-        </p>
-      )}
-    </section>
+        {(phones.length > 1 || (phones.length > 0 && !discovered)) && (
+          <div className="mt-3">
+            <p className="mb-1.5 text-xs text-ink-2">
+              {phones.length === 1 ? 'A camera' : `${phones.length} cameras`} on this Wi-Fi{discovered ? '' : ': pick yours'}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {phones.map((phone) => {
+                const current = phone.origin === origin && (streaming || busy)
+                return (
+                  <button
+                    key={phone.origin}
+                    type="button"
+                    aria-pressed={current}
+                    onClick={() => {
+                      setAddress(displayAddress(phone.origin))
+                      try {
+                        localStorage.setItem(STORAGE_KEY, displayAddress(phone.origin))
+                      } catch {
+                        // Private mode: the choice just isn't remembered.
+                      }
+                      setStopped(false)
+                      setStreamUrl(null)
+                      setState({ kind: 'checking' })
+                      void check(phone.origin)
+                    }}
+                    className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                      current ? 'border-ink bg-ink font-medium text-panel' : 'border-line bg-panel text-ink hover:border-line-strong'
+                    }`}
+                  >
+                    {phone.device} <span className={current ? 'text-panel/70' : 'text-ink-3'}>· {displayAddress(phone.origin)}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <CaptureControls capture={capture} ready={streaming} />
+
+        {insecurePage && (
+          <p className="mt-2 text-xs text-warn">
+            This page is on https, which browsers won't let load the phone's http stream. Open the web app over http (e.g. the dev server) for
+            live view.
+          </p>
+        )}
+      </div>
+    </Module>
   )
 }

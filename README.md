@@ -1,4 +1,8 @@
-# soon2026
+<p align="center"><img src="assets/ember-mark.svg" alt="Ember logo" width="120"></p>
+
+# Ember
+
+An autonomous wildfire-prevention rover that clears dry leaves and pine needles before they burn.
 
 ## Quickstart
 
@@ -59,7 +63,7 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
 |---|---|
 | `mobile` | The Expo / React Native iPhone app: camera, leaf detection, the rover's brain and autopilot, rover controls, 3D splat capture. Plus the ESP32 firmware (`firmware/rover`). |
 | `mobile/src/lib/rover-brain` | Leaf localisation, obstacle scanning and the drive-to-leaf autopilot (pure TypeScript, unit-tested). |
-| `frontend` | The web app, a Next.js app on Vercel (https://soon2026.vercel.app): the splat server, which trains captures into splats and rebuilds recordings live in 3D through a Bun agent on a Mac (see "Train and preview the splat" in [`mobile/SPLATS.md`](mobile/SPLATS.md)), plus the laptop pages: rover remote control at `/control`, the autopilot simulator at `/sim` and the wildfire hazard map at `/wildfire`. `/` is the landing page with the sign-in; everything else is behind it, starting at the `/dashboard` hub. See [`frontend/README.md`](frontend/README.md). |
+| `frontend` | The web app, a Next.js app on Vercel (https://soon2026.vercel.app): the splat server, which trains captures into splats and rebuilds recordings live in 3D through a Bun agent on a Mac (see "Train and preview the splat" in [`mobile/SPLATS.md`](mobile/SPLATS.md)), plus the laptop pages: rover remote control at `/control`, the autopilot simulator at `/sim` and the wildfire hazard map at `/wildfire`. `/` is the landing page with the sign-in; everything else is behind it in Ember's shell, whose top bar switches between the four pages and signs out (sign-in lands on `/control`). See [`frontend/README.md`](frontend/README.md). |
 | `packages/owlvit` | Builds the on-device OWL-ViT leaf detector the app embeds. |
 | `packages/dev` | The `vpx _dev` and `vpx _ios` scripts. |
 | `.github/workflows/testflight.yml` | Ships every push to `main` that changes the app to TestFlight from a self-hosted Mac; see "TestFlight" in [`mobile/AGENTS.md`](mobile/AGENTS.md). |

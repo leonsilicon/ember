@@ -136,8 +136,8 @@ function ServerCard() {
     <ThemedView type="backgroundElement" style={styles.card}>
       <ThemedText type="smallBold">Splat server</ThemedText>
       <ThemedText type="small" themeColor="textSecondary">
-        A capture is turned into a splat the first time it&apos;s opened in the gallery: it goes to the server, where a
-        Mac running its agent trains it (Brush), and the gallery shows how it&apos;s going, with pause and cancel.
+        A capture goes to the server as soon as its recording stops, and a Mac running the server&apos;s agent trains it
+        into a splat (Brush); the gallery shows how it&apos;s going, with pause and cancel.
         While Live 3D (in the camera options) is on, each recording streams there as well, and any browser can watch
         it at <ThemedText type="code">{liveViewerUrl(splat.serverUrl)}</ThemedText>
       </ThemedText>

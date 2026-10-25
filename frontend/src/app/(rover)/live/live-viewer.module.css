@@ -1,0 +1,32 @@
+/* The app's embedded view (live-viewer.tsx): the scene alone, on black. */
+.root {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #0b0c0e;
+  color: #e8e8e6;
+}
+
+.root canvas {
+  display: block;
+  touch-action: none;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 8px;
+  font-size: 11px;
+  color: #9a9a94;
+  pointer-events: none;
+}
+
+.empty strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 13px;
+  color: #e8e8e6;
+}

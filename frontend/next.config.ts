@@ -10,6 +10,8 @@ const config: NextConfig = {
   },
   // ws (for upgradeWebSocket) and ioredis load optional native addons at runtime; leave them unbundled.
   serverExternalPackages: ['ws', 'ioredis', 'bonjour-service'],
+  // The dashboard became the Captures module on Live 3D; its old links land on the first page.
+  redirects: async () => [{ source: '/dashboard', destination: '/control', permanent: true }],
 };
 
 export default config;

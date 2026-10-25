@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Ember</title>
+  <!-- Flame with a firebreak: the horizontal gap is the cleared strip the rover makes. -->
+  <defs>
+    <mask id="firebreak">
+      <rect width="512" height="512" fill="#fff"/>
+      <rect x="0" y="356" width="512" height="26" fill="#000"/>
+    </mask>
+  </defs>
+  <path mask="url(#firebreak)" fill="#E8501F" d="M256 64
+    C 334 146, 384 210, 384 314
+    C 384 394, 326 448, 256 448
+    C 186 448, 128 394, 128 314
+    C 128 252, 156 210, 194 172
+    C 198 212, 212 234, 236 244
+    C 222 188, 228 118, 256 64 Z"/>
+</svg>

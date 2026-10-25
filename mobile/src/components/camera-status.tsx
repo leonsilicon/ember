@@ -22,6 +22,11 @@ export type Indicator = {
   busy?: boolean;
   /** For a setting, like the Camera app's flash: what a tap does, instead of saying what it means. */
   onPress?: () => void;
+  /**
+   * Why it can't be used right now (no LiDAR scanner on this phone, say). It's dimmed, and a tap
+   * shows this beside it instead of pressing it; the next tap on it puts the reason away.
+   */
+  disabled?: string;
 };
 
 /** A tool of its own in the column (a zoom button, a menu), drawn with `RailIcon` to match. */
@@ -40,8 +45,9 @@ const COLLAPSED = 5;
 /**
  * The camera's tools and status, like TikTok's camera tools: icons down the top right of the
  * viewfinder, each with its count under it, the first few showing and a chevron for the rest.
- * Beside them, `caption` says what a tapped one means for a moment, and `hint` is guidance that
- * stays while it applies.
+ * Beside them, a disabled tool's reason stays while it's open, else `caption` says what a tapped
+ * one means for a moment, else `hint` is guidance that stays while it applies. The text wraps
+ * beside the column rather than ever pushing it over.
  */
 export function CameraStatus({
   indicators,
@@ -55,7 +61,12 @@ export function CameraStatus({
   onPressIndicator: (indicator: Indicator) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const message = caption ?? hint;
+  // The disabled tool whose reason is open. Read from the tool each render, so it follows the
+  // reason as it changes and goes when the tool can be used again.
+  const [openKey, setOpenKey] = useState<string>();
+  const open = indicators.find((indicator) => indicator.key === openKey);
+  const reason = open && 'disabled' in open ? open.disabled : undefined;
+  const message = reason ?? caption ?? hint;
   const more = indicators.length > COLLAPSED;
   const shown = expanded || !more ? indicators : indicators.slice(0, COLLAPSED);
 
@@ -67,7 +78,9 @@ export function CameraStatus({
           entering={FadeIn.duration(150)}
           exiting={FadeOut.duration(150)}
           style={styles.message}>
-          <Text style={[styles.messageText, caption == null && styles.hintText]}>{message}</Text>
+          <Text numberOfLines={3} style={[styles.messageText, message === hint && styles.hintText]}>
+            {message}
+          </Text>
         </Animated.View>
       )}
       {/* Scrolls only if they don't all fit above the record button. */}
@@ -84,12 +97,21 @@ export function CameraStatus({
               <Pressable
                 accessibilityRole={indicator.onPress ? 'button' : undefined}
                 accessibilityLabel={indicator.label}
+                accessibilityHint={indicator.disabled}
+                accessibilityState={indicator.disabled ? { disabled: true } : undefined}
                 hitSlop={Spacing.one}
-                onPress={indicator.onPress ?? (() => onPressIndicator(indicator))}
+                onPress={() => {
+                  if (indicator.disabled) {
+                    setOpenKey(openKey === indicator.key ? undefined : indicator.key);
+                  } else {
+                    setOpenKey(undefined);
+                    (indicator.onPress ?? (() => onPressIndicator(indicator)))();
+                  }
+                }}
                 style={({ pressed }) => pressed && styles.pressed}>
                 <RailIcon
                   icon={indicator.icon}
-                  color={indicator.tone && TONES[indicator.tone]}
+                  color={indicator.tone ? TONES[indicator.tone] : indicator.disabled ? TONES.dim : undefined}
                   text={indicator.text}
                   busy={indicator.busy}
                 />
@@ -167,9 +189,10 @@ const styles = StyleSheet.create({
     paddingBottom: TOOLS_BOTTOM,
     pointerEvents: 'box-none',
   },
-  /** Level with the first icon. */
+  /** Level with the first icon, and never wider than a few words a line reads well at. */
   message: {
     flexShrink: 1,
+    maxWidth: 260,
     marginTop: Spacing.one,
     paddingHorizontal: Spacing.two + Spacing.half,
     paddingVertical: Spacing.one,
@@ -184,8 +207,10 @@ const styles = StyleSheet.create({
   hintText: {
     color: '#FFD60A',
   },
+  /** ScrollView's own style shrinks it (flexShrink 1): a long message would narrow it and push the icons out to the right. */
   tools: {
     flexGrow: 0,
+    flexShrink: 0,
     maxHeight: '100%',
   },
   toolsContent: {

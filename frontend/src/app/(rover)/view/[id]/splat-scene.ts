@@ -40,18 +40,20 @@ export class SplatScene {
   private viewerError = '';
   private timer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
+  private observer: ResizeObserver;
 
   constructor(
-    container: HTMLElement,
+    private container: HTMLElement,
     private id: string,
     private onStatus: (text: string) => void,
   ) {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    this.renderer.setSize(innerWidth, innerHeight);
+    this.renderer.setSize(container.clientWidth || innerWidth, container.clientHeight || innerHeight);
     container.prepend(this.renderer.domElement);
     this.scene.add(new SparkRenderer({ renderer: this.renderer }));
     this.controls = new SceneControls(this.camera, this.renderer.domElement);
-    addEventListener('resize', this.resize);
+    this.observer = new ResizeObserver(() => this.resize());
+    this.observer.observe(container);
     this.renderer.setAnimationLoop(() => {
       this.controls.update(this.clock.getDelta());
       this.renderer.render(this.scene, this.camera);
@@ -65,7 +67,7 @@ export class SplatScene {
   dispose() {
     this.disposed = true;
     clearTimeout(this.timer);
-    removeEventListener('resize', this.resize);
+    this.observer.disconnect();
     this.renderer.setAnimationLoop(null);
     this.controls.dispose();
     this.current?.dispose();
@@ -74,9 +76,11 @@ export class SplatScene {
   }
 
   private resize = () => {
-    this.camera.aspect = innerWidth / innerHeight;
+    const width = this.container.clientWidth || innerWidth;
+    const height = this.container.clientHeight || innerHeight;
+    this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(innerWidth, innerHeight);
+    this.renderer.setSize(width, height);
   };
 
   private async start() {

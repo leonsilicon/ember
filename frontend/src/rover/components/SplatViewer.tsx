@@ -1,13 +1,17 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { IconButton, Icons } from '../ui/kit'
 
 export const SAMPLE_SPLAT_URL = '/splats/leaf-floor.splat'
 
-// Scene convention: ground is the y=0 plane and up is -y (cameraUp below). The default view looks down
-// at ~35° onto the middle of the ~4.6 m leaf-floor sample.
-const CAMERA_POSITION: [number, number, number] = [0, -1.45, -2.25]
-const CAMERA_LOOK_AT: [number, number, number] = [0, 0, 0.2]
+type Vec3 = [number, number, number]
+export type SceneCamera = { up: Vec3; position: Vec3; lookAt: Vec3 }
+export type SceneFormat = 'ply' | 'splat' | 'ksplat'
+
+// The sample's convention: ground is the y=0 plane and up is -y. The default view looks down at ~35°
+// onto the middle of the ~4.6 m leaf-floor sample. Captures bring their own camera (+y up, ARKit).
+export const SAMPLE_CAMERA: SceneCamera = { up: [0, -1, 0], position: [0, -1.45, -2.25], lookAt: [0, 0, 0.2] }
 
 type LoadState =
   | { kind: 'idle' }
@@ -20,9 +24,20 @@ type Props = {
   source: string | null
   /** Human-readable name shown in the overlay. */
   label?: string
+  /** File format, when the URL doesn't end in one (the captures API). */
+  format?: SceneFormat
+  /** Where the camera starts. Read once: give the viewer a new `key` to change it. */
+  camera?: SceneCamera
 }
 
-export function SplatViewer({ source, label }: Props) {
+const FORMATS: Record<SceneFormat, GaussianSplats3D.SceneFormat> = {
+  ply: GaussianSplats3D.SceneFormat.Ply,
+  splat: GaussianSplats3D.SceneFormat.Splat,
+  ksplat: GaussianSplats3D.SceneFormat.KSplat,
+}
+
+export function SplatViewer({ source, label, format, camera = SAMPLE_CAMERA }: Props) {
+  const cameraRef = useRef(camera)
   const mountRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<GaussianSplats3D.Viewer | null>(null)
   const [state, setState] = useState<LoadState>({ kind: 'idle' })
@@ -33,9 +48,9 @@ export function SplatViewer({ source, label }: Props) {
 
     const viewer = new GaussianSplats3D.Viewer({
       rootElement: mount,
-      cameraUp: [0, -1, 0],
-      initialCameraPosition: CAMERA_POSITION,
-      initialCameraLookAt: CAMERA_LOOK_AT,
+      cameraUp: cameraRef.current.up,
+      initialCameraPosition: cameraRef.current.position,
+      initialCameraLookAt: cameraRef.current.lookAt,
       sharedMemoryForWorkers: false,
       gpuAcceleratedSort: false,
       sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
@@ -86,7 +101,8 @@ export function SplatViewer({ source, label }: Props) {
       try {
         // A missing file gets Next's 404 page (text/html), which the parser
         // happily turns into a handful of garbage splats. Check first so a bad path reports an error.
-        if (!source.startsWith('blob:')) {
+        // (The captures API answers JSON errors, and a HEAD there would stream the whole splat.)
+        if (!source.startsWith('blob:') && !source.startsWith('/api/')) {
           const head = await fetch(source, { method: 'HEAD' })
           if (!head.ok || head.headers.get('content-type')?.includes('text/html')) {
             throw new Error(`Scene not found: ${source}`)
@@ -94,7 +110,7 @@ export function SplatViewer({ source, label }: Props) {
           if (cancelled) return
         }
         await viewer.addSplatScene(source, {
-          format: formatFromName(name),
+          format: format ? FORMATS[format] : formatFromName(name),
           showLoadingUI: false,
           progressiveLoad: false,
           splatAlphaRemovalThreshold: 5,
@@ -116,15 +132,16 @@ export function SplatViewer({ source, label }: Props) {
     return () => {
       cancelled = true
     }
-  }, [source, label])
+  }, [source, label, format])
 
   const resetCamera = () => {
     const viewer = viewerRef.current
     if (!viewer) return
     const camera = viewer.camera as THREE.PerspectiveCamera
-    camera.position.set(...CAMERA_POSITION)
-    camera.up.set(0, -1, 0)
-    viewer.controls?.target.set(...CAMERA_LOOK_AT)
+    const { up, position, lookAt } = cameraRef.current
+    camera.position.set(...position)
+    camera.up.set(...up)
+    viewer.controls?.target.set(...lookAt)
     viewer.controls?.update()
     viewer.forceRenderNextFrame()
   }
@@ -133,66 +150,61 @@ export function SplatViewer({ source, label }: Props) {
     const viewer = viewerRef.current
     if (!viewer) return
     const camera = viewer.camera as THREE.PerspectiveCamera
-    camera.position.set(0, -4, 0.01)
-    viewer.controls?.target.set(0, 0, 0)
+    // Straight down onto what the view orbits, from 4 m up (a hair off-axis so the orbit stays defined).
+    const { up, lookAt } = cameraRef.current
+    camera.position.set(lookAt[0] + up[0] * 4 + 0.01, lookAt[1] + up[1] * 4, lookAt[2] + up[2] * 4 + 0.01)
+    viewer.controls?.target.set(...lookAt)
     viewer.controls?.update()
     viewer.forceRenderNextFrame()
   }
 
+  const statusText =
+    state.kind === 'ready'
+      ? `${state.splats.toLocaleString()} splats`
+      : state.kind === 'loading'
+        ? `loading ${Math.round(state.progress)}%`
+        : state.kind === 'error'
+          ? 'load failed'
+          : 'no scene'
+
   return (
-    <section className="relative flex h-full min-h-[320px] flex-1 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950">
+    <section aria-label="Scene viewer" className="absolute inset-0">
       <div ref={mountRef} className="absolute inset-0 [&>canvas]:!h-full [&>canvas]:!w-full" />
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-3">
-        <span className="text-xs font-semibold tracking-wide text-zinc-400 uppercase">Gaussian splat viewer</span>
-        <span className="rounded-full bg-zinc-800/80 px-2.5 py-0.5 text-xs text-zinc-300">
-          {state.kind === 'ready' && `${state.label} · ${state.splats.toLocaleString()} splats`}
-          {state.kind === 'loading' && `loading ${state.label} ${Math.round(state.progress)}%`}
-          {state.kind === 'error' && 'load failed'}
-          {state.kind === 'idle' && 'no scene'}
-        </span>
+      <div className="pointer-events-none absolute top-3 left-3 flex max-w-[calc(100%-5rem)] items-center gap-2.5 rounded-[10px] border border-line bg-panel/95 px-3 py-2 shadow-float backdrop-blur-sm">
+        <span className="text-[11px] font-semibold tracking-[0.14em] text-ink uppercase">Scene</span>
+        <span className="truncate text-[13px] text-ink-2">{state.kind === 'ready' || state.kind === 'loading' ? state.label : (label ?? '—')}</span>
+        <span className="num shrink-0 text-xs text-ink-3">{statusText}</span>
       </div>
 
       {state.kind !== 'ready' && (
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
           {state.kind === 'idle' && (
             <>
-              <div className="text-5xl text-zinc-700">◌</div>
-              <p className="max-w-sm text-sm text-zinc-400">
-                Load a splat from the Scene panel, or run the pipeline on captured images to make one.
+              <span aria-hidden className="block h-px w-16 bg-[#3a3734]" />
+              <p className="max-w-sm text-[13px] leading-relaxed text-[#a8a29a]">
+                No scene loaded. Pick one in the Scene panel, or run the pipeline on captured images to make one.
               </p>
             </>
           )}
           {state.kind === 'loading' && (
-            <div className="h-1.5 w-48 overflow-hidden rounded-full bg-zinc-800">
-              <div className="h-full bg-sky-400 transition-[width]" style={{ width: `${state.progress}%` }} />
+            <div className="h-1 w-56 overflow-hidden rounded-full bg-[#2a2826]" role="progressbar" aria-valuenow={Math.round(state.progress)} aria-valuemin={0} aria-valuemax={100} aria-label="Loading scene">
+              <div className="h-full bg-ember transition-[width] duration-200" style={{ width: `${state.progress}%` }} />
             </div>
           )}
-          {state.kind === 'error' && <p className="max-w-sm text-sm text-red-300">{state.message}</p>}
+          {state.kind === 'error' && <p className="max-w-sm text-[13px] text-[#ff8a7a]">{state.message}</p>}
         </div>
       )}
 
-      <div className="absolute right-3 bottom-3 flex gap-2">
-        <button
-          type="button"
-          onClick={topDown}
-          disabled={state.kind !== 'ready'}
-          className="rounded-md bg-zinc-800/90 px-2.5 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:opacity-40"
-        >
-          Bird's-eye
-        </button>
-        <button
-          type="button"
-          onClick={resetCamera}
-          disabled={state.kind !== 'ready'}
-          className="rounded-md bg-zinc-800/90 px-2.5 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:opacity-40"
-        >
-          Reset view
-        </button>
+      <div className="absolute top-3 right-3 flex flex-col gap-0.5 rounded-[10px] border border-line bg-panel/95 p-1 shadow-float backdrop-blur-sm" role="toolbar" aria-label="Camera" aria-orientation="vertical">
+        <IconButton label="Bird's-eye view" onClick={topDown} disabled={state.kind !== 'ready'}>
+          <Icons.topDown />
+        </IconButton>
+        <IconButton label="Reset view" onClick={resetCamera} disabled={state.kind !== 'ready'}>
+          <Icons.resetView />
+        </IconButton>
       </div>
-      <p className="pointer-events-none absolute bottom-3 left-3 text-[11px] text-zinc-500">
-        drag to orbit · scroll to zoom · right-drag to pan
-      </p>
+      <p className="pointer-events-none absolute right-3 bottom-3 hidden text-[11px] text-white/55 md:block">drag to orbit · scroll to zoom · right-drag to pan</p>
     </section>
   )
 }

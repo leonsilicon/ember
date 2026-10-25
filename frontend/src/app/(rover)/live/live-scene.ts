@@ -50,6 +50,9 @@ export class LiveScene {
   private clock = new THREE.Clock();
   private lastFrame = 0;
   private following = true;
+  /** The element the canvas fills; the renderer follows its size. */
+  private host: HTMLElement;
+  private observer: ResizeObserver;
 
   // Point cloud: one preallocated buffer; voxel i lives at slot i (the server never reorders).
   private pointMaterial = new THREE.ShaderMaterial({
@@ -90,7 +93,8 @@ export class LiveScene {
   /** `onTakeOver` is called when someone moves the view, which stops the camera following. */
   constructor(container: HTMLElement, onTakeOver: () => void) {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    this.renderer.setSize(innerWidth, innerHeight);
+    this.host = container;
+    this.renderer.setSize(container.clientWidth || innerWidth, container.clientHeight || innerHeight);
     this.renderer.setClearColor(0x0b0c0e);
     container.prepend(this.renderer.domElement);
     this.controls = new SceneControls(this.camera, this.renderer.domElement);
@@ -121,7 +125,8 @@ export class LiveScene {
     this.scene.add(this.grid);
     this.gridTimer = setInterval(() => this.placeGrid(), 2000);
 
-    addEventListener('resize', this.resize);
+    this.observer = new ResizeObserver(() => this.resize());
+    this.observer.observe(container);
     this.resize();
     this.renderer.setAnimationLoop(() => this.frame());
   }
@@ -276,7 +281,7 @@ export class LiveScene {
 
   dispose() {
     clearInterval(this.gridTimer);
-    removeEventListener('resize', this.resize);
+    this.observer.disconnect();
     this.renderer.setAnimationLoop(null);
     this.controls.dispose();
     this.geometry?.dispose();
@@ -339,10 +344,12 @@ export class LiveScene {
   }
 
   private resize = () => {
-    this.camera.aspect = innerWidth / innerHeight;
+    const width = this.host.clientWidth || innerWidth;
+    const height = this.host.clientHeight || innerHeight;
+    this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(innerWidth, innerHeight);
-    this.pointMaterial.uniforms.scale.value = (innerHeight * this.renderer.getPixelRatio()) / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
+    this.renderer.setSize(width, height);
+    this.pointMaterial.uniforms.scale.value = (height * this.renderer.getPixelRatio()) / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
   };
 
   /**

@@ -6,11 +6,11 @@ import styles from './landing.module.css';
 import { LoginForm } from './login-form';
 
 export const metadata = {
-  title: 'soon2026',
+  title: 'Ember',
   description: 'An autonomous rover that clears the dry leaves that feed wildfires, with its yard rebuilt live in 3D.',
 };
 
-/** The landing page: sign in to reach the dashboard. A browser that already has goes straight there. */
+/** The landing page: sign in to reach the tools. A browser that already has goes straight there. */
 export default async function LandingPage({
   searchParams,
 }: {
@@ -21,7 +21,7 @@ export default async function LandingPage({
   return (
     <main className={styles.page}>
       <section>
-        <p className={styles.eyebrow}>soon2026</p>
+        <p className={styles.eyebrow}>Ember</p>
         <h1 className={styles.title}>A rover that clears the leaves that feed wildfires.</h1>
         <p className={styles.lead}>
           It finds dry leaves and pine needles on the ground and collects them, breaking up the fuel that lets a small
@@ -50,7 +50,7 @@ export default async function LandingPage({
       </section>
       <section className={styles.card} aria-labelledby="sign-in">
         <h2 id="sign-in">Sign in</h2>
-        <p className={styles.hint}>The dashboard is for the demo team. There's no sign-up.</p>
+        <p className={styles.hint}>The tools are for the demo team. There's no sign-up.</p>
         <LoginForm next={next} />
         <p className={styles.fine}>Opened from the app? Its links sign this browser in on their own.</p>
       </section>

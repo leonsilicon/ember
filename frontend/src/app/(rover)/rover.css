@@ -1,15 +1,171 @@
 /* Tailwind for the laptop pages. Classes are read from everything under src/ (the path is relative to
    this file); the splat pages have their own root layout and CSS, so this never applies to them. */
+/* Blueprint (the wildfire console) sits in its own layer: above Tailwind's reset, below its utilities,
+   so its element styles (blue links and the like) never override a utility class. */
+@layer theme, base, blueprint, components, utilities;
 @import 'tailwindcss' source('../..');
-@import '@blueprintjs/core/lib/css/blueprint.css';
-@import '@blueprintjs/icons/lib/css/blueprint-icons.css';
+@import '@blueprintjs/core/lib/css/blueprint.css' layer(blueprint);
+@import '@blueprintjs/icons/lib/css/blueprint-icons.css' layer(blueprint);
+
+/* ---- Ember tokens (rover control + autopilot sim) ----
+   A field instrument: warm grey enclosure, off-white module faces, one ember orange that means "live" or
+   "the primary action" and nothing else. Light by default, dark by system preference or the top bar's
+   toggle (data-theme on <html>, see rover/ui/theme.ts). */
+:root {
+  color-scheme: light;
+  --enclosure: #e9e7e2;
+  --panel: #f8f7f4;
+  --well: #f0eee9;
+  --line: #dcd9d2;
+  --line-strong: #c6c2b9;
+  --ink: #1c1917;
+  --ink-2: #57534e;
+  --ink-3: #6f6a63;
+  --ember: #e8501f;
+  --ember-hover: #f0612f;
+  --ember-ink: #b23a10;
+  --ember-soft: rgb(232 80 31 / 0.12);
+  --ok: #24784a;
+  --warn: #a8670c;
+  --danger: #d92d20;
+  --danger-hover: #e5392b;
+  --info: #2459c9;
+  --stage: #0f0e0d;
+  --shadow-float: 0 1px 2px rgb(28 25 23 / 0.06), 0 6px 20px -6px rgb(28 25 23 / 0.18);
+  /* The top-down map (TopDownView reads these). */
+  --map-bg: #f4f2ed;
+  --map-grid: #e3e0d9;
+  --map-ink: #1c1917;
+  --map-ink-fill: rgb(28 25 23 / 0.08);
+  --map-muted: #8f8a82;
+  --map-work: #0e7490;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --enclosure: #11100f;
+    --panel: #1a1917;
+    --well: #222120;
+    --line: #2c2a27;
+    --line-strong: #3c3935;
+    --ink: #eeece7;
+    --ink-2: #b5b0a7;
+    --ink-3: #8f8a81;
+    --ember: #f0602f;
+    --ember-hover: #ff7444;
+    --ember-ink: #ff8a5c;
+    --ember-soft: rgb(240 96 47 / 0.16);
+    --ok: #5cc68a;
+    --warn: #e2a63c;
+    --danger: #e5392b;
+    --danger-hover: #f04f40;
+    --info: #79a6ff;
+    --stage: #0b0a09;
+    --shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -8px rgb(0 0 0 / 0.6);
+    --map-bg: #151413;
+    --map-grid: #252321;
+    --map-ink: #ecebe7;
+    --map-ink-fill: rgb(236 235 231 / 0.12);
+    --map-muted: #8f8c85;
+    --map-work: #7dd3fc;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --enclosure: #11100f;
+  --panel: #1a1917;
+  --well: #222120;
+  --line: #2c2a27;
+  --line-strong: #3c3935;
+  --ink: #eeece7;
+  --ink-2: #b5b0a7;
+  --ink-3: #8f8a81;
+  --ember: #f0602f;
+  --ember-hover: #ff7444;
+  --ember-ink: #ff8a5c;
+  --ember-soft: rgb(240 96 47 / 0.16);
+  --ok: #5cc68a;
+  --warn: #e2a63c;
+  --danger: #e5392b;
+  --danger-hover: #f04f40;
+  --info: #79a6ff;
+  --stage: #0b0a09;
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -8px rgb(0 0 0 / 0.6);
+  --map-bg: #151413;
+  --map-grid: #252321;
+  --map-ink: #ecebe7;
+  --map-ink-fill: rgb(236 235 231 / 0.12);
+  --map-muted: #8f8c85;
+  --map-work: #7dd3fc;
+}
+
+@theme inline {
+  --color-enclosure: var(--enclosure);
+  --color-panel: var(--panel);
+  --color-well: var(--well);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ember: var(--ember);
+  --color-ember-hover: var(--ember-hover);
+  --color-ember-ink: var(--ember-ink);
+  --color-ember-soft: var(--ember-soft);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-info: var(--info);
+  --color-stage: var(--stage);
+  --shadow-float: var(--shadow-float);
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', Menlo, monospace;
+}
 
 body {
-  @apply bg-zinc-950 text-zinc-100 antialiased;
+  background: var(--enclosure);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
 }
+
+/* Browser surfaces in the palette: selection, caret, focus, native controls, numerals, scrollbars. */
+.ember ::selection { background: var(--ember-soft); color: var(--ink); }
+.ember input, .ember textarea { caret-color: var(--ember); -webkit-user-select: text; user-select: text; }
+.ember :focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+.ember input[type='checkbox'], .ember input[type='range'] { accent-color: var(--ember); }
+.ember .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.ember { scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
+.ember ::-webkit-scrollbar { width: 8px; height: 8px; }
+.ember ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 8px; border: 2px solid var(--enclosure); }
+.ember ::-webkit-scrollbar-track { background: transparent; }
+.ember select { background-image: none; }
+
+/* The simulated-mode hatch: never mistaken for live. */
+.ember .hatch {
+  background-image: repeating-linear-gradient(-45deg, rgb(168 103 12 / 0.16) 0 6px, transparent 6px 12px);
+}
+
+/* Square instrument LEDs; connecting blinks in steps, like a status lamp. */
+@keyframes ember-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.ember .led-blink { animation: ember-blink 1s steps(1) infinite; }
+/* Modules open and close by height. */
+.ember .module-body { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 200ms cubic-bezier(0.16, 1, 0.3, 1); }
+.ember .module-body[data-collapsed='true'] { grid-template-rows: 0fr; }
+.ember .module-body > div { min-height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .ember .led-blink { animation: none; }
+  .ember .module-body { transition: none; }
+}
+
+.ember dialog::backdrop { background: rgb(17 16 15 / 0.35); }
 
 /* ---- Wildfire ops console (Blueprint dark, Palantir-ish) ---- */
 .ops {

@@ -1,9 +1,14 @@
 # frontend — the web app
 
 One Next.js app (`@soon2026/frontend`), on Vercel at https://soon2026.vercel.app. `/` is the landing page with the
-sign-in form, and everything else is behind it (see "Signing in"), starting at `/dashboard`. Two sides share the app:
+sign-in form, and everything else is behind it (see "Signing in") in Ember's shell (`src/rover/ui/Shell.tsx`; see
+`DESIGN.md`): one top bar on every page that switches between Control, the Autopilot sim, the Wildfire map and Live 3D,
+says who's signed in and signs out; sign-in lands on `/control`. Two sides share the app:
 
-- **The splat server** (`/dashboard`, `/view/[id]`, `/live`, `/api/*`; `src/app/(splat)`, `src/web`, `src/live`):
+- **The splat server** (`/live`, `/view/[id]`, `/api/*`; `src/app/(rover)/live`, `src/app/(rover)/view`, `src/app/(splat)/api`, `src/web`,
+  `src/live`): Live 3D's Captures module also lists the captures (finished splats, and the ones still uploading or
+  training; an upload the phone never finished is called out once its two-hour upload window is over;
+  `live/captures-module.tsx`). It
   trains the phone's captures into Gaussian splats and rebuilds recordings live in 3D through a Bun agent on a Mac
   (`src/agent`). The app reaches its API with one access token (`SPLAT_TOKEN`). The whole story is in
   [`mobile/SPLATS.md`](../mobile/SPLATS.md).
@@ -33,10 +38,10 @@ There's one demo account and no sign-up. It answers to `DEMO_EMAIL` or any of th
 (in any case) with `DEMO_PASSWORD`: environment variables on the Vercel project (Secret in production and preview;
 `vercel env pull` brings the development copies into `.env.local`). The landing page's form
 (`src/app/(splat)/actions.ts`) checks them and sets a `splat_session` cookie holding the login and an HMAC over it keyed
-by the server's secrets, so nothing is stored, the dashboard can say who's signed in, and changing the password (or
+by the server's secrets, so nothing is stored, the top bar can say who's signed in, and changing the password (or
 removing a username) signs that browser out. A page opened without it redirects to
 `/?next=…` (`requireSignIn` in `src/web/auth.ts`), and the API takes the cookie too, so the viewers' fetches and the
-live socket work from a signed-in browser. **Sign out** on the dashboard clears it.
+live socket work from a signed-in browser. **Sign out** in the top bar clears it; `/dashboard` redirects to `/control`.
 
 The access token (`SPLAT_TOKEN`) still signs a browser in beside it: opening any page with `?token=` keeps it in a
 `splat_token` cookie (`src/proxy.ts`), which is how the app's embedded live view and a sign-in link get in without the

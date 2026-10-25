@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">Ember</title>
+  <defs>
+    <mask id="firebreak">
+      <rect width="512" height="512" fill="#fff"/>
+      <rect x="0" y="356" width="512" height="26" fill="#000"/>
+    </mask>
+  </defs>
+  <!-- App icon: charcoal tile, flame about 60% of the tile's height -->
+  <rect width="1024" height="1024" rx="224" fill="#1C1917"/>
+  <g transform="translate(173 160) scale(1.32)">
+    <path mask="url(#firebreak)" fill="#E8501F" d="M256 64
+      C 334 146, 384 210, 384 314
+      C 384 394, 326 448, 256 448
+      C 186 448, 128 394, 128 314
+      C 128 252, 156 210, 194 172
+      C 198 212, 212 234, 236 244
+      C 222 188, 228 118, 256 64 Z"/>
+  </g>
+</svg>
