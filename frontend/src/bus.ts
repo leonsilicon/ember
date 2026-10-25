@@ -25,7 +25,10 @@ export function redisUrl(env: Record<string, string | undefined> = process.env) 
 }
 
 export function connect(url = redisUrl()) {
-  return new Redis(url, { maxRetriesPerRequest: null });
+  const redis = new Redis(url, { maxRetriesPerRequest: null, connectTimeout: 10_000 });
+  // ioredis's own handler prints `error.stack`, which Bun's socket errors don't have ("undefined").
+  redis.on('error', (error: NodeJS.ErrnoException) => console.error(`redis: ${error.code ?? ''} ${error.message}`.trim()));
+  return redis;
 }
 
 export function keys(prefix = process.env.SPLAT_REDIS_PREFIX ?? 'splat:') {

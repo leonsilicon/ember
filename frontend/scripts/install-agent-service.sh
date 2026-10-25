@@ -1,12 +1,15 @@
 #!/bin/bash
 # Runs the Mac agent as the pm2 process `soon2026-agent` from this checkout (pm2.config.cjs), saves pm2's process list,
-# and installs a launchd agent that runs `pm2 resurrect` at login, so the agent is back after a reboot. Idempotent:
+# and installs two launchd agents: one runs `pm2 resurrect` at login, so the agent is back after a reboot, and one runs
+# scripts/agent-watchdog.sh every two minutes, which restarts an agent that has gone silent. Idempotent:
 # .github/workflows/agent.yml runs it on every deploy, and it can be run by hand. Needs pm2 (`bun add -g pm2`).
 set -euo pipefail
 
 FRONTEND="$(cd "$(dirname "$0")/.." && pwd)"
 LABEL=com.soon2026.pm2-resurrect
+WATCHDOG_LABEL=com.soon2026.agent-watchdog
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+WATCHDOG_PLIST="$HOME/Library/LaunchAgents/$WATCHDOG_LABEL.plist"
 LOG_DIR="$HOME/.soon2026/agent"
 
 # The GitHub Actions runner ends a job by killing every process that still carries the job's id; the pm2 daemon
@@ -54,13 +57,52 @@ cat > "$tmp" <<PLIST
 </dict>
 </plist>
 PLIST
-if [ -f "$PLIST" ] && cmp -s "$tmp" "$PLIST"; then
-  rm -f "$tmp"
-  echo "Login hook $LABEL is installed"
-else
-  mv "$tmp" "$PLIST"
-  # Reload it if launchd has an older version; `pm2 resurrect` runs right away, which is harmless with pm2 running.
-  launchctl bootout "gui/$(id -u)/$LABEL" 2> /dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$PLIST"
-  echo "Installed login hook $LABEL ($PLIST)"
-fi
+install_agent() {
+  local label=$1 plist=$2 source=$3 what=$4
+  if [ -f "$plist" ] && cmp -s "$source" "$plist"; then
+    rm -f "$source"
+    echo "$what $label is installed"
+  else
+    mv "$source" "$plist"
+    # Reload it if launchd has an older version. Both run right away: `pm2 resurrect` is harmless with pm2 running,
+    # and the watchdog leaves a process that started in the last three minutes alone.
+    launchctl bootout "gui/$(id -u)/$label" 2> /dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+    echo "Installed $what $label ($plist)"
+  fi
+}
+install_agent "$LABEL" "$PLIST" "$tmp" "login hook"
+
+tmp="$(mktemp)"
+cat > "$tmp" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$WATCHDOG_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$FRONTEND/scripts/agent-watchdog.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$(dirname "$pm2_bin"):$(dirname "$(command -v bun)"):$(dirname "$(command -v node)"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>$HOME</string>
+    <key>PM2_HOME</key>
+    <string>${PM2_HOME:-$HOME/.pm2}</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>120</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$LOG_DIR/watchdog.log</string>
+  <key>StandardErrorPath</key>
+  <string>$LOG_DIR/watchdog.log</string>
+</dict>
+</plist>
+PLIST
+install_agent "$WATCHDOG_LABEL" "$WATCHDOG_PLIST" "$tmp" "watchdog"

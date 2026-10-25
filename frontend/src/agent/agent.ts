@@ -45,6 +45,19 @@ function startDepthWorker(config: ServerConfig): Promise<DepthEstimator> {
  * The Mac's half of the splat server. It trains the captures the app queues, and runs the live
  * reconstruction for the phones and viewers whose sockets the app relays to it (see bus.ts).
  */
+/** How long a heartbeat write may take, and how many may fail in a row before the agent gives its connections up. */
+const HEARTBEAT_TIMEOUT_MS = 15_000;
+const HEARTBEAT_MISSES = 2;
+
+/** `promise`, or a rejection once `ms` have passed. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** Another agent's heartbeat, once a lingering one (its agent killed, not stopped) has had time to expire. */
 async function otherAgent(redis: Redis, key: string): Promise<AgentInfo | null> {
   const deadline = Date.now() + (AGENT_TTL_SECONDS + 10) * 1000;
@@ -101,10 +114,26 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
       maxResolution: config.maxResolution,
       sessions: hub.list(),
     };
-    return redis.set(k.agent, JSON.stringify(info), 'EX', AGENT_TTL_SECONDS);
+    return withTimeout(redis.set(k.agent, JSON.stringify(info), 'EX', AGENT_TTL_SECONDS), HEARTBEAT_TIMEOUT_MS);
   };
   await beat();
-  const heartbeat = setInterval(() => beat().catch((error) => console.error('heartbeat', error)), AGENT_BEAT_SECONDS * 1000);
+  // A connection the OS still calls open can be dead (the Mac changed networks: 2026-10-24, from a phone's hotspot
+  // to Wi-Fi), and then every command on it waits forever while the heartbeat expires and the app says the agent is
+  // offline. So a heartbeat that doesn't go through twice ends the process, and the supervisor (pm2, or `vpx _dev`'s
+  // mprocs) starts a fresh one with new connections.
+  let missed = 0;
+  const heartbeat = setInterval(async () => {
+    try {
+      await beat();
+      missed = 0;
+    } catch (error) {
+      missed++;
+      console.error(`heartbeat ${missed}/${HEARTBEAT_MISSES}:`, error instanceof Error ? error.message : error);
+      if (missed < HEARTBEAT_MISSES) return;
+      console.error('Redis is not answering; exiting so the supervisor restarts the agent with new connections');
+      process.exit(2);
+    }
+  }, AGENT_BEAT_SECONDS * 1000);
   // Recordings starting and stopping show up in /api/live (and the phone dot) without waiting for the next beat.
   let recordings = '';
   const beatIfRecordingsChanged = () => {
