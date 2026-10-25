@@ -29,8 +29,16 @@ fp16, the default, moves boxes by up to ~10 px (of 768) on candidates scoring a 
 It's embedded in the iOS app: `mobile/plugins/with-leaf-detector.js` copies `dist/` into the
 app bundle whenever the app is prebuilt (`vpx _ios` prebuilds on every build), so the phone has the
 model from the first launch, without the splat server. Prebuild stops with an error until the model
-is built. Core ML compiles the model the first time the app loads it, which takes a while. After
-rebuilding the model, rebuild the app.
+is built. After rebuilding the model, rebuild the app.
+
+The program holds the model compiled (`.mlmodelc`), so the phone loads it without compiling it. On
+the first load after an install Core ML still builds the model's Neural Engine program, which takes
+a while; it and the compiled model are then cached in the app's caches. Both need free space: the
+Neural Engine compiler preallocates about 1.1 GB of temporary files, and when it can't, Core ML
+quietly runs the model on the GPU or CPU instead (about a minute to set up, then 700–1000 ms a
+frame instead of 60–90 ms); and iOS purges app caches when the phone is nearly full, so every
+launch starts over. The app's detection indicator says so when the phone has under 2 GB free or
+frames run slow (`mobile/src/hooks/use-detections.ts`).
 
 ## Changing what it looks for
 

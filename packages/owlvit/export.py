@@ -2,8 +2,10 @@
 
 `bun run build` in this package (or `uv run export.py`) writes two files to dist/:
 
-- owlvit-leaves-<sha256 prefix>.pte, delegated to Core ML (fp16 unless --precision fp32). Its
-  signature is the one react-native-executorch's object detector runs any model with:
+- owlvit-leaves-<sha256 prefix>.pte, delegated to Core ML (fp16 unless --precision fp32) and
+  compiled here, so the phone loads it without compiling it first (it still builds its Neural
+  Engine program on the first load, which Core ML caches). Its signature is the one
+  react-native-executorch's object detector runs any model with:
   forward(f32[1, 3, 768, 768]) -> (boxes f32[576, 4], scores f32[576], classes f32[576]). There
   is one candidate per 32 px patch, its box is xyxy in input pixels, and its class indexes the
   labels in the manifest.
@@ -155,11 +157,15 @@ def main():
     describe(eager, labels)
 
     precision, tolerance = PRECISIONS[args.precision]
-    print(f"Exporting to ExecuTorch (Core ML, {args.precision})...")
+    print(f"Exporting to ExecuTorch (Core ML, {args.precision}, compiled here)...")
     exported = torch.export.export(detector, (torch.zeros(1, 3, input_size, input_size),))
     compile_specs = CoreMLBackend.generate_compile_specs(
         compute_precision=precision,
         minimum_deployment_target=ct.target.iOS18,
+        # Store the compiled model (.mlmodelc) rather than the package Core ML compiles on the
+        # phone: the phone then skips that compile, and caches one copy of the model (~180 MB)
+        # instead of the package and its compiled form.
+        model_type=CoreMLBackend.MODEL_TYPE.COMPILED_MODEL,
     )
     # The whole graph has to run in Core ML: the app's ExecuTorch links only a few CPU kernels.
     partitioner = CoreMLPartitioner(compile_specs=compile_specs, lower_full_graph=True)
@@ -167,7 +173,7 @@ def main():
 
     print("Running the exported program with ExecuTorch's runtime:")
     method = Runtime.get().load_program(program.buffer).load_method("forward")
-    method.execute([pixel_values])  # The first run compiles the Core ML model.
+    method.execute([pixel_values])  # The first run builds the Core ML model's Neural Engine program.
     start = perf_counter()
     lowered = tuple(method.execute([pixel_values]))
     print(f"  {(perf_counter() - start) * 1000:.0f} ms on this Mac")

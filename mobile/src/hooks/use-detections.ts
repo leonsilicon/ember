@@ -1,6 +1,6 @@
 import { File, Paths } from 'expo-file-system';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useObjectDetector, type ObjectDetection, type ObjectDetectorModel } from 'react-native-executorch';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useObjectDetector, wrapAsync, type ObjectDetection, type ObjectDetectorModel } from 'react-native-executorch';
 import type { SharedValue } from 'react-native-reanimated';
 
 import SplatCapture, { type DetectionCamera, type DetectionFrame } from '../../modules/splat-capture';
@@ -17,6 +17,28 @@ const FRAME_SIZE = 768;
 const RETRY_MS = 1000;
 /** How long after a failed load (first, second, … failure) the model is loaded again. */
 const RELOAD_MS = [5_000, 10_000, 30_000, 60_000];
+/** How long a load, or one frame, may take before the status says what it's waiting on. */
+const STALL_MS = 15_000;
+/**
+ * Free space the phone needs for the model to run well. Core ML builds the model's Neural Engine
+ * program on the first load after an install, and its compiler preallocates about 1.1 GB of
+ * temporary files: with less, the build fails with "No space left on device" and Core ML quietly
+ * runs the model on the GPU or CPU instead, which takes about a minute to set up and runs it
+ * ten times slower. Short of space, iOS also purges the app's caches, where the compiled model
+ * and the Neural Engine program are kept, so every launch starts over.
+ */
+const LOW_SPACE_BYTES = 2_000_000_000;
+/**
+ * A frame slower than this means the model isn't on the Neural Engine: there a frame takes
+ * 60–120 ms on an iPhone 13 mini, and 700–1000 ms on the GPU or CPU Core ML falls back to. The
+ * first few frames after a load take seconds on the Neural Engine too, so it takes SLOW_FRAMES
+ * slow frames in a row to say so, and as many fast ones to take it back.
+ */
+const SLOW_FRAME_MS = 300;
+const SLOW_FRAMES = 5;
+
+/** What a frame has been waiting on for longer than STALL_MS. */
+type Stall = 'camera' | 'model';
 
 /** What `bun run --filter @soon2026/owlvit build` writes next to the model (see export.py). */
 type LeafDetectorManifest = {
@@ -48,7 +70,7 @@ export type DetectionResult = {
   frameSize: Size;
   /** The digital zoom the frame was taken at: the model saw the centred 1/zoom of `frameSize`. */
   zoom: number;
-  /** Inference time, smoothed over recent frames. */
+  /** Inference time (preprocessing and the model, on the model's thread), smoothed over recent frames. */
   latencyMs: number;
   /** Where the camera was for the frame, to place the detections in the world. */
   camera?: DetectionCamera;
@@ -74,7 +96,23 @@ export type Detections = {
   busy: boolean;
   result?: DetectionResult;
   error?: string;
+  /**
+   * Detection runs, or will, but worse than it should, and what to do about it: the phone is too
+   * short of space for Core ML to compile the model for the Neural Engine, or the model is off the
+   * Neural Engine (Core ML falls back to the GPU or CPU without saying so).
+   */
+  warning?: string;
 };
+
+/** The phone's free space in bytes, if it can be read. */
+function freeSpace(): number | undefined {
+  try {
+    const bytes = Paths.availableDiskSpace;
+    return Number.isFinite(bytes) ? bytes : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** A file in the app bundle as a plain path, which react-native-executorch loads without copying. */
 function bundlePath(name: string) {
@@ -99,6 +137,22 @@ function detectorConfig(manifest: LeafDetectorManifest): ObjectDetectorModel<'xy
       defaultIouThreshold: manifest.iouThreshold,
     },
   };
+}
+
+type DetectWorklet = NonNullable<ReturnType<typeof useObjectDetector<'xyxy', string>>['detectObjectsWorklet']>;
+
+/**
+ * The detector's `detectObjects` (its worklet run on the model's thread, as react-native-executorch
+ * wraps it) with the frame timed there: timed around the call instead, a frame would include every
+ * wait for the JS thread, and a busy JS thread would look like a slow model.
+ */
+function timedDetector(detectObjectsWorklet: DetectWorklet) {
+  return wrapAsync((input: Parameters<DetectWorklet>[0], options: Parameters<DetectWorklet>[1]) => {
+    'worklet';
+    const start = Date.now();
+    const found = detectObjectsWorklet(input, options);
+    return { found, latencyMs: Date.now() - start };
+  });
 }
 
 /** The embedded leaf detector's manifest, or why there isn't one. */
@@ -168,6 +222,10 @@ function uncrop(
  * What comes back is the tracker's view of the frames, not the latest frame's detections: boxes
  * that have been seen in more than one frame, smoothed, and kept through a frame or two of misses,
  * so they don't blink.
+ *
+ * Nothing fails quietly: a load or a frame that takes too long says what it's waiting on, and
+ * `warning` says when the model is off the Neural Engine, or the phone is too short of space to
+ * put it there, which Core ML would otherwise hide behind a slow load and slow frames.
  */
 export function useDetections(enabled: boolean, zoom: SharedValue<number>): Detections {
   // A load can fail for a reason that passes (memory pressure while Core ML compiles the model), so
@@ -177,7 +235,11 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
   const [attempt, setAttempt] = useState(0);
   const config = useMemo(() => ({ ...CONFIG, attempt }), [attempt]);
   const detector = useObjectDetector(config, { preventLoad: !BUNDLED.manifest });
-  const { detectObjects, error: loadError } = detector;
+  const { detectObjectsWorklet, error: loadError } = detector;
+  const detectObjects = useMemo(
+    () => detectObjectsWorklet && timedDetector(detectObjectsWorklet),
+    [detectObjectsWorklet],
+  );
   useEffect(() => {
     if (!loadError) return;
     const timer = setTimeout(() => setAttempt((a) => a + 1), RELOAD_MS[Math.min(attempt, RELOAD_MS.length - 1)]);
@@ -188,10 +250,33 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
   // the indicator says detection is starting until the new detector has run a frame.
   const [result, setResult] = useState<{ by: typeof detectObjects; value: DetectionResult }>();
   const [error, setError] = useState<string>();
+  // Frames have been slow for a while: the model is off the Neural Engine.
+  const [slow, setSlow] = useState(false);
+
+  // What a frame is waiting on, once it has waited STALL_MS: a frame that hangs then says so
+  // instead of spinning. `waitOn` is called for every wait, so it only renders on a change.
+  const [stall, setStall] = useState<Stall>();
+  const stallTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const waitOn = useCallback((on: Stall | undefined) => {
+    clearTimeout(stallTimer.current);
+    stallTimer.current = on && setTimeout(() => setStall(on), STALL_MS);
+    setStall((current) => (current === undefined ? current : undefined));
+  }, []);
+  // Likewise a load that has taken STALL_MS, by attempt, so a reload starts without it.
+  const loading = Boolean(BUNDLED.manifest) && !loadError && !detector.isReady;
+  const [stalledAttempt, setStalledAttempt] = useState<number>();
+  useEffect(() => {
+    if (!loading) return;
+    const timer = setTimeout(() => setStalledAttempt(attempt), STALL_MS);
+    return () => clearTimeout(timer);
+  }, [loading, attempt]);
+  const loadStalled = loading && stalledAttempt === attempt;
 
   useEffect(() => {
     if (!enabled || detectObjects == null) return;
     let cancelled = false;
+    let slowRun = 0;
+    let fastRun = 0;
     // Whatever was tracked before detection was paused is stale now.
     tracker.current.reset();
 
@@ -199,16 +284,24 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
       while (!cancelled) {
         try {
           // Resolves once the camera delivers a frame, so this waits while the preview is paused.
+          waitOn('camera');
           const frame = await SplatCapture.nextDetectionFrame(FRAME_SIZE, zoom.get());
           if (cancelled || frame == null) continue;
-          const start = Date.now();
-          const found = await detectObjects(
+          waitOn('model');
+          const { found, latencyMs } = await detectObjects(
             { data: frame.data, width: frame.width, height: frame.height, format: 'rgba', layout: 'hwc' },
             { confidenceThreshold: TRACKER.keepScore },
           );
+          waitOn(undefined);
           if (cancelled) break;
           const now = Date.now();
-          const latencyMs = now - start;
+          if (latencyMs > SLOW_FRAME_MS) {
+            fastRun = 0;
+            if (++slowRun === SLOW_FRAMES) setSlow(true);
+          } else {
+            slowRun = 0;
+            if (++fastRun === SLOW_FRAMES) setSlow(false);
+          }
           const { candidates, frameSize } = uncrop(found, frame);
           const detections = tracker.current.update(candidates, frameSize, now);
           setResult((previous) => ({
@@ -226,6 +319,7 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
           }));
           setError(undefined);
         } catch (e) {
+          waitOn(undefined);
           if (cancelled) break;
           setError(e instanceof Error ? e.message : String(e));
           await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
@@ -235,8 +329,9 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
 
     return () => {
       cancelled = true;
+      waitOn(undefined);
     };
-  }, [enabled, detectObjects, zoom]);
+  }, [enabled, detectObjects, zoom, waitOn]);
 
   const current = result && detectObjects && result.by === detectObjects ? result.value : undefined;
   let status: string | undefined;
@@ -246,14 +341,51 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
   } else if (loadError) {
     status = `Couldn't load ${MODEL_NAME}: ${loadError.message}. Trying again…`;
   } else if (!detector.isReady) {
-    // Core ML compiles a model for the phone the first time it loads it.
-    status = `Loading ${MODEL_NAME}…`;
+    // The model ships compiled, but Core ML builds its Neural Engine program on the first load
+    // after an install, which takes a while; it's cached after that.
+    status = loadStalled
+      ? `Still loading ${MODEL_NAME}: the first load after an install builds it for the Neural Engine, which takes a while`
+      : `Loading ${MODEL_NAME}…`;
+    busy = true;
+  } else if (enabled && stall === 'camera') {
+    // The AR session is paused or interrupted, so there's nothing to detect in.
+    status = `${MODEL_NAME} is waiting for a camera frame`;
+    busy = true;
+  } else if (enabled && stall === 'model') {
+    status = `${MODEL_NAME} has been on one frame for over ${STALL_MS / 1000} s`;
     busy = true;
   } else if (enabled && current == null && error == null) {
     // The first run through the model takes a while too.
     status = `Starting ${MODEL_NAME}…`;
     busy = true;
   }
+
+  // Problems that don't stop detection but slow it, and what to do about them. The free space is
+  // read when the status changes (loading, ready, …), not every frame.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `status` is when to read it again
+  const freeBytes = useMemo(() => freeSpace(), [status]);
+  const offNeuralEngine = enabled && slow;
+  const lowSpace = freeBytes != null && freeBytes < LOW_SPACE_BYTES;
+  let warning: string | undefined;
+  if (lowSpace) {
+    warning =
+      `The phone has ${(freeBytes / 1e9).toFixed(1)} GB free, and Core ML needs about ${LOW_SPACE_BYTES / 1e9} GB free ` +
+      `to build ${MODEL_NAME} for the Neural Engine and keep it, so ${offNeuralEngine ? "it's running on the GPU or CPU, several times slower" : 'it loads slowly and may run on the GPU or CPU, several times slower'}. ` +
+      'Free up space on the phone, then relaunch the app.';
+  } else if (offNeuralEngine) {
+    warning = `${MODEL_NAME} is off the Neural Engine, running several times slower on the GPU or CPU. Relaunch the app; if it stays slow, free up space on the phone.`;
+  }
+
+  // The dev log of how long the model takes to load and to run its first frame, and of problems.
+  const mountedAt = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    const now = Date.now();
+    mountedAt.current ??= now;
+    if (__DEV__) console.log(`[leaf detector] ${status ?? 'running'} (${((now - mountedAt.current) / 1000).toFixed(1)}s)`);
+  }, [status]);
+  useEffect(() => {
+    if (warning) console.warn(`[leaf detector] ${warning}`);
+  }, [warning]);
 
   const running = enabled && !status;
   return {
@@ -263,5 +395,6 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
     busy: enabled && busy,
     result: running ? current : undefined,
     error: running ? error : undefined,
+    warning,
   };
 }

@@ -188,23 +188,41 @@ function describeMount(camera: MountCamera | null): Indicator {
 
 function describeDetections(detections: Detections): Indicator {
   const key = 'detections';
+  // A problem that slows detection (no Neural Engine, a full phone) turns the indicator yellow
+  // and is read out with the state, wherever detection is at.
+  const { warning } = detections;
+  const withWarning = (label: string) => (warning ? `${label}${/[.…]$/.test(label) ? '' : '.'} ${warning}` : label);
   if (detections.status) {
     return {
       key,
       icon: detections.unavailable ? 'leaf-off' : 'leaf',
-      tone: detections.unavailable ? 'warn' : 'dim',
-      label: detections.status,
+      tone: detections.unavailable || warning ? 'warn' : 'dim',
+      label: withWarning(detections.status),
       // Loading, or running its first frames: the spinner says so, since there's nothing to show yet.
       busy: detections.busy,
     };
   }
-  if (detections.error) return { key, icon: 'leaf-off', tone: 'warn', label: `Detection failed: ${detections.error}` };
+  if (detections.error)
+    return { key, icon: 'leaf-off', tone: 'warn', label: withWarning(`Detection failed: ${detections.error}`) };
   const found = detections.result?.detections ?? [];
-  if (found.length === 0) return { key, icon: 'leaf', label: `${detections.model}: nothing in view` };
+  if (found.length === 0) {
+    return {
+      key,
+      icon: 'leaf',
+      tone: warning ? 'warn' : undefined,
+      label: withWarning(`${detections.model}: nothing in view`),
+    };
+  }
   const summary = summarize(found)
     .map(([label, { count, confidence }]) => `${count > 1 ? `${label} ×${count}` : label} ${Math.round(confidence * 100)}%`)
     .join(', ');
-  return { key, icon: 'leaf', tone: 'good', text: String(found.length), label: `${detections.model}: ${summary}` };
+  return {
+    key,
+    icon: 'leaf',
+    tone: warning ? 'warn' : 'good',
+    text: String(found.length),
+    label: withWarning(`${detections.model}: ${summary}`),
+  };
 }
 
 function summarize(detections: Detection[]) {
@@ -461,7 +479,8 @@ export default function CameraScreen() {
   if (cameraStream) indicators.push(describeCameraStream(cameraStream));
   // Guidance beside the rail while it applies: what's wrong with the recording (tracking matters
   // most while recording, so only then does it say what's wrong with it), else what the autopilot
-  // is doing.
+  // is doing, else what's slowing detection (a full phone slows everything, recording included),
+  // else what's wrong with the laptop's view of the camera.
   const hint = recording && status.frozen
     ? 'Tracking was lost, so recording paused here. Tap stop to save what was captured.'
     : recording && status.full
@@ -470,7 +489,7 @@ export default function CameraScreen() {
         ? tracking.label
         : roverBrain && brain.autopilot.on && brain.autopilot.message
           ? brain.autopilot.message
-          : cameraStreamProblem(cameraStream);
+          : ((detection && detections.warning) || cameraStreamProblem(cameraStream));
   const result = detections.result;
   // The viewfinder shows the camera's whole frame, uncropped, so all the rover can see is on screen
   // and under the detection boxes: it takes the frame's shape at the screen's full width, under the
