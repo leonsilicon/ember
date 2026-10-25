@@ -295,10 +295,11 @@ export default function CameraScreen() {
   const detections = useDetections(detection && capabilities.arkit && !remote, zoom);
   const rover = useRover();
   // Places leaves in the world, scans LiDAR for obstacles, and runs the drive-to-leaf autopilot.
-  // The front camera can't place anything in the world.
+  // The front camera can't place anything in the world. It runs with the leaf detector off too (with
+  // no leaves to place), so the web app's live top view still gets the rover's pose and paths.
   const brain = useRoverBrain(
-    detections.result,
-    detection && capabilities.arkit && focused && camera === 'back' && !remote,
+    detection ? detections.result : undefined,
+    capabilities.arkit && focused && camera === 'back' && !remote,
   );
   // The web app's live mode watches this camera over the Wi-Fi while the screen is open: in mount
   // mode, or while this phone records.
