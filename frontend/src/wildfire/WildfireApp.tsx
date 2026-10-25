@@ -296,6 +296,16 @@ export default function WildfireApp() {
     prevZone.current = selectedZone
   }, [ready, selectedZone])
 
+  // a new area means a new grid: drop the previous area's run, what-if weather and actions
+  const simReset = sim.reset
+  useEffect(() => {
+    simReset()
+    setWeather(null)
+    setActions(NO_ACTIONS)
+    setDrawing(false)
+    setIgniting(false)
+  }, [data, simReset])
+
   const prevDensity = useRef<number | null>(null)
   useEffect(() => {
     const map = mapRef.current
