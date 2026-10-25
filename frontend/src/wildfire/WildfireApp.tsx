@@ -5,6 +5,7 @@ import {
   NavigationControl,
   ScaleControl,
   addProtocol,
+  setWorkerUrl,
   type GeoJSONSource,
   type LngLatBoundsLike,
   type MapLayerMouseEvent,
@@ -43,6 +44,9 @@ import { Timeline } from './Timeline'
 import { bandOf, drynessMultiplier, riskOf, type Band, type BuildingRow } from './types'
 import { DATA_BASE, useWildfireData } from './useWildfireData'
 
+// Under Turbopack, maplibre's own `import.meta.url` is not an http(s) URL, so its default worker URL
+// comes out empty and every map fails with "Worker failed to load"; point it at the bundled worker.
+setWorkerUrl(new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).href)
 const protocol = new Protocol()
 addProtocol('pmtiles', protocol.tile)
 
