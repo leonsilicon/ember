@@ -8,6 +8,8 @@ interface DPadProps {
   disabled: boolean
   onPress: (direction: Direction) => void
   onRelease: (direction: Direction) => void
+  /** The autopilot is pressing the buttons. */
+  auto?: boolean
 }
 
 const LABELS: Record<Direction, { rotate: number; key: string; label: string }> = {
@@ -17,7 +19,7 @@ const LABELS: Record<Direction, { rotate: number; key: string; label: string }> 
   right: { rotate: 90, key: 'D', label: 'Right' },
 }
 
-export function DPad({ held, reportedDrive, disabled, onPress, onRelease }: DPadProps) {
+export function DPad({ held, reportedDrive, disabled, onPress, onRelease, auto }: DPadProps) {
   const button = (direction: Direction, extra: string) => {
     const { rotate, key, label } = LABELS[direction]
     const isHeld = held === direction
@@ -64,8 +66,8 @@ export function DPad({ held, reportedDrive, disabled, onPress, onRelease }: DPad
     <div className="grid grid-cols-3 grid-rows-3 gap-1.5" role="group" aria-label="Drive controls">
       {button('forward', 'col-start-2 row-start-1')}
       {button('left', 'col-start-1 row-start-2')}
-      <div className="col-start-2 row-start-2 flex flex-col items-center justify-center rounded-xl bg-well text-center">
-        <span className="text-[10px] tracking-[0.12em] text-ink-3 uppercase">rover</span>
+      <div className={`col-start-2 row-start-2 flex flex-col items-center justify-center rounded-xl text-center ${auto ? 'bg-ember-soft' : 'bg-well'}`}>
+        <span className={`text-[10px] tracking-[0.12em] uppercase ${auto ? 'font-semibold text-ember-ink' : 'text-ink-3'}`}>{auto ? 'auto' : 'rover'}</span>
         <span className="num text-xs text-ink">{reportedDrive}</span>
       </div>
       {button('right', 'col-start-3 row-start-2')}

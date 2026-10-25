@@ -11,11 +11,25 @@ import { SplatViewer } from './components/SplatViewer'
 import { StopButton } from './components/StopButton'
 import { captureScene, useCaptures, viewable } from './hooks/useCaptures'
 import { useLiveMap } from './hooks/useLiveMap'
+import { useWebAutopilot } from './hooks/useWebAutopilot'
 import { usePhoneDiscovery } from './hooks/usePhoneDiscovery'
 import { useRover } from './hooks/useRover'
-import { Button, Hint, Led } from './ui/kit'
+import { Button, Hint, Icons, Led } from './ui/kit'
 import { Module } from './ui/layout'
 import { Shell, type Shortcut } from './ui/Shell'
+
+const MODE_LABEL: Record<string, string> = {
+  searching: 'looking',
+  exploring: 'exploring',
+  approaching: 'to a leaf',
+  aligning: 'lining up',
+  scooping: 'scooping',
+  lifting: 'lifting',
+  returning: 'to the pile',
+  dumping: 'emptying',
+  backing: 'backing off',
+  checking: 'checking',
+}
 
 const SHORTCUTS: Shortcut[] = [
   { keys: ['W', '↑'], label: 'Drive forward (hold)' },
@@ -55,6 +69,16 @@ export default function App() {
   // Live mode's stage: the brain's map from the linked phone, drawn in an instant (a splat takes ages to load).
   const [phoneLink, setPhoneLink] = useState<PhoneLink | null>(null)
   const liveMap = useLiveMap(mode === 'live' ? (phoneLink?.origin ?? null) : null)
+  const pilot = useWebAutopilot(rover, liveMap, mode === 'live')
+  // A hand on the controls takes over from the autopilot.
+  const pressByHand: typeof rover.press = (direction) => {
+    if (pilot.on) pilot.stop('Stopped: driving by hand')
+    rover.press(direction)
+  }
+  const stopByHand = () => {
+    if (pilot.on) pilot.stop('Stopped by hand')
+    rover.stop()
+  }
   const connected = snapshot.connection === 'connected'
   const conn = CONNECTION_STYLES[snapshot.connection]
 
@@ -77,7 +101,7 @@ export default function App() {
           </span>
         </span>
       }
-      actions={<StopButton compact disabled={!connected} onStop={rover.stop} />}
+      actions={<StopButton compact disabled={!connected} onStop={stopByHand} />}
       banner={
         mode === 'simulated' && (
           <div className="hatch mx-2 mb-2 flex items-center justify-between gap-3 rounded-[10px] border border-warn/40 py-1.5 pr-1.5 pl-3.5 lg:mx-2.5">
@@ -93,17 +117,57 @@ export default function App() {
       // A new key per scene: each one brings its own camera (the sample is -y up, captures +y up).
       stage={
         mode === 'live' ? (
-          <LiveMapView stream={liveMap} phone={phoneLink?.device ?? null} />
+          <LiveMapView stream={liveMap} phone={phoneLink?.device ?? null} pilot={pilot} />
         ) : (
           <SplatViewer key={scene?.url ?? 'none'} source={scene?.url ?? null} label={scene?.label} format={scene?.format} camera={scene?.camera} />
         )
       }
       modules={
         <>
-          <Module id="drive" title="Drive" meta={`rover: ${snapshot.drive}`}>
+          {mode === 'live' && (
+            <Module
+              id="autopilot"
+              title="Autopilot"
+              meta={
+                <span className="inline-flex items-center gap-1.5 font-sans">
+                  <Led tone={pilot.on ? 'live' : 'off'} blink={pilot.on && pilot.pressing == null} />
+                  {pilot.on ? (MODE_LABEL[pilot.mode ?? ''] ?? 'on') : 'off'}
+                </span>
+              }
+            >
+              {pilot.on ? (
+                <Button size="lg" className="w-full" onClick={() => pilot.stop('Stopped')}>
+                  <Icons.square />
+                  Stop autopilot
+                </Button>
+              ) : (
+                <Button size="lg" variant="primary" className="w-full" disabled={pilot.blocker != null} onClick={pilot.start}>
+                  <Icons.play />
+                  Start autopilot
+                </Button>
+              )}
+              <dl className="mt-3">
+                <div className="flex items-baseline justify-between gap-3 py-1.5">
+                  <dt className="text-[13px] text-ink-2">Doing</dt>
+                  <dd className="truncate text-right text-[13px] text-ink">{pilot.on ? pilot.message || '…' : (pilot.blocker ?? (pilot.message || 'Ready'))}</dd>
+                </div>
+                {pilot.on && (
+                  <div className="flex items-baseline justify-between gap-3 border-t border-line py-1.5">
+                    <dt className="text-[13px] text-ink-2">Pressing</dt>
+                    <dd className="num text-[13px] text-ink">{pilot.pressing ?? 'nothing'}</dd>
+                  </div>
+                )}
+              </dl>
+              <Hint className="mt-2">
+                Steers by the phone's live map with the rover's own autopilot and presses the drive buttons as you would. Any drive key, a D-pad button or Stop takes over.
+              </Hint>
+            </Module>
+          )}
+
+          <Module id="drive" title="Drive" meta={`${pilot.on ? 'autopilot' : 'rover'}: ${snapshot.drive}`}>
             <div className="flex flex-col items-center gap-3.5">
-              <DPad held={rover.held} reportedDrive={snapshot.drive} disabled={!connected} onPress={rover.press} onRelease={rover.release} />
-              <StopButton disabled={!connected} onStop={rover.stop} />
+              <DPad held={rover.held} reportedDrive={snapshot.drive} disabled={!connected} onPress={pressByHand} onRelease={rover.release} auto={pilot.on} />
+              <StopButton disabled={!connected} onStop={stopByHand} />
             </div>
             <Hint className="mt-3">
               Hold a key or button to drive; let go to stop. Commands repeat every 100 ms, and the rover stops by itself after 300 ms of silence.

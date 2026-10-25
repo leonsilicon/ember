@@ -23,8 +23,12 @@ const MODE_LABEL: Record<string, string> = {
   checking: 'Double-checking a spot',
 }
 
+/** The browser's autopilot, when it's the one driving. */
+export type PilotView = { on: boolean; mode: string | null; message: string; targetId: number | null; load: number }
+
 type Props = {
   stream: LiveMapStream
+  pilot?: PilotView
   /** The linked phone, for the readout; null when no phone is linked. */
   phone: string | null
 }
@@ -34,7 +38,7 @@ type Props = {
  * (rover, camera wedge, clear and blocked paths, tracked leaves, pile and work circle), from the map
  * lines the phone streams every steering tick. Fast where a splat is slow: it's a few hundred numbers.
  */
-export function LiveMapView({ stream, phone }: Props) {
+export function LiveMapView({ stream, phone, pilot }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef(stream)
   const [follow, setFollow] = useState(false)
@@ -42,9 +46,11 @@ export function LiveMapView({ stream, phone }: Props) {
   const viewRef = useRef({ follow, zoom: ZOOMS[zoom] })
   const [now, setNow] = useState(0)
 
+  const pilotRef = useRef(pilot)
   useEffect(() => {
     streamRef.current = stream
-  }, [stream])
+    pilotRef.current = pilot
+  }, [stream, pilot])
   useEffect(() => {
     viewRef.current = { follow, zoom: ZOOMS[zoom] }
   }, [follow, zoom])
@@ -216,8 +222,9 @@ export function LiveMapView({ stream, phone }: Props) {
       }
 
       // Leaves the brain has seen: confirmed filled, tentative as a faint ring, failed in red.
+      const shownTarget = pilotRef.current?.on ? pilotRef.current.targetId : map.targetId
       for (const l of map.leaves) {
-        const isTarget = l.id === map.targetId
+        const isTarget = l.id === shownTarget
         if (l.state === 'confirmed') ring(l.x, l.z, Math.max(3, 0.05 * scale), C.leaf)
         const color = l.state === 'failed' ? C.blocked : l.state === 'tentative' ? T.muted : C.belief
         ring(l.x, l.z, Math.max(isTarget ? 8 : 6, (isTarget ? 0.15 : 0.1) * scale), undefined, color, isTarget ? 2.5 : 1.25)
@@ -225,7 +232,8 @@ export function LiveMapView({ stream, phone }: Props) {
 
       if (rover) {
         // Line to the target leaf.
-        const target = map.leaves.find((l) => l.id === map.targetId)
+        const targetId = pilotRef.current?.on ? pilotRef.current.targetId : map.targetId
+        const target = map.leaves.find((l) => l.id === targetId)
         if (target) {
           ctx.setLineDash([4, 4])
           ctx.strokeStyle = C.belief
@@ -260,7 +268,9 @@ export function LiveMapView({ stream, phone }: Props) {
     }
   }, [])
 
-  const { map, receivedAt, silent } = stream
+  const { map: streamed, receivedAt, silent } = stream
+  // While the browser drives, its autopilot is the one to show (the phone's own is off).
+  const map = streamed && pilot?.on ? { ...streamed, autopilot: { on: true, mode: pilot.mode, message: pilot.message }, load: pilot.load, targetId: pilot.targetId } : streamed
   const age = receivedAt > 0 && now > 0 ? Math.max(0, now - receivedAt) : null
   const stale = age != null && age > STALE_MS
   const tracking = map?.rover != null

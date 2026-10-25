@@ -16,11 +16,14 @@ export type LiveMap = {
   rover: { x: number; z: number; yawDeg: number } | null;
   pile: { x: number; z: number; radiusM: number } | null;
   workRadiusM: number;
-  leaves: { id: number; x: number; z: number; state: LeafState }[];
+  /** `seenAgoMs`: since the camera last saw it (absent from older app builds). */
+  leaves: { id: number; x: number; z: number; state: LeafState; seenAgoMs?: number }[];
   /** The leaf the autopilot is going for. */
   targetId: number | null;
   /** Bearing 0 = ahead, positive right, as the brain's corridors are. */
   corridors: { bearingDeg: number; clearanceM: number; blocked: boolean }[];
+  /** Age of the LiDAR scan the corridors came from (absent from older builds; null without one). */
+  scanAgeMs?: number | null;
   autopilot: { on: boolean; mode: string | null; message: string };
   load: number;
   capacity: number;
@@ -40,9 +43,10 @@ export function liveMap(brain: Brain, heading: Heading | null, tick: BrainTick, 
     leaves: brain.leaves
       .snapshot()
       .filter((l) => l.state !== 'collected')
-      .map((l) => ({ id: l.id, x: cm(l.world[0]), z: cm(l.world[2]), state: l.state })),
+      .map((l) => ({ id: l.id, x: cm(l.world[0]), z: cm(l.world[2]), state: l.state, seenAgoMs: Math.max(0, Math.round(nowMs - l.lastSeenMs)) })),
     targetId: brain.running ? (brain.autopilot.targetId ?? null) : null,
     corridors: tick.corridors.map((c) => ({ bearingDeg: c.bearingDeg, clearanceM: cm(c.clearanceM), blocked: c.blockedBy != null })),
+    scanAgeMs: Number.isFinite(tick.scanAgeMs) ? Math.round(tick.scanAgeMs) : null,
     autopilot: { on: brain.running, mode: brain.running ? brain.autopilot.mode : null, message: step?.message ?? '' },
     load: brain.autopilot.load,
     capacity: brain.options.autopilot.capacity,
