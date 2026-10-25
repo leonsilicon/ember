@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'bun:test'
 import { IGNITION_FLOOR, type SimRequest } from './protocol'
 import { run } from './spread.worker'
 

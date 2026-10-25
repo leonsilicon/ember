@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'bun:test'
 import { directionalRos, headRos, isi, lengthToBreadth } from './fbp'
 
 describe('fbp', () => {
