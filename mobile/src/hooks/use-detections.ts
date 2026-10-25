@@ -344,7 +344,7 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
     // The model ships compiled, but Core ML builds its Neural Engine program on the first load
     // after an install, which takes a while; it's cached after that.
     status = loadStalled
-      ? `Still loading ${MODEL_NAME}: the first load after an install builds it for the Neural Engine, which takes a while`
+      ? `Still loading ${MODEL_NAME}: the first load after an install takes a while`
       : `Loading ${MODEL_NAME}…`;
     busy = true;
   } else if (enabled && stall === 'camera') {
@@ -360,20 +360,22 @@ export function useDetections(enabled: boolean, zoom: SharedValue<number>): Dete
     busy = true;
   }
 
-  // Problems that don't stop detection but slow it, and what to do about them. The free space is
-  // read when the status changes (loading, ready, …), not every frame.
+  // Problems that don't stop detection but slow it, and what to do about them, in a sentence or
+  // two: it's shown beside the camera's tools. The free space is read when the status changes
+  // (loading, ready, …), not every frame.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `status` is when to read it again
   const freeBytes = useMemo(() => freeSpace(), [status]);
   const offNeuralEngine = enabled && slow;
   const lowSpace = freeBytes != null && freeBytes < LOW_SPACE_BYTES;
   let warning: string | undefined;
   if (lowSpace) {
+    // Core ML needs the room to build the model for the Neural Engine and keep it; without it,
+    // the model loads slowly and may run on the GPU or CPU, several times slower.
     warning =
-      `The phone has ${(freeBytes / 1e9).toFixed(1)} GB free, and Core ML needs about ${LOW_SPACE_BYTES / 1e9} GB free ` +
-      `to build ${MODEL_NAME} for the Neural Engine and keep it, so ${offNeuralEngine ? "it's running on the GPU or CPU, several times slower" : 'it loads slowly and may run on the GPU or CPU, several times slower'}. ` +
-      'Free up space on the phone, then relaunch the app.';
+      `${(freeBytes / 1e9).toFixed(1)} GB free: ${MODEL_NAME} needs ${LOW_SPACE_BYTES / 1e9} GB ` +
+      `${offNeuralEngine ? 'to get back on' : 'to stay on'} the Neural Engine. Free up space, then relaunch.`;
   } else if (offNeuralEngine) {
-    warning = `${MODEL_NAME} is off the Neural Engine, running several times slower on the GPU or CPU. Relaunch the app; if it stays slow, free up space on the phone.`;
+    warning = `${MODEL_NAME} is off the Neural Engine, so it's slower. Relaunch the app, or free up space.`;
   }
 
   // The dev log of how long the model takes to load and to run its first frame, and of problems.

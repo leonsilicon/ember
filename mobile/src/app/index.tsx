@@ -134,7 +134,7 @@ function describeLive(live: LiveStatus): Indicator {
  */
 function cameraStreamProblem(stream: CameraStreamStatus | null): string | undefined {
   if (!stream) return undefined;
-  if (stream.state === 'blocked') return "Laptop can't see this camera: turn on Local Network for this app in Settings (tap the cast icon)";
+  if (stream.state === 'blocked') return "Laptop can't see this camera: tap the cast icon to allow Local Network";
   if (stream.state === 'failed') return `Laptop can't see this camera: ${stream.error ?? 'its server failed to start'}`;
   if (stream.state === 'ready' && !stream.urls?.length) return "Laptop can't see this camera: join the laptop's Wi-Fi";
   return undefined;
@@ -148,13 +148,13 @@ function describeCameraStream(stream: CameraStreamStatus): Indicator {
       key,
       icon: 'cast-off',
       tone: 'warn',
-      label: 'Laptop view blocked: Local Network access is off for this app',
+      label: 'Laptop view blocked: Local Network is off. Tap to open Settings',
       onPress: () => void Linking.openSettings(),
     };
   }
   if (stream.state === 'ready') {
     const url = stream.urls?.[0];
-    if (!url) return { key, icon: 'cast-off', tone: 'dim', label: 'Laptop view: join a Wi-Fi network so the web app can reach this phone' };
+    if (!url) return { key, icon: 'cast-off', tone: 'dim', label: 'Laptop view: join a Wi-Fi network first' };
     const viewers = stream.viewers;
     return {
       key,
@@ -213,7 +213,9 @@ function describeDetections(detections: Detections): Indicator {
       label: withWarning(`${detections.model}: nothing in view`),
     };
   }
-  const summary = summarize(found)
+  const kinds = summarize(found);
+  const summary = kinds
+    .slice(0, 3)
     .map(([label, { count, confidence }]) => `${count > 1 ? `${label} ×${count}` : label} ${Math.round(confidence * 100)}%`)
     .join(', ');
   return {
@@ -221,7 +223,7 @@ function describeDetections(detections: Detections): Indicator {
     icon: 'leaf',
     tone: warning ? 'warn' : 'good',
     text: String(found.length),
-    label: withWarning(`${detections.model}: ${summary}`),
+    label: withWarning(`${detections.model}: ${summary}${kinds.length > 3 ? ', …' : ''}`),
   };
 }
 
@@ -312,8 +314,6 @@ export default function CameraScreen() {
   const mountCamera = useMountCamera(remote && focused);
   /** Its frames' shape (width / height), once they play. */
   const [mountAspect, setMountAspect] = useState(3 / 4);
-  /** Where the remote's tray starts, so the other phone's camera fits above it. */
-  const [trayTop, setTrayTop] = useState<number>();
   const { stopAutopilot } = brain;
   const [caption, showCaption] = useCaption();
 
@@ -345,7 +345,7 @@ export default function CameraScreen() {
         forceFeaturePoints: !lidarOn,
       });
       setPhase({ kind: 'recording', captureId, liveServerUrl });
-      if (zoom.get() > 1) showCaption('Zoom magnifies the preview and detection; the recording keeps the whole view');
+      if (zoom.get() > 1) showCaption('Zoomed preview only: the recording keeps the whole view');
     } catch (error) {
       setPhase({ kind: 'ready' });
       Alert.alert("Couldn't start recording", message(error));
@@ -383,17 +383,6 @@ export default function CameraScreen() {
   const lidar = recording ? status.mode === 'lidar' : capabilities.lidar && lidarOn;
   const tracking = describeTracking(status);
 
-  function toggleLidar() {
-    if (!capabilities.lidar) {
-      showCaption('LiDAR needs a phone with a LiDAR scanner, like an iPhone Pro');
-    } else if (recording) {
-      showCaption(`This recording uses ${lidar ? 'LiDAR' : 'feature points'}. Stop it to switch.`);
-    } else {
-      setLidarOn(!lidarOn);
-      showCaption(lidarOn ? 'LiDAR off' : 'LiDAR on');
-    }
-  }
-
   const busy = recording || phase.kind === 'saving';
   // The rover's brain places leaves in the world, which the front camera can't. With the remote
   // out, the rover is driven by hand.
@@ -404,19 +393,17 @@ export default function CameraScreen() {
     {
       key: 'flip',
       icon: 'camera-flip-outline',
-      // Only the back camera records, so it can't change mid-recording.
-      tone: !capabilities.frontCamera || busy ? 'dim' : undefined,
       label: front ? 'Switch to the back camera' : 'Switch to the front camera',
+      // Only the back camera records, so it can't change mid-recording.
+      disabled: !capabilities.frontCamera
+        ? 'No front camera ARKit can use'
+        : busy
+          ? "Can't flip while recording: only the back camera records"
+          : undefined,
       onPress: () => {
-        if (!capabilities.frontCamera) {
-          showCaption('This phone has no front camera ARKit can use');
-        } else if (busy) {
-          showCaption('Only the back camera records, so it stays on until the recording stops');
-        } else {
-          // Each camera starts at 1×, as in the Camera app.
-          zoom.set(1);
-          setCamera(front ? 'back' : 'front');
-        }
+        // Each camera starts at 1×, as in the Camera app.
+        zoom.set(1);
+        setCamera(front ? 'back' : 'front');
       },
     },
   ];
@@ -434,20 +421,24 @@ export default function CameraScreen() {
       key: 'camera',
       icon: 'video-off',
       tone: 'dim',
-      label: 'Front camera: it previews and detects, but only the back camera records',
+      label: 'Front camera previews and detects; only the back one records',
     });
   } else {
     indicators.push(
       {
         key: 'lidar',
         icon: lidar ? 'blur' : 'blur-off',
-        tone: lidar ? 'on' : capabilities.lidar ? undefined : 'dim',
-        label: !capabilities.lidar
-          ? "No LiDAR on this phone: ARKit's feature points seed the splat"
-          : lidar
-            ? 'LiDAR on: its depth seeds the splat'
-            : "LiDAR off: ARKit's feature points seed the splat",
-        onPress: toggleLidar,
+        tone: lidar ? 'on' : undefined,
+        label: lidar ? 'LiDAR on: its depth seeds the splat' : 'LiDAR off: feature points seed the splat',
+        disabled: !capabilities.lidar
+          ? 'This phone has no LiDAR scanner'
+          : recording
+            ? `Recording with ${lidar ? 'LiDAR' : 'feature points'}. Stop to switch.`
+            : undefined,
+        onPress: () => {
+          setLidarOn(!lidarOn);
+          showCaption(lidarOn ? 'LiDAR off' : 'LiDAR on');
+        },
       },
       tracking,
     );
@@ -482,7 +473,7 @@ export default function CameraScreen() {
   // is doing, else what's slowing detection (a full phone slows everything, recording included),
   // else what's wrong with the laptop's view of the camera.
   const hint = recording && status.frozen
-    ? 'Tracking was lost, so recording paused here. Tap stop to save what was captured.'
+    ? 'Tracking lost, so recording paused. Tap stop to save.'
     : recording && status.full
       ? 'Frame budget reached. Tap stop to save.'
       : recording && !front && tracking.tone === 'warn'
@@ -497,23 +488,22 @@ export default function CameraScreen() {
   // whole frames; until one arrives, it's the shape ARKit's default formats have: 4:3 for world
   // tracking (the back camera), 16:9 for face tracking (the front), both upright. Below it, the live
   // 3D view is the background. On a screen too short for both, the viewfinder narrows rather than
-  // crops.
+  // crops. In remote mode it shows the other phone's camera the same way, whole and edge to edge,
+  // and the remote's tray rises over its foot, where the dock is, as the Camera app's tray rises
+  // over its controls.
   const frameAspect = result ? result.frameSize.width / result.frameSize.height : front ? 9 / 16 : 3 / 4;
-  const mountViewfinderHeight = Math.min(screen.width / frameAspect, screen.height - insets.top - MIN_LIVE_HEIGHT);
-  // In remote mode it shows the other phone's camera, whole too, above the remote's tray.
-  const viewfinderHeight = remote
-    ? Math.min(screen.width / mountAspect, (trayTop ?? screen.height) - insets.top - Spacing.two)
-    : mountViewfinderHeight;
-  const viewfinderWidth = viewfinderHeight * (remote ? mountAspect : frameAspect);
+  const aspect = remote ? mountAspect : frameAspect;
+  const viewfinderHeight = Math.min(screen.width / aspect, screen.height - insets.top - MIN_LIVE_HEIGHT);
+  const viewfinderWidth = viewfinderHeight * aspect;
   const viewfinderFrame = {
     top: insets.top,
     left: (screen.width - viewfinderWidth) / 2,
     width: viewfinderWidth,
     height: viewfinderHeight,
   };
-  // Everything below the camera, reaching up into its rounded corners. In remote mode it stays
-  // where it is, hidden under the remote's tray.
-  const liveFrame = { top: insets.top + mountViewfinderHeight - CARD_RADIUS, left: 0, right: 0, bottom: 0 };
+  // Everything below the camera, reaching up into its rounded corners. In remote mode it's hidden
+  // under the remote's tray.
+  const liveFrame = { top: insets.top + viewfinderHeight - CARD_RADIUS, left: 0, right: 0, bottom: 0 };
   const liveIdle = !capabilities.arkit
     ? 'Recording needs an iPhone'
     : !splat.liveStream
@@ -657,7 +647,7 @@ export default function CameraScreen() {
       </View>
 
       {remote && (
-        <BottomTray label="Remote" onClose={() => setMode('mount')} onTop={setTrayTop}>
+        <BottomTray label="Remote" onClose={() => setMode('mount')}>
           <RoverRemote />
         </BottomTray>
       )}

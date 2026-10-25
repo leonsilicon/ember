@@ -26,20 +26,9 @@ const RADIUS = 36;
  * Like the Camera app's controls tray (flash, exposure, format): a sheet of tinted glass that rises
  * from the bottom of the screen over the controls there, inset from the screen's edges and rounded
  * to match its corners. Dragging it down, or tapping its grabber, puts it away; render it only
- * while it's open, so it slides out on closing. `onTop` gets where its top edge is (y in its
- * parent), so what's above it can make room.
+ * while it's open, so it slides out on closing.
  */
-export function BottomTray({
-  label,
-  onClose,
-  onTop,
-  children,
-}: {
-  label: string;
-  onClose: () => void;
-  onTop?: (y: number) => void;
-  children: ReactNode;
-}) {
+export function BottomTray({ label, onClose, children }: { label: string; onClose: () => void; children: ReactNode }) {
   const insets = useSafeAreaInsets();
   const drag = useSharedValue(0);
   // Let go far enough down; the responder outlives renders, so it can't hold `onClose` itself.
@@ -69,7 +58,6 @@ export function BottomTray({
       accessibilityViewIsModal
       accessibilityLabel={label}
       onAccessibilityEscape={onClose}
-      onLayout={(event) => onTop?.(event.nativeEvent.layout.y)}
       style={styles.anchor}>
       <Animated.View
         {...pan.panHandlers}
