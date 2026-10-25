@@ -29,9 +29,10 @@ function isTextInput(target: EventTarget | null): boolean {
 }
 
 export function useRover() {
-  const [mode, setMode] = useState<Mode>('simulated')
+  // Live rover by default: the control page is for the real rover; Simulated is the fallback to try things.
+  const [mode, setMode] = useState<Mode>('live')
   const [url, setUrl] = useState(DEFAULT_WS_URL)
-  const [client, setClient] = useState<RoverClient>(() => new SimulatedClient())
+  const [client, setClient] = useState<RoverClient>(() => new WebSocketClient(DEFAULT_WS_URL))
   const clientRef = useRef(client)
 
   const heldRef = useRef<Direction | null>(null)

@@ -146,46 +146,44 @@ export default function App() {
       }
       modules={
         <>
-          {mode === 'live' && (
-            <Module
-              id="autopilot"
-              title="Autopilot"
-              meta={
-                <span className="inline-flex items-center gap-1.5 font-sans">
-                  <Led tone={pilot.on ? 'live' : 'off'} blink={pilot.on && pilot.pressing == null} />
-                  {pilot.on ? `${pilot.dryRun ? 'dry run · ' : ''}${MODE_LABEL[pilot.mode ?? ''] ?? 'on'}` : 'off'}
-                </span>
-              }
-            >
-              {pilot.on ? (
-                <Button size="lg" className="w-full" onClick={() => pilot.stop('Stopped')}>
-                  <Icons.square />
-                  Stop autopilot
-                </Button>
-              ) : (
-                <Button size="lg" variant="primary" className="w-full" disabled={pilot.blocker != null} onClick={pilot.start}>
-                  <Icons.play />
-                  {connected ? 'Start autopilot' : 'Start dry run'}
-                </Button>
-              )}
-              <dl className="mt-3">
-                <div className="flex items-baseline justify-between gap-3 py-1.5">
-                  <dt className="text-[13px] text-ink-2">Doing</dt>
-                  <dd className="truncate text-right text-[13px] text-ink">{pilot.on ? pilot.message || '…' : (pilot.blocker ?? (pilot.message || 'Ready'))}</dd>
+          <Module
+            id="autopilot"
+            title="Autopilot"
+            meta={
+              <span className="inline-flex items-center gap-1.5 font-sans">
+                <Led tone={pilot.on ? 'live' : 'off'} blink={pilot.on && pilot.pressing == null} />
+                {pilot.on ? `${pilot.dryRun ? 'dry run · ' : ''}${MODE_LABEL[pilot.mode ?? ''] ?? 'on'}` : 'off'}
+              </span>
+            }
+          >
+            {pilot.on ? (
+              <Button size="lg" className="w-full" onClick={() => pilot.stop('Stopped')}>
+                <Icons.square />
+                Stop autopilot
+              </Button>
+            ) : (
+              <Button size="lg" variant="primary" className="w-full" disabled={pilot.blocker != null} onClick={pilot.start}>
+                <Icons.play />
+                {connected ? 'Start autopilot' : 'Start dry run'}
+              </Button>
+            )}
+            <dl className="mt-3">
+              <div className="flex items-baseline justify-between gap-3 py-1.5">
+                <dt className="text-[13px] text-ink-2">Doing</dt>
+                <dd className="truncate text-right text-[13px] text-ink">{pilot.on ? pilot.message || '…' : (pilot.blocker ?? (pilot.message || 'Ready'))}</dd>
+              </div>
+              {pilot.on && (
+                <div className="flex items-baseline justify-between gap-3 border-t border-line py-1.5">
+                  <dt className="text-[13px] text-ink-2">Pressing</dt>
+                  <dd className="num text-[13px] text-ink">{pilot.pressing ?? 'nothing'}</dd>
                 </div>
-                {pilot.on && (
-                  <div className="flex items-baseline justify-between gap-3 border-t border-line py-1.5">
-                    <dt className="text-[13px] text-ink-2">Pressing</dt>
-                    <dd className="num text-[13px] text-ink">{pilot.pressing ?? 'nothing'}</dd>
-                  </div>
-                )}
-              </dl>
-              <Hint className="mt-2">
-                Steers by the phone's live map with the rover's own autopilot and presses the drive buttons as you would. Any drive key, a D-pad button or Stop takes over.
-                {!connected && ' With no rover connected it runs dry: the buttons are pressed on screen and nothing moves, so you can carry the phone and follow it.'}
-              </Hint>
-            </Module>
-          )}
+              )}
+            </dl>
+            <Hint className="mt-2">
+              Steers by the phone's live map with the rover's own autopilot and presses the drive buttons as you would. Any drive key, a D-pad button or Stop takes over.
+              {!connected && ' With no rover connected it runs dry: the buttons are pressed on screen and nothing moves, so you can carry the phone and follow it.'}
+            </Hint>
+          </Module>
 
           {mode === 'live' && <LiveJobPanel job={job} onChange={setJob} map={phoneMap} placing={placingPile} onPlacing={setPlacingPile} />}
 
