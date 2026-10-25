@@ -1,10 +1,11 @@
 import type { PointerEvent } from 'react'
-import type { Direction, DriveCommand } from '../protocol'
+import type { Direction } from '../protocol'
 import { Icons } from '../ui/kit'
 
 interface DPadProps {
   held: Direction | null
-  reportedDrive: DriveCommand
+  /** The direction the rover's PWM outputs amount to, null when its wheels are off. */
+  reportedDrive: Direction | null
   disabled: boolean
   onPress: (direction: Direction) => void
   onRelease: (direction: Direction) => void
@@ -68,7 +69,7 @@ export function DPad({ held, reportedDrive, disabled, onPress, onRelease, auto }
       {button('left', 'col-start-1 row-start-2')}
       <div className={`col-start-2 row-start-2 flex flex-col items-center justify-center rounded-xl text-center ${auto ? 'bg-ember-soft' : 'bg-well'}`}>
         <span className={`text-[10px] tracking-[0.12em] uppercase ${auto ? 'font-semibold text-ember-ink' : 'text-ink-3'}`}>{auto ? 'auto' : 'rover'}</span>
-        <span className="num text-xs text-ink">{reportedDrive}</span>
+        <span className="num text-xs text-ink">{reportedDrive ?? 'stop'}</span>
       </div>
       {button('right', 'col-start-3 row-start-2')}
       {button('back', 'col-start-2 row-start-3')}

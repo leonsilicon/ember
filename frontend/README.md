@@ -13,8 +13,9 @@ says who's signed in and signs out; sign-in lands on `/control`. Two sides share
   (`src/agent`). The app reaches its API with one access token (`SPLAT_TOKEN`). The whole story is in
   [`mobile/SPLATS.md`](../mobile/SPLATS.md).
 - **The laptop pages** (`src/app/(rover)`, `src/rover`, `src/wildfire`), which run in the browser only:
-  - `/control` — remote control for the rover and arm over a WebSocket to the ESP32 (`firmware/rover_ws`), with a
-    splat viewer and a webcam capture panel. See "Rover control" below.
+  - `/control` — remote control for the rover's wheels and arm servos over the ESP32's HTTP API
+    (`firmware/DualServoBench`), through the site's own `/api/rover` proxy, with a splat viewer and a webcam
+    capture panel. See "Rover control" below.
   - `/sim` — the autopilot simulator: the rover's own brain (`mobile/src/lib/rover-brain`, imported as
     `@rover-brain`) clearing a virtual yard. See "Autopilot simulator" in the repo README.
   - `/wildfire` — the wildfire hazard map, from the tiles in `public/wildfire` (see `data/wildfire/README.md`).
@@ -79,25 +80,40 @@ the dev stack's agent instead, `pm2 stop soon2026-agent` and `vpx _dev --agent`,
 
 ## Rover control (`/control`)
 
-Talks to the ESP32 (`firmware/rover_ws`) over a WebSocket. Browsers refuse a plain `ws://` connection from an
-`https://` page, so drive from the dev server on the laptop (http://localhost:8899/control), not from the Vercel URL.
-The live top view works from either: on the dev server the map comes from the phone over the Wi-Fi, and on the Vercel
-URL through the server, from the phone set to the username the browser signed in with (see "Signing in").
+Drives the rover's ESP32 (`firmware/DualServoBench`, Matthew's V7 firmware, flashed) over its plain-HTTP API
+([`firmware/DualServoBench/API.md`](../firmware/DualServoBench/API.md)): the ESP32 hosts the Wi-Fi **Leaf-Rover**
+(password `leafrover`) at `http://192.168.4.1`. It has no CORS, so the page never calls it directly: the browser calls
+`/api/rover/{session,control,status}` on its own origin (`src/app/(rover)/api/rover/[endpoint]/route.ts`) and the
+server forwards to the rover. That server has to be on the rover's Wi-Fi, so drive from the dev server on the laptop
+(http://localhost:8899/control); on the Vercel URL the proxy answers 503 (the cloud has no route to the rover). The
+proxy forwards to `ROVER_URL`, else the rover's address, else the `?rover=` the page names (a mock), and only to a
+local-network address. The live top view works from either: on the dev server the map comes from the phone over the
+Wi-Fi, and on the Vercel URL through the server, from the phone set to the username the browser signed in with (see
+"Signing in").
 
-- **Drive**: hold a D-pad button or `WASD` / arrow keys to drive, release to stop. While held, the direction is
-  re-sent every 100 ms; the firmware stops on its own after 300 ms without a command. Window blur / tab hidden
-  also releases.
-- **Stop**: large red button, `Space` or `Esc`. Always sends `stop`.
-- **Run arm sequence**: sends `arm_run` once; disabled while the device reports `running`.
-- **Connection panel**: toggle **Simulated** / **Live**, enter the ESP32 WebSocket URL (default
-  `ws://192.168.4.1/ws`), connect / disconnect, see last message age and errors.
-- **Status**: connection (disconnected / connecting / connected / error), device-reported drive state, arm state
-  (idle / running / completed / error).
+- **Connect**: `POST /session` → a token; the rover takes one controller at a time, so connecting replaces whoever
+  was driving (and a stale tab reconnecting would steal the session back, which is why there is no auto-reconnect:
+  after a drop, click **Connect** again).
+- **Drive**: hold a D-pad button or `WASD` / arrow keys, release to stop. Every change sends the **full desired
+  state** (`token, seq, wheel, pan, lift, power, speed`, form-encoded) with a strictly increasing `seq`; while
+  anything is held the same frame repeats every 100 ms, and the firmware stops everything on its own 500 ms after the
+  last accepted frame. Window blur / tab hidden / `pagehide` also stop. Any failed request zeroes everything, sends one
+  best-effort zero frame and drops to **error**.
+- **Wheel power** slider: 0..100 % PWM duty (not a measured speed; equal duty is not equal wheel speed).
+- **Stop**: large red button, `Space` or `Esc`: one frame with wheel and both jogs at 0 (there is no `/stop`).
+- **Arm**: hold **Pan** / **Lift** back / forward (`Q`/`E`, `F`/`R`) to jog that servo at the **Servo speed** (100 %
+  jumps straight to the endpoint); let go and it holds where it is, even after link loss. The µs readouts are the
+  commanded pulse estimate from `/status`, not a measured angle; 500..2500 µs is electrical, not what the arm can
+  safely reach. There is no arm sequence on this firmware, so the autopilot's scoop step only drives.
+- **Connection panel**: toggle **Simulated** / **Live rover**, enter the rover address (default
+  `http://192.168.4.1`), connect / disconnect, see the Wi-Fi to join, last message age, errors, and from `/status`
+  (polled every 700 ms) `ready`, the frame number and the four wheel PWM duties (GPIO 25, 26, 32, 33). The D-pad's
+  "rover reports" dot comes from those duties.
 
-Simulated mode is the default and is labelled everywhere (amber banner, `SIMULATED` source). It runs the same rules
-as the firmware in the browser (watchdog stop, arm busy rejection, 3 s sequence). Nothing in simulated mode reflects
-hardware. Live mode shows `DEVICE` and only displays what the ESP32 reports. There is no auto-reconnect: after a
-drop, click **Connect** again. No motion command is ever re-sent on reconnect.
+Live rover is the default. Simulated mode is labelled everywhere (amber banner, `SIMULATED` source) and runs the
+firmware's own rules in the browser (`src/rover/manualControl.ts` is a port of `ManualControl.h`: token, seq,
+500 ms lease, servo step maths, PWM duties). Nothing in simulated mode reflects hardware. Without the ESP32, `python3
+firmware/DualServoBench/mock_server.py` speaks the same API on http://127.0.0.1:8788 for Live rover mode.
 
 - **Viewer** — renders a Gaussian splat (`.splat`, `.ply`, `.ksplat`) with `@mkkellogg/gaussian-splats-3d`. Drag to
   orbit, scroll to zoom, right-drag to pan; Bird's-eye and Reset view buttons.
@@ -122,11 +138,13 @@ drop, click **Connect** again. No motion command is ever re-sent on reconnect.
 Code map:
 
 ```
-src/rover/protocol.ts                 command / status message types shared with the firmware
+src/rover/protocol.ts                 the V7 HTTP contract: wheel codes, jogs, frame / status types, timings
+src/rover/manualControl.ts            port of the firmware's ManualControl.h (the simulator's rules)
 src/rover/clients/RoverClient.ts      client interface + snapshot store
 src/rover/clients/SimulatedClient.ts  in-browser stand-in for the ESP32
-src/rover/clients/WebSocketClient.ts  real transport
-src/rover/hooks/useRover.ts           hold-to-drive repeat, keyboard, mode switching
-src/rover/components/                 DPad, StopButton, ArmPanel, ConnectionPanel, SplatViewer, ScenePanel, CapturePanel
+src/rover/clients/HttpRoverClient.ts  the real rover, through /api/rover (session, seq, heartbeat, failure stop, status poll)
+src/app/(rover)/api/rover/            the same-origin proxy to the rover (src/web/rover-proxy.ts filters the address)
+src/rover/hooks/useRover.ts           hold-to-drive / hold-to-jog, keyboard, mode switching
+src/rover/components/                 DPad, StopButton, ServoPanel, PercentSlider, ConnectionPanel, SplatViewer, ScenePanel, CapturePanel
 src/rover/components/sim/             the autopilot simulator's views; src/rover/sim and src/rover/sim3d drive them
 ```

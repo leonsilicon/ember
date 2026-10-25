@@ -29,7 +29,7 @@ export type WebAutopilot = {
  * The rover brain's own autopilot, run in the browser on the phone's live map, driving through the
  * same buttons a person presses: each map update (5 a second) it steps `stepAutopilot` and holds the
  * D-pad direction its wheel speeds come to (so the buttons animate and the ESP32 gets exactly what a
- * person would send). The scoop's arm sequence runs as it starts scooping. It switches itself off,
+ * person would send). The scoop has no arm sequence to run on this firmware. It switches itself off,
  * stopping the rover, when someone drives or stops by hand, the map goes quiet, or the rover drops.
  */
 export function useWebAutopilot(rover: Rover, live: LiveMapStream, enabled: boolean): WebAutopilot {
@@ -103,14 +103,13 @@ export function useWebAutopilot(rover: Rover, live: LiveMapStream, enabled: bool
     const now = performance.now()
     const cfg = { ...DEFAULT_AUTOPILOT, workRadiusM: map.workRadiusM, capacity: map.capacity }
     const step = stepAutopilot(state.current, inputFromMap(map, now, Math.max(0, now - receivedAt), memory.current), cfg)
-    const entering = step.state.mode !== state.current.mode ? step.state.mode : null
     state.current = step.state
     for (const id of step.collectedIds ?? []) memory.current.collected.set(id, now)
     if (step.missingId != null) memory.current.collected.set(step.missingId, now)
     if (step.failedId != null) memory.current.failed.add(step.failedId)
     if (step.checkedId != null) memory.current.checked.add(step.checkedId)
-    // The arm sequence is the scoop: run it once as each scoop starts.
-    if (entering === 'scooping' && drivingRef.current) roverRef.current.runArm()
+    // 'scooping' only drives: the rover's firmware (firmware/DualServoBench) jogs the servos but has no arm
+    // sequence to run, so the lift is jogged by hand from the Arm module.
     hold(directionFor(step.left, step.right))
     // The step is the source of truth for the panel, mirrored into state for rendering.
     setStatus({ message: step.message, mode: step.state.mode, targetId: step.state.targetId ?? null, load: step.state.load })

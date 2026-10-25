@@ -52,10 +52,14 @@ bun run dev               # http://localhost:8899
 
 Useful pages:
 
-- http://localhost:8899/control: rover remote control. It starts in **Simulated**
-  mode. Switch to **Live** and enter the ESP32 address (default
-  `ws://192.168.4.1/ws`) to drive the real rover. Use the local dev server for
-  this, not the Vercel URL, because browsers block `ws://` from an `https://` page.
+- http://localhost:8899/control: rover remote control. Join the rover's Wi-Fi
+  **Leaf-Rover** (password `leafrover`) on the laptop, keep **Live rover** with the
+  ESP32 address (default `http://192.168.4.1`) and Connect. Use the local dev
+  server for this, not the Vercel URL: the browser reaches the rover through this
+  server's `/api/rover` proxy (the firmware has no CORS), and Vercel is not on
+  the rover's Wi-Fi. **Simulated** runs the firmware's rules in the browser; without
+  the ESP32, `python3 firmware/DualServoBench/mock_server.py` stands in for it at
+  `http://127.0.0.1:8788`.
 - http://localhost:8899/sim: the autopilot simulator.
 - http://localhost:8899/wildfire: the wildfire hazard map.
 

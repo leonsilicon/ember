@@ -69,7 +69,7 @@ vpx _ios production  # the production app (dev.improve.soon2026) in Release besi
 | `.github/workflows/testflight.yml` | Ships every push to `main` that changes the app to TestFlight from a self-hosted Mac; see "TestFlight" in [`mobile/AGENTS.md`](mobile/AGENTS.md). |
 | `.github/workflows/vercel.yml` | Deploys every push to `main` to Vercel from GitHub Actions; see "Deploying" in [`frontend/README.md`](frontend/README.md). |
 | `.github/workflows/agent.yml` | Keeps the splat server's Mac agent running on the self-hosted Mac as a pm2 service and updates it on every push to `main`; see "The Mac agent as a service" in [`frontend/README.md`](frontend/README.md). |
-| `firmware/rover_ws` | ESP32 Arduino sketch: Wi-Fi access point + WebSocket command endpoint for the web app. |
+| `firmware/DualServoBench` | The rover's ESP32 firmware (V7, flashed): Wi-Fi access point `Leaf-Rover` + the HTTP API the web app's `/control` drives (wheels, pan / lift servos), its wire contract (`API.md`), control-logic test and a laptop mock server. |
 | `data/wildfire` | Ontario wildfire hazard pipeline that feeds the web app's map. |
 | `backend` | Python on the Mac: the same leaf detector and depth logic as the app, for testing with a webcam, photo or RealSense, plus an HTTP perception service. See [`backend/README.md`](backend/README.md). |
 
