@@ -13,6 +13,11 @@ export type Capabilities = {
   lidar: boolean;
   /** The front camera can be shown (ARKit face tracking, which needs a TrueDepth camera). */
   frontCamera: boolean;
+  /**
+   * Without ARKit, a plain camera (Android): it shows and serves the back camera on the Wi-Fi, and
+   * finds the other phones', so it works in mount and remote mode, but records and detects nothing.
+   */
+  cameraStream?: boolean;
 };
 
 export type CaptureStatus = {

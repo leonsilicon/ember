@@ -1,6 +1,9 @@
 {
-  "platforms": ["apple"],
+  "platforms": ["apple", "android"],
   "apple": {
     "modules": ["SplatCaptureModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.splatcapture.SplatCaptureModule"]
   }
 }

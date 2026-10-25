@@ -254,7 +254,7 @@ export default function CameraScreen() {
    * The live 3D view behind the camera is loaded ahead of recording (following the newest session,
    * hidden), and shown, locked onto the recording, once one streams; so it has nothing left to load then.
    */
-  const liveReady = splat.liveStream && camera === 'back';
+  const liveReady = splat.liveStream && camera === 'back' && capabilities.arkit;
   const liveShown = recording && phase.liveServerUrl !== undefined;
   // Moving the live view stops it following the phone; the rail's Follow icon puts it back.
   const liveView = useRef<{ follow(): void }>(null);
@@ -281,7 +281,9 @@ export default function CameraScreen() {
   );
   // The web app's live mode watches this camera over the Wi-Fi while the screen is open: in mount
   // mode, or while this phone records.
-  const cameraStream = useCameraStream(capabilities.arkit && focused && (!remote || recording));
+  const cameraStream = useCameraStream(
+    (capabilities.arkit || capabilities.cameraStream === true) && focused && (!remote || recording),
+  );
   // The same boxes and tags for the web app's live view (none while detection is off).
   usePublishDetections(
     cameraStream,
@@ -344,7 +346,9 @@ export default function CameraScreen() {
     }
   }
 
-  if (!capabilities.arkit) {
+  // Without ARKit, a plain camera (Android) still works in mount and remote mode; with no camera
+  // at all (the web), there's nothing here.
+  if (!capabilities.arkit && !capabilities.cameraStream) {
     return (
       <ThemedView style={[styles.unsupported, { paddingTop: insets.top + Spacing.six }]}>
         <ThemedText type="subtitle">Capture needs an iPhone</ThemedText>
@@ -375,7 +379,7 @@ export default function CameraScreen() {
   const busy = recording || phase.kind === 'saving';
   // The rover's brain places leaves in the world, which the front camera can't. With the remote
   // out, the rover is driven by hand.
-  const roverBrain = !remote && detection && !front;
+  const roverBrain = capabilities.arkit && !remote && detection && !front;
   // Zoom and the camera flip head the rail.
   const indicators: (Indicator | RailElement)[] = [
     { key: 'zoom', element: <ZoomButton zoom={zoom} /> },
@@ -491,7 +495,13 @@ export default function CameraScreen() {
   // Everything below the camera, reaching up into its rounded corners. In remote mode it stays
   // where it is, hidden under the remote's tray.
   const liveFrame = { top: insets.top + mountViewfinderHeight - CARD_RADIUS, left: 0, right: 0, bottom: 0 };
-  const liveIdle = !splat.liveStream ? 'Off in the camera options' : front ? 'Back camera only' : 'Starts when you record';
+  const liveIdle = !capabilities.arkit
+    ? 'Recording needs an iPhone'
+    : !splat.liveStream
+      ? 'Off in the camera options'
+      : front
+        ? 'Back camera only'
+        : 'Starts when you record';
 
   // The camera's options close the rail.
   indicators.push({
@@ -510,6 +520,8 @@ export default function CameraScreen() {
       />
     ),
   });
+  // Without ARKit there's no recording, detection or tracking to show: only the zoom and the Wi-Fi camera.
+  const tools = capabilities.arkit ? indicators : indicators.filter((tool) => PLAIN_TOOLS.includes(tool.key));
 
   return (
     <View style={styles.container}>
@@ -567,7 +579,7 @@ export default function CameraScreen() {
 
       <View style={[styles.overlay, viewfinderFrame]}>
         <CameraStatus
-          indicators={remote ? [describeMount(mountCamera)] : indicators}
+          indicators={remote ? [describeMount(mountCamera)] : tools}
           hint={hint}
           caption={caption}
           onPressIndicator={(indicator) => showCaption(indicator.label)}
@@ -595,24 +607,28 @@ export default function CameraScreen() {
                 <Text style={styles.timerText}>{formatSeconds(status.elapsed)}</Text>
               </Animated.View>
             ) : (
-              <GalleryButton
-                capture={latest?.capture}
-                pop={latest?.fresh}
-                disabled={busy}
-                onPress={() => router.push('/captures')}
-              />
+              capabilities.arkit && (
+                <GalleryButton
+                  capture={latest?.capture}
+                  pop={latest?.fresh}
+                  disabled={busy}
+                  onPress={() => router.push('/captures')}
+                />
+              )
             )}
           </View>
           <RecordButton
             recording={recording}
             saving={phase.kind === 'saving'}
-            dimmed={front && !recording}
+            dimmed={(front || !capabilities.arkit) && !recording}
             onPress={
               recording
                 ? stopRecording
-                : front
-                  ? () => showCaption('Only the back camera records. Flip to record.')
-                  : startRecording
+                : !capabilities.arkit
+                  ? () => showCaption('Recording needs an iPhone: ARKit tracks where the camera is')
+                  : front
+                    ? () => showCaption('Only the back camera records. Flip to record.')
+                    : startRecording
             }
           />
           <View style={styles.side}>
@@ -696,7 +712,7 @@ function RecordButton({
 function LiveIdle({ text }: { text: string }) {
   return (
     <View style={styles.liveIdle}>
-      <SymbolView name="cube" size={24} tintColor="rgba(255,255,255,0.5)" />
+      <SymbolView name={{ ios: 'cube', android: 'deployed_code' }} size={24} tintColor="rgba(255,255,255,0.5)" />
       <Text style={styles.liveIdleTitle}>Live 3D</Text>
       <Text style={styles.liveIdleText}>{text}</Text>
     </View>
@@ -755,7 +771,7 @@ function RemoteButton({ connected, onPress }: { connected: boolean; onPress: () 
       onPress={onPress}
       style={({ pressed }) => [styles.round, pressed && styles.pressed]}>
       <Glass style={[StyleSheet.absoluteFill, styles.roundShape]} />
-      <SymbolView name="gamecontroller.fill" size={22} tintColor="#fff" />
+      <SymbolView name={{ ios: 'gamecontroller.fill', android: 'sports_esports' }} size={22} tintColor="#fff" />
       {connected && <View style={styles.connected} />}
     </Pressable>
   );
@@ -794,7 +810,7 @@ function GalleryButton({
       ) : (
         <View style={styles.thumbnail}>
           <Glass style={[StyleSheet.absoluteFill, styles.thumbnailShape]} />
-          <SymbolView name="photo.on.rectangle" size={20} tintColor="#fff" />
+          <SymbolView name={{ ios: 'photo.on.rectangle', android: 'photo_library' }} size={20} tintColor="#fff" />
         </View>
       )}
     </Pressable>
@@ -810,6 +826,8 @@ const RECORD_STOP_SIZE = 30;
 const MIN_LIVE_HEIGHT = 120;
 /** The camera card's corners, like Instagram's. */
 const CARD_RADIUS = 24;
+/** The tools a phone without ARKit (Android) has: the rest are ARKit's. */
+const PLAIN_TOOLS = ['zoom', 'wifi-camera'];
 // Eased, not sprung: springs overshoot and bounce.
 const SWAP = LinearTransition.duration(260).easing(Easing.out(Easing.cubic));
 const POP = ZoomIn.duration(250).easing(Easing.out(Easing.cubic));
@@ -947,14 +965,14 @@ const styles = StyleSheet.create({
   thumbnail: {
     width: THUMBNAIL_SIZE,
     height: THUMBNAIL_SIZE,
-    borderRadius: Spacing.two + Spacing.half,
+    borderRadius: THUMBNAIL_SIZE / 2,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#000',
   },
   thumbnailShape: {
-    borderRadius: Spacing.two + Spacing.half,
+    borderRadius: THUMBNAIL_SIZE / 2,
   },
   record: {
     width: RECORD_SIZE,

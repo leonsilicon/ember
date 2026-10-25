@@ -225,7 +225,10 @@ instead, above the remote's tray (connection, speeds, joystick). Closing the tra
 mount mode. The remote phone finds the mounted one with Bonjour (`CameraStreamBrowser`, which
 leaves out its own server by the `id` in each server's TXT record) and plays its `/camera.mjpg` in
 a web view (`src/components/mount-camera-view.tsx`). For now there's only ever one phone in mount
-mode; with more, the first found is shown. Both phones must share a network.
+mode; with more, the first found is shown. Both phones must share a network that lets devices
+reach each other (guest and public Wi-Fi often doesn't). Either phone can be an Android one: with
+no ARKit it can't record or detect, but it shows and serves its camera and finds the other's
+(`mobile/modules/splat-capture/android`), which is all either mode needs.
 
 ### Coordinates (what "where the leaf is" means)
 

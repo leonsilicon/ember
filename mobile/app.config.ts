@@ -60,6 +60,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ...identity,
     owner: 'improvelabs',
     ios: { ...config.ios, bundleIdentifier, ...signingOverride() },
+    // Android, for a second phone in mount or remote mode (no recording there: that needs ARKit).
+    android: { ...config.android, package: bundleIdentifier },
     extra: { ...config.extra, eas: { projectId: EAS_PROJECT_ID } },
   };
 };
