@@ -14,7 +14,9 @@ function describe(job: Job) {
     case 'queued':
       return 'Queued for training on the Mac…';
     case 'training':
-      return `Training ${job.step.toLocaleString()} / ${job.steps.toLocaleString()} steps${count} · ${seed}`;
+      return job.held
+        ? `On hold at ${job.step.toLocaleString()} / ${job.steps.toLocaleString()} steps while a newer capture trains${count} · ${seed}`
+        : `Training ${job.step.toLocaleString()} / ${job.steps.toLocaleString()} steps${count} · ${seed}`;
     case 'paused':
       return `Paused at ${job.step.toLocaleString()} / ${job.steps.toLocaleString()} steps${count} · ${seed}`;
     case 'failed':

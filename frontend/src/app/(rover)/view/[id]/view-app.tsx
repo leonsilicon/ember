@@ -79,6 +79,10 @@ export default function ViewApp({ id }: { id: string }) {
   }, [id]);
 
   const seed = job?.mode === 'lidar' ? 'LiDAR' : job?.mode === 'features' ? 'feature points (no LiDAR)' : '–';
+  // A capture on hold is training in name only: a newer one has the GPU until it's done.
+  const held = job?.state === 'training' && job.held === true;
+  const word = job ? (held ? 'On hold' : WORD[job.state]) : 'Loading…';
+  const tone: Tone = job ? (held ? 'warn' : TONE[job.state]) : 'off';
 
   return (
     <Shell
@@ -86,8 +90,8 @@ export default function ViewApp({ id }: { id: string }) {
       shortcuts={[]}
       status={
         <span className="hidden items-center gap-2 text-[13px] md:flex">
-          <Led tone={job ? TONE[job.state] : 'off'} blink={job?.state === 'training'} />
-          <span className="text-ink">{job ? WORD[job.state] : 'Loading…'}</span>
+          <Led tone={tone} blink={job?.state === 'training' && !held} />
+          <span className="text-ink">{word}</span>
           <span className="num text-ink-3">{id}</span>
         </span>
       }
@@ -100,11 +104,11 @@ export default function ViewApp({ id }: { id: string }) {
       }
       modules={
         <>
-          <Module id="capture" title="Capture" meta={job ? WORD[job.state].toLowerCase() : undefined}>
+          <Module id="capture" title="Capture" meta={job ? word.toLowerCase() : undefined}>
             {job ? (
               <dl>
                 <Readout label="Capture">{job.id}</Readout>
-                <Readout label="State" tone={job.state === 'failed' ? 'danger' : job.state === 'paused' ? 'warn' : undefined}>
+                <Readout label="State" tone={job.state === 'failed' ? 'danger' : job.state === 'paused' || held ? 'warn' : undefined}>
                   {job.state === 'done' ? 'trained' : progress(job)}
                 </Readout>
                 <Readout label="Steps">

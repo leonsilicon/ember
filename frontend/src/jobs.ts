@@ -27,6 +27,8 @@ export type Job = {
   focus: [number, number, number] | null;
   /** The username the phone that uploaded it was set to (its `X-Room` header; see rooms.ts); null from a phone with none. */
   room: string | null;
+  /** While training: its Brush is stopped so that a newer capture trains first, and carries on after it (agent/trainer.ts). */
+  held?: boolean;
 };
 
 /**

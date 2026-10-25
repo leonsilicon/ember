@@ -78,6 +78,12 @@ can't reach Redis (a connection the Mac's network change left half-open looks op
 instance (both would take the same work), so `vpx _dev` leaves out its agent pane while the service is online; to run
 the dev stack's agent instead, `pm2 stop soon2026-agent` and `vpx _dev --agent`, then `pm2 start soon2026-agent`.
 
+Captures train newest first. One Brush trains at a time, and a capture uploaded while another trains takes its place:
+that one's Brush is stopped (SIGSTOP, as the app's pause does) and carries on once the newer one is done, and the
+viewer and the captures list show it as *on hold* meanwhile. Up to three captures can be on hold at once; past that a
+new capture waits for the GPU, still ahead of the held ones. After a restart the agent re-queues whatever it had not
+finished, newest first (`src/agent/trainer.ts`).
+
 ## Rover control (`/control`)
 
 Drives the rover's ESP32 (`firmware/DualServoBench`, Matthew's V7 firmware, flashed) over its plain-HTTP API

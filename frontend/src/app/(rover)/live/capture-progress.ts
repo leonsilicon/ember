@@ -26,7 +26,7 @@ export function progress(job: Job, now = Date.now()) {
     case 'queued':
       return 'uploaded · waiting for the Mac';
     case 'training':
-      return `training ${steps}`;
+      return job.held ? `on hold at ${steps} while a newer capture trains` : `training ${steps}`;
     case 'paused':
       return `paused at ${steps}`;
     default:

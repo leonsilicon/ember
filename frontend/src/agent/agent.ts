@@ -176,8 +176,9 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
   }
 
   async function readQueue() {
-    // Anything queued or interrupted while the agent was away trains now.
-    for (const job of await store.list()) {
+    // Anything queued or interrupted while the agent was away trains now, newest first: list() is newest first and
+    // each enqueue goes to the front of the line, so they go in oldest first.
+    for (const job of (await store.list()).reverse()) {
       if (job.state === 'queued' || job.state === 'training') trainer.enqueue(job.id);
     }
     while (running) {

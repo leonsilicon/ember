@@ -88,7 +88,7 @@ export function CapturesModule({ current, agentOnline }: { current?: string; age
               const stuck = job.state === 'failed' || uploadExpired(job);
               return (
                 <li key={job.id}>
-                  <Row job={job} current={job.id === current} tone={stuck ? 'danger' : (TONE[job.state] ?? 'off')} blink={job.state === 'training' || job.state === 'uploading'} warn={stuck}>
+                  <Row job={job} current={job.id === current} tone={stuck ? 'danger' : job.held ? 'warn' : (TONE[job.state] ?? 'off')} blink={(job.state === 'training' && !job.held) || job.state === 'uploading'} warn={stuck}>
                     {progress(job)}
                   </Row>
                   {job.error && <pre className="num mx-1.5 mb-1 whitespace-pre-wrap text-[11px] leading-snug text-ink-3">{job.error}</pre>}

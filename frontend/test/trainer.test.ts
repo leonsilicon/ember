@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import type Redis from 'ioredis';
 
@@ -17,6 +18,7 @@ import { testPrefix } from './redis';
 const FAKE_BRUSH = path.join(import.meta.dir, 'fixtures/fake-brush.sh');
 const FAILING_BRUSH = path.join(import.meta.dir, 'fixtures/failing-brush.sh');
 const SLOW_BRUSH = path.join(import.meta.dir, 'fixtures/slow-brush.sh');
+const HELD_BRUSH = path.join(import.meta.dir, 'fixtures/held-brush.sh');
 
 const redis: Redis = connect();
 let root: string;
@@ -208,4 +210,114 @@ test('archive entries that escape the extraction dir are unsafe', () => {
   expect(isUnsafeEntry('../a.jpg')).toBe(true);
   expect(isUnsafeEntry('dataset/../../a.jpg')).toBe(true);
   expect(isUnsafeEntry('/etc/passwd')).toBe(true);
+});
+
+/** `read()` again every 100 ms until `ok` says so. */
+async function until<T>(read: () => Promise<T>, ok: (value: T) => boolean, what: string, timeoutMs = 10_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await read();
+    if (ok(value)) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(100);
+  }
+}
+
+describe('training the newest capture first', () => {
+  const FRAME = [{ file_path: 'images/frame_00000.jpg' }];
+  let finished: string;
+
+  beforeEach(() => {
+    finished = path.join(root, 'finished.txt');
+    process.env.BRUSH_LOG_FILE = finished;
+  });
+
+  /** Lets a held-brush.sh finish (unless it's stopped). */
+  const go = (t: Trainer, id: string) => writeFile(path.join(t.runDir(id), 'go'), '');
+  const atFirstSnapshot = (id: string) => until(() => store.get(id), (job) => job?.step === 100, `${id} at step 100`);
+  const plys = async (t: Trainer, id: string) => (await readdir(t.runDir(id)).catch(() => [])).filter((f) => f.endsWith('.ply'));
+  const finishOrder = async () => (await readFile(finished, 'utf8')).trim().split('\n');
+
+  test('puts the capture in progress on hold for one that arrives, and lets it carry on after', async () => {
+    await queueCapture('older', FRAME);
+    await queueCapture('newer', FRAME);
+    const t = trainer(HELD_BRUSH);
+    t.enqueue('older');
+    await atFirstSnapshot('older');
+    t.enqueue('newer');
+    await until(() => store.get('older'), (job) => job?.held === true, 'older on hold');
+    await atFirstSnapshot('newer');
+    // older's Brush is stopped: told to finish, it can't.
+    await go(t, 'older');
+    await sleep(1000);
+    expect(await plys(t, 'older')).toEqual(['splat_100.ply']);
+    expect(await store.get('older')).toMatchObject({ state: 'training', step: 100, held: true });
+    await go(t, 'newer');
+    await t.whenIdle();
+    expect(await finishOrder()).toEqual(['newer', 'older']);
+    expect(await store.get('newer')).toMatchObject({ state: 'done', step: 300, held: false });
+    expect(await store.get('older')).toMatchObject({ state: 'done', step: 300, held: false });
+    expect(await stored(blobPath.snapshot('older', 300))).toContain('element vertex 3000');
+  }, 20_000);
+
+  test('re-queued jobs train newest first too, once they have all been queued', async () => {
+    await queueCapture('older', FRAME);
+    await queueCapture('newer', FRAME);
+    const t = trainer(HELD_BRUSH);
+    // As the agent does when it starts: oldest first, each one ahead of the last.
+    t.enqueue('older');
+    t.enqueue('newer');
+    await atFirstSnapshot('newer');
+    expect(await store.get('older')).toMatchObject({ state: 'queued' });
+    await go(t, 'newer');
+    await atFirstSnapshot('older');
+    await go(t, 'older');
+    await t.whenIdle();
+    expect(await finishOrder()).toEqual(['newer', 'older']);
+  }, 20_000);
+
+  test('cancels a capture on hold without disturbing the one training', async () => {
+    await queueCapture('older', FRAME);
+    await queueCapture('newer', FRAME);
+    const t = trainer(HELD_BRUSH);
+    t.enqueue('older');
+    await atFirstSnapshot('older');
+    t.enqueue('newer');
+    await until(() => store.get('older'), (job) => job?.held === true, 'older on hold');
+    await atFirstSnapshot('newer');
+    t.cancel('older');
+    await until(() => store.get('older'), (job) => job?.state === 'cancelled', 'older cancelled');
+    expect(await readdir(t.runDir('older')).catch(() => null)).toBeNull();
+    expect(await stored(blobPath.snapshot('older', 100))).toBeNull();
+    await go(t, 'newer');
+    await t.whenIdle();
+    expect(await store.get('newer')).toMatchObject({ state: 'done', step: 300 });
+    expect(await finishOrder()).toEqual(['newer']);
+  }, 20_000);
+
+  test('a paused capture gives the GPU up, and carries on only when resumed', async () => {
+    await queueCapture('older', FRAME);
+    await queueCapture('newer', FRAME);
+    const t = trainer(HELD_BRUSH);
+    t.enqueue('older');
+    await atFirstSnapshot('older');
+    // As control/route.ts does for a training job.
+    await store.put({ ...(await store.get('older'))!, state: 'paused', pausedFrom: 'training' });
+    t.pause('older');
+    t.enqueue('newer');
+    await atFirstSnapshot('newer');
+    expect(await store.get('older')).toMatchObject({ state: 'paused', step: 100 });
+    await go(t, 'older');
+    await go(t, 'newer');
+    await until(() => store.get('newer'), (job) => job?.state === 'done', 'newer done');
+    // Nothing else is training, but a paused job stays stopped.
+    await sleep(1000);
+    expect(await plys(t, 'older')).toEqual(['splat_100.ply']);
+    expect(await store.get('older')).toMatchObject({ state: 'paused', step: 100 });
+    await store.put({ ...(await store.get('older'))!, state: 'training' });
+    t.resume('older');
+    await t.whenIdle();
+    expect(await store.get('older')).toMatchObject({ state: 'done', step: 300, held: false });
+    expect(await finishOrder()).toEqual(['newer', 'older']);
+  }, 20_000);
 });
