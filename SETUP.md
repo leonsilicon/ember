@@ -1,8 +1,8 @@
 # soon2026: setup and run guide
 
 How to run the web frontend, ship the iPhone app, and test the backend leaf
-detector against a camera. For what the project is and how the rover works,
-see [`README.md`](README.md).
+detector against a camera. For the architecture and details of how the rover works,
+see [`development.md`](development.md).
 
 ## Prerequisites
 
