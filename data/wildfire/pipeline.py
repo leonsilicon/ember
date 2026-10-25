@@ -368,6 +368,9 @@ def main():
 
     centroids = np.array([[g.centroid.x, g.centroid.y] for _, _, g in footprints]) if footprints else np.zeros((0, 2))
     zones_meta = zones.write_zones(zones.build_zones(arr, transform, nodata, drop, ndvi_on, centroids, to_wgs84, coverage_poly), out)
+    import density
+
+    density_meta = density.write_density(density.build_density(centroids, to_wgs84), out)
 
     coverage = {
         "area_name": args.area_name,
@@ -379,6 +382,7 @@ def main():
         "stats": stats,
         "tiles": {"buildings": "buildings.pmtiles"},
         "zones": zones_meta,
+        "density": density_meta,
         "leafoff": {**leafoff_meta, "classes": [{"min_drop": t, "drop_class": c} for t, c in LEAFOFF_CLASSES], "full_drop": LEAFOFF_FULL} if leafoff_meta is not None else None,
         "files": {"buildings": "buildings.json"},
         "grid": grid,

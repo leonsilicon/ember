@@ -1,0 +1,221 @@
+{
+  "area_name": "Newmarket \u00b7 Davis Drive West",
+  "bbox": [
+    -79.565,
+    44.04,
+    -79.525,
+    44.067
+  ],
+  "coverage": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          -79.525,
+          44.04
+        ],
+        [
+          -79.525,
+          44.067
+        ],
+        [
+          -79.565,
+          44.067
+        ],
+        [
+          -79.565,
+          44.04
+        ],
+        [
+          -79.525,
+          44.04
+        ]
+      ]
+    ]
+  },
+  "screening_distance_m": 30,
+  "source": {
+    "name": "Ontario MNRF \u2014 Potential Hazardous Forest Types for Wildland Fire",
+    "short": "Ontario MNRF, 2025-03-14",
+    "date": "2025-03-14",
+    "resolution_m": 30,
+    "url": "https://geohub.lio.gov.on.ca/documents/f52f092ee6744e0687ead57f78b5d88a/about",
+    "licence": "Open Government Licence \u2013 Ontario",
+    "codes_reference": "https://cwfis.cfs.nrcan.gc.ca/downloads/fuels/development/Canadian_Forest_FBP_Fuel_Types/FBPfueltypes_sample_colour_classification.xlsx"
+  },
+  "buildings_source": "Overture Maps buildings (OSM + Microsoft ML + Google + Esri), ODbL/CDLA",
+  "stats": {
+    "total": 173,
+    "hazard_overlap": 9,
+    "hazard_within_30m": 35,
+    "needs_evaluation": 0,
+    "incomplete": 10,
+    "exposure_60": 0
+  },
+  "tiles": {
+    "buildings": "buildings.pmtiles"
+  },
+  "zones": {
+    "file": "zones.geojson",
+    "count": 2,
+    "weights": {
+      "fuel": 0.6,
+      "leafoff": 0.4
+    },
+    "min_score": 0.6,
+    "min_ha": 5.0,
+    "formula": "zone cell score = 0.6 x fuel weight (Ontario fuel category) + 0.4 x leaf-off (Sentinel-2 NDVI drop / 0.35); cells >= 0.6, smoothed, >= 5 ha"
+  },
+  "leafoff": {
+    "leaf_on": {
+      "id": "S2B_MSIL2A_20260818T160819_R140_T17TPJ_20260818T195026",
+      "date": "2026-08-18",
+      "cloud_cover": 15.681915
+    },
+    "leaf_off": {
+      "id": "S2C_MSIL2A_20261022T161321_R140_T17TPJ_20261022T194504",
+      "date": "2026-10-22",
+      "cloud_cover": 4.058981
+    },
+    "source": "Copernicus Sentinel-2 L2A via Microsoft Planetary Computer",
+    "valid_fraction": 0.9762000962000962,
+    "drop_p50": 0.1764737069606781,
+    "drop_p90": 0.39294371008872986,
+    "classes": [
+      {
+        "min_drop": 0.25,
+        "drop_class": 1
+      },
+      {
+        "min_drop": 0.32,
+        "drop_class": 2
+      },
+      {
+        "min_drop": 0.4,
+        "drop_class": 3
+      }
+    ],
+    "full_drop": 0.35
+  },
+  "files": {
+    "buildings": "buildings.json"
+  },
+  "grid": {
+    "file": "fuel.bin",
+    "width": 107,
+    "height": 101,
+    "cell_m": 30,
+    "crs": "EPSG:3857",
+    "origin": [
+      -8857135.284966812,
+      5475816.44865611
+    ],
+    "res": 41.7425657368561,
+    "codes": [
+      {
+        "index": 1,
+        "code": 2,
+        "fuel": "C-2 Boreal Spruce",
+        "cat": "extreme"
+      },
+      {
+        "index": 2,
+        "code": 3,
+        "fuel": "C-3 Mature Jack/Lodgepole Pine",
+        "cat": "high"
+      },
+      {
+        "index": 3,
+        "code": 4,
+        "fuel": "C-4 Immature Jack/Lodgepole Pine",
+        "cat": "extreme"
+      },
+      {
+        "index": 4,
+        "code": 5,
+        "fuel": "C-5 Red and White Pine",
+        "cat": "pine_eval"
+      },
+      {
+        "index": 5,
+        "code": 11,
+        "fuel": "D-1 Leafless Aspen",
+        "cat": "low"
+      },
+      {
+        "index": 6,
+        "code": 13,
+        "fuel": "D-1/D-2 Aspen",
+        "cat": "low"
+      },
+      {
+        "index": 7,
+        "code": 31,
+        "fuel": "O-1a Matted Grass",
+        "cat": "not_rated"
+      },
+      {
+        "index": 8,
+        "code": 101,
+        "fuel": "Non-fuel",
+        "cat": "not_rated"
+      },
+      {
+        "index": 9,
+        "code": 102,
+        "fuel": "Water",
+        "cat": "water"
+      },
+      {
+        "index": 10,
+        "code": 625,
+        "fuel": "M-1/M-2 Mixedwood, 25% conifer",
+        "cat": "low"
+      },
+      {
+        "index": 11,
+        "code": 650,
+        "fuel": "M-1/M-2 Mixedwood, 50% conifer",
+        "cat": "moderate"
+      },
+      {
+        "index": 12,
+        "code": 675,
+        "fuel": "M-1/M-2 Mixedwood, 75% conifer",
+        "cat": "high"
+      }
+    ]
+  },
+  "risk": {
+    "weights": {
+      "fuel": 0.55,
+      "leafoff": 0.25,
+      "neighbours": 0.2
+    },
+    "neighbour_cap": 4,
+    "formula": "risk = 100 x exposure x (0.4 + 0.6 x dryness); exposure = 0.55 F + 0.25 L + 0.20 N (static, here); dryness = live CWFIS FFMC 70-95 -> 0-1 (browser)"
+  },
+  "density": {
+    "file": "density.geojson",
+    "count": 1,
+    "search_m": 150,
+    "min_homes_per_ha": 2.0,
+    "min_ha": 3.0
+  },
+  "roads": {
+    "file": "roads.geojson",
+    "count": 49,
+    "classes": [
+      "living_street",
+      "motorway",
+      "primary",
+      "residential",
+      "secondary",
+      "tertiary",
+      "track",
+      "trunk",
+      "unclassified"
+    ],
+    "source": "Overture Maps transportation segments (OSM), ODbL"
+  }
+}

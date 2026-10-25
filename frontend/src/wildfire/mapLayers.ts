@@ -10,6 +10,7 @@ export const BREAKS_SOURCE = 'wf-breaks'
 export const ZONES_SOURCE = 'wf-zones'
 export const ZONE_POINTS_SOURCE = 'wf-zone-points'
 export const DENSITY_SOURCE = 'wf-density'
+export const DENSITY_POINTS_SOURCE = 'wf-density-points'
 export const SUGGEST_SOURCE = 'wf-suggest'
 export const FLAME_IMAGE = 'wf-flame'
 export const ZONE_ORANGE = '#ff8a1f'
@@ -27,7 +28,9 @@ export const L = {
   zonesFill: 'wf-zones-fill',
   zonesLine: 'wf-zones-line',
   zonesIcon: 'wf-zones-icon',
-  densityCircle: 'wf-density-circle',
+  densityGlow: 'wf-density-glow',
+  densityFill: 'wf-density-fill',
+  densityLine: 'wf-density-line',
   densityCount: 'wf-density-count',
   suggestLine: 'wf-suggest-line',
 } as const
@@ -149,9 +152,12 @@ export function breaksLayer(): LayerSpecification {
     type: 'line',
     source: BREAKS_SOURCE,
     layout: { 'line-cap': 'round' },
-    paint: { 'line-color': '#3dcc91', 'line-width': ['interpolate', ['exponential', 2], ['zoom'], 12, 2, 18, 40], 'line-opacity': 0.75 },
+    paint: { 'line-color': ACTION_COLOR, 'line-width': ['interpolate', ['exponential', 2], ['zoom'], 12, 2, 18, 40], 'line-opacity': 0.75 },
   }
 }
+
+/** Green = fuel break / back-burn (stops the fire), red-orange = retardant (slows it). */
+export const ACTION_COLOR: ExpressionSpecification = ['match', ['get', 'kind'], 'retardant', '#ff5c5c', 'burnout', '#1fb978', '#3dcc91']
 
 export function firstSymbolLayer(layers: LayerSpecification[]): string | undefined {
   return layers.find((l) => l.type === 'symbol')?.id
@@ -229,30 +235,39 @@ export function flameImage(): ImageData | null {
   return ctx.getImageData(0, 0, 64, 64)
 }
 
-/** Building density: clusters of building centroids as blue circles sized by count. */
+export const DENSITY_BLUE = '#3d8bff'
+const DSEL = ['boolean', ['feature-state', 'selected'], false] as ExpressionSpecification
+
+/** High-density home areas: blue blobs in the same style as the fire-risk zones. Off by default. */
 export function densityLayers(): LayerSpecification[] {
   return [
     {
-      id: L.densityCircle,
-      type: 'circle',
+      id: L.densityGlow,
+      type: 'line',
+      source: DENSITY_SOURCE,
+      layout: { ...ROUND, visibility: 'none' },
+      paint: { 'line-color': DENSITY_BLUE, 'line-width': ['interpolate', ['linear'], ['zoom'], 9, 3, 15, 14], 'line-blur': ['interpolate', ['linear'], ['zoom'], 9, 3, 15, 12], 'line-opacity': 0.45 },
+    },
+    {
+      id: L.densityFill,
+      type: 'fill',
       source: DENSITY_SOURCE,
       layout: { visibility: 'none' },
-      paint: {
-        'circle-color': '#2d72d2',
-        'circle-opacity': 0.35,
-        'circle-stroke-color': '#8abbff',
-        'circle-stroke-width': 1,
-        'circle-stroke-opacity': 0.6,
-        'circle-radius': ['case', ['has', 'point_count'], ['step', ['get', 'point_count'], 12, 20, 18, 100, 26, 400, 36, 1000, 46], 3],
-      },
+      paint: { 'fill-color': DENSITY_BLUE, 'fill-opacity': ['case', DSEL, 0.45, 0.28] },
+    },
+    {
+      id: L.densityLine,
+      type: 'line',
+      source: DENSITY_SOURCE,
+      layout: { ...ROUND, visibility: 'none' },
+      paint: { 'line-color': ['case', DSEL, '#cfe3ff', DENSITY_BLUE], 'line-width': ['case', DSEL, 2.5, 1.2], 'line-opacity': 0.9 },
     },
     {
       id: L.densityCount,
       type: 'symbol',
-      source: DENSITY_SOURCE,
-      filter: ['has', 'point_count'],
-      layout: { visibility: 'none', 'text-field': ['get', 'point_count_abbreviated'], 'text-font': ['Noto Sans Regular'], 'text-size': 11 },
-      paint: { 'text-color': '#dbe9ff', 'text-halo-color': '#10161a', 'text-halo-width': 1 },
+      source: DENSITY_POINTS_SOURCE,
+      layout: { visibility: 'none', 'text-field': ['concat', ['get', 'homes'], ' homes'], 'text-font': ['Noto Sans Regular'], 'text-size': 12, 'symbol-sort-key': ['-', 0, ['get', 'homes']] },
+      paint: { 'text-color': '#e3efff', 'text-halo-color': '#10161a', 'text-halo-width': 1.4 },
     },
   ]
 }
@@ -265,7 +280,7 @@ export function suggestLayer(): LayerSpecification {
     source: SUGGEST_SOURCE,
     layout: { 'line-cap': 'round' },
     paint: {
-      'line-color': '#3dcc91',
+      'line-color': ACTION_COLOR,
       'line-width': ['interpolate', ['exponential', 2], ['zoom'], 12, 2, 18, 40],
       'line-opacity': 0.6,
       'line-dasharray': [1, 1],

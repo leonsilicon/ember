@@ -3,13 +3,13 @@ import { ArrowLeft, Cross, Flame, Lightbulb, MapMarker, Random, Shield, Tick, Tr
 import { useState, type ReactNode } from 'react'
 import { usePlaceName } from './geocode'
 import { ffmcClass, type Dryness } from './live'
-import { ZONE_ORANGE } from './mapLayers'
+import { DENSITY_BLUE, ZONE_ORANGE } from './mapLayers'
 import type { FbpInputs } from './sim/fbp'
 import { CLEARED_FACTOR } from './sim/protocol'
 import type { Suggestion } from './sim/suggest'
-import type { SimActions, SimRun, SuggestState } from './sim/useSimulation'
+import { hasAnyAction, type SimActions, type SimRun, type SuggestState } from './sim/useSimulation'
 import { fmtClock } from './format'
-import { BAND, bandOf, drynessMultiplier, riskOf, type Band, type BuildingRow, type ZoneProps } from './types'
+import { BAND, bandOf, drynessMultiplier, riskOf, type Band, type BuildingRow, type Categories, type DensityProps, type ZoneProps } from './types'
 
 // ---------------------------------------------------------------- shared bits
 
@@ -106,9 +106,36 @@ export function OverviewTab({ buildings, dryness, zones, onRandomIgnite, clickIg
 
 // ---------------------------------------------------------------- Zone
 
+/** Plain-English note per FBP fuel type (Canadian Forest Fire Behavior Prediction System), keyed by code prefix. */
+const FUEL_NOTES: [string, string][] = [
+  ['C-1', 'open spruce-lichen woodland: sparse but very dry; fire moves fast across the ground'],
+  ['C-2', 'dense black-spruce forest with low branches and mossy ground; the fastest, hottest crown fires in Ontario'],
+  ['C-3', 'mature jack or lodgepole pine: fire stays on the ground until wind pushes it into the crowns'],
+  ['C-4', 'young, crowded pine with dead lower branches: a ladder that carries fire straight into the canopy'],
+  ['C-5', 'red and white pine: thick bark and high crowns, so mostly surface fire unless it is very dry'],
+  ['C-6', 'pine plantation: evenly spaced trees whose touching crowns let fire run tree to tree'],
+  ['C-7', 'open ponderosa-type pine and grass: grass carries the fire, the trees usually survive'],
+  ['D-1', 'leafless hardwoods: the risk is the dry leaf litter on the ground, mostly in spring and fall'],
+  ['M-1', 'mixed conifer and hardwood in spring: the conifer share decides how hot it burns'],
+  ['M-2', 'mixed conifer and hardwood in summer: green leaves damp the fire, the conifers still carry it'],
+  ['M-3', 'dead balsam fir mixed in after budworm: standing dead fuel that burns intensely'],
+  ['M-4', 'dead balsam fir mixed in, green hardwoods: burns hard in spring before leaf-out'],
+  ['O-1', 'grass: fast-moving, low-intensity fire that reaches homes quickly in wind'],
+  ['S-1', 'logging slash (jack pine): heavy dead fuel on the ground that burns long and hot'],
+  ['S-2', 'logging slash (spruce / fir): heavy dead fuel on the ground that burns long and hot'],
+  ['S-3', 'logging slash (coastal conifers): heavy dead fuel on the ground'],
+]
+
+function fuelNote(fuel: string | null): string | null {
+  if (!fuel) return null
+  const hit = FUEL_NOTES.find(([k]) => fuel.startsWith(k) || fuel.includes(`/${k}`))
+  return hit ? hit[1] : null
+}
+
 interface ZoneTabProps {
   z: ZoneProps
   dryness: Dryness | null
+  categories: Categories
   onIgnite: () => void
   onBack: () => void
   simulating: boolean
@@ -116,8 +143,10 @@ interface ZoneTabProps {
 
 const pct = (v: number) => `${Math.round(v * 100)} %`
 
-export function ZoneTab({ z, dryness, onIgnite, onBack, simulating }: ZoneTabProps) {
+export function ZoneTab({ z, dryness, categories, onIgnite, onBack, simulating }: ZoneTabProps) {
   const place = usePlaceName(z.lon, z.lat)
+  const note = fuelNote(z.top_fuel)
+  const src = categories.source
   const ff = ffmcClass(dryness?.ffmc ?? null)
   const mix = z.fuel_mix
   const conifer = (mix.extreme ?? 0) + (mix.high ?? 0) + (mix.pine_eval ?? 0)
@@ -163,6 +192,11 @@ export function ZoneTab({ z, dryness, onIgnite, onBack, simulating }: ZoneTabPro
               <ProgressBar value={d.v} stripes={false} animate={false} intent={d.v > 0.5 ? 'danger' : d.v > 0.2 ? 'warning' : 'primary'} className="mt-1" />
             </div>
           ))}
+          {note && (
+            <p className="text-[11px]" style={{ color: 'var(--ops-muted)' }}>
+              <span style={{ color: 'var(--ops-text)' }}>{z.top_fuel}</span> is {note}. {pct((mix.extreme ?? 0) + (mix.high ?? 0))} of the zone is rated High or Extreme by {src.name} ({src.date}).
+            </p>
+          )}
           <div className="flex justify-between border-t pt-2 text-xs hair">
             <span className="flex items-center gap-1"><Wind size={12} />Dryness today (FFMC {dryness?.ffmc != null ? dryness.ffmc.toFixed(1) : '–'})</span>
             <span className="mono" style={{ color: ff.color }}>{ff.label}</span>
@@ -188,6 +222,40 @@ export function ZoneTab({ z, dryness, onIgnite, onBack, simulating }: ZoneTabPro
           Simulate fire here
         </Button>
       </div>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------- High-density home area
+
+export function DensityTab({ d, onBack, onShow, shown }: { d: DensityProps; onBack: () => void; onShow: () => void; shown: boolean }) {
+  const place = usePlaceName(d.lon, d.lat)
+  return (
+    <>
+      <div className="flex items-center gap-2 border-b px-2 py-2 hair">
+        <Button small minimal icon={<ArrowLeft />} onClick={onBack} />
+        <span className="label" style={{ color: DENSITY_BLUE }}>High-density home area</span>
+        <span className="ml-auto mono text-[11px]" style={{ color: 'var(--ops-muted)' }}>{d.lat.toFixed(4)}, {d.lon.toFixed(4)}</span>
+      </div>
+      <div className="scan relative border-b p-4 hair" style={{ background: `linear-gradient(180deg, ${DENSITY_BLUE}26, transparent)` }}>
+        <div className="text-base">{place ? `Near ${place}` : `Area ${d.did}`}</div>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <Stat label="Homes" value={d.homes.toLocaleString()} unit="inside" />
+          <Stat label="Area" value={`${d.area_ha.toLocaleString()}`} unit="ha" />
+          <Stat label="Density" value={d.homes_per_ha.toFixed(1)} unit="homes / ha" />
+        </div>
+      </div>
+      <Section title="Why it matters">
+        <p className="text-xs" style={{ color: 'var(--ops-muted)' }}>
+          Homes this close together pass fire to each other once one ignites, and many people need the same roads out. When a simulated fire heads this way,
+          the suggested actions put a fuel break or back-burn between the fire and this area and list it first for evacuation.
+        </p>
+      </Section>
+      {!shown && (
+        <div className="p-3">
+          <Button fill minimal intent="primary" onClick={onShow}>Show all high-density areas on the map</Button>
+        </div>
+      )}
     </>
   )
 }
@@ -307,6 +375,9 @@ interface SimProps {
   onFindSuggestions: () => void
   onApplySuggestion: (s: Suggestion) => void
   water: { share: number; side: string } | null
+  /** high-density areas in the order the fire reaches them */
+  evacuation: { item: DensityProps; minutes: number | null }[]
+  onPickDensity: (did: number) => void
 }
 
 export function SimTab(props: SimProps) {
@@ -314,7 +385,7 @@ export function SimTab(props: SimProps) {
   const ign = run ? [...run.ignitedAt.entries()].sort((a, b) => a[1] - b[1]) : []
   const ignitedNow = ign.filter(([, m]) => m <= t).length
   const saved = baseline && run && baseline !== run ? baseline.result.ignitedHomes - run.result.ignitedHomes : 0
-  const hasActions = actions.cleared.size > 0 || actions.breaks.length > 0
+  const hasActions = hasAnyAction(actions)
   const [whatIf, setWhatIf] = useState(false)
   const isLive =
     weather.ffmc === liveWeather.ffmc &&
@@ -382,6 +453,13 @@ export function SimTab(props: SimProps) {
             {drawingBreak ? 'Click two points on the map…' : 'Cut a fuel break (90 m wide)'}
             {actions.breaks.length > 0 && <Tag minimal intent="success" className="mono ml-2">{actions.breaks.length}</Tag>}
           </Button>
+          {(actions.retardant.length > 0 || actions.burnouts.length > 0 || actions.protected.size > 0) && (
+            <div className="flex flex-wrap gap-1 text-[11px]" style={{ color: 'var(--ops-muted)' }}>
+              {actions.retardant.length > 0 && <Tag minimal className="mono">retardant ×{actions.retardant.length}</Tag>}
+              {actions.burnouts.length > 0 && <Tag minimal className="mono">back-burn ×{actions.burnouts.length}</Tag>}
+              {actions.protected.size > 0 && <Tag minimal className="mono">sprinklers ×{actions.protected.size}</Tag>}
+            </div>
+          )}
           <p className="text-[11px]" style={{ color: 'var(--ops-muted)' }}>Every action re-runs the model with the same weather; "Homes saved" compares against the untouched run.</p>
         </div>
       </Section>
@@ -406,7 +484,7 @@ export function SimTab(props: SimProps) {
   )
 }
 
-function Suggestions({ run, status, suggest, onFindSuggestions, onApplySuggestion, water, byFid }: SimProps) {
+function Suggestions({ run, status, suggest, onFindSuggestions, onApplySuggestion, water, byFid, evacuation, onPickDensity }: SimProps) {
   const nothingToSave = run != null && run.result.ignitedHomes === 0
   return (
     <Section
@@ -434,6 +512,18 @@ function Suggestions({ run, status, suggest, onFindSuggestions, onApplySuggestio
         <p className="text-xs" style={{ color: 'var(--ops-muted)' }}>None of the {suggest.tested} breaks or clearings tried saves a home against this fire. Try drawing one by hand.</p>
       )}
       {suggest?.status === 'done' && suggest.items.map((s) => <SuggestionCard key={s.id} s={s} byFid={byFid} onApply={() => onApplySuggestion(s)} />)}
+      {run && evacuation.length > 0 && (
+        <div className="mt-2">
+          <div className="label">Evacuation priority · fire reaches</div>
+          {evacuation.slice(0, 4).map((e) => (
+            <button key={e.item.did} type="button" onClick={() => onPickDensity(e.item.did)} className="row-hover flex w-full items-center justify-between py-1 text-left text-xs">
+              <span><span style={{ color: DENSITY_BLUE }}>●</span> {e.item.homes.toLocaleString()} homes · {e.item.area_ha} ha</span>
+              <span className="mono" style={{ color: 'var(--ops-red)' }}>{fmtClock(e.minutes ?? 0)}</span>
+            </button>
+          ))}
+          <p className="text-[11px]" style={{ color: 'var(--ops-muted)' }}>Doesn't change the fire: the high-density areas, in the order the first home in each would ignite.</p>
+        </div>
+      )}
     </Section>
   )
 }
@@ -441,16 +531,21 @@ function Suggestions({ run, status, suggest, onFindSuggestions, onApplySuggestio
 function SuggestionCard({ s, byFid, onApply }: { s: Suggestion; byFid: Map<number, BuildingRow>; onApply: () => void }) {
   const target = s.targetFid != null ? byFid.get(s.targetFid) : undefined
   const place = usePlaceName(target?.lon, target?.lat)
-  const title =
-    s.kind === 'break' ? `Cut a 90 m fuel break, ${((s.lengthM ?? 0) / 1000).toFixed(1)} km long` : `Clear the 30 m zones of the next ${s.clear?.length ?? 0} homes`
-  const why =
-    s.kind === 'break'
-      ? `${s.distM} m ${s.side} of ${place ?? 'the first home in its path'}. The fire reaches this line at ${fmtClock(s.reachMin ?? 0)}; that home would ignite at ${fmtClock(s.homeMin)}.`
-      : `They are the first homes to ignite, from ${fmtClock(s.homeMin)}. FireSmart 0–30 m clearing.`
+  const km = ((s.lengthM ?? 0) / 1000).toFixed(1)
+  const where = `${s.distM} m ${s.side} of ${place ?? 'the first home in its path'}`
+  const timing = `The fire reaches this line at ${fmtClock(s.reachMin ?? 0)}; that home would ignite at ${fmtClock(s.homeMin)}.`
+  const text: Record<typeof s.kind, [string, string]> = {
+    break: [`Cut a 90 m fuel break, ${km} km long`, `${where}. Removes the fuel so the fire stops there. ${timing}`],
+    retardant: [`Drop a retardant line, ${km} km long`, `${where}. Slows the fire instead of stopping it, so an aircraft can lay it where crews can't cut in time. ${timing}`],
+    burnout: [`Back-burn from ${s.roadName ?? 'the road'}, ${km} km`, `${where}. Uses a road that is already there as the control line, so nothing new has to be cut; crews burn out the fuel on the fire side. ${timing}`],
+    protect: [`Sprinklers on the next ${s.clear?.length ?? 0} homes`, `They are the first homes to ignite, from ${fmtClock(s.homeMin)}. Wetting the house and the yard halves how easily it catches, without cutting any vegetation.`],
+    clear: [`Clear the 30 m zones of the next ${s.clear?.length ?? 0} homes`, `They are the first homes to ignite, from ${fmtClock(s.homeMin)}. FireSmart 0–30 m clearing removes most of the fuel around each home.`],
+  }
+  const [title, why] = text[s.kind]
   return (
     <div className="mb-2 rounded-md border p-2 hair">
       <div className="flex items-start gap-2 text-xs">
-        <span className="mt-0.5" style={{ color: '#3dcc91' }}>{s.kind === 'break' ? <Tree size={12} /> : <Shield size={12} />}</span>
+        <span className="mt-0.5" style={{ color: s.kind === 'retardant' ? '#ff5c5c' : '#3dcc91' }}>{s.kind === 'break' || s.kind === 'burnout' ? <Tree size={12} /> : s.kind === 'retardant' ? <Flame size={12} /> : <Shield size={12} />}</span>
         <span className="flex-1">{title}</span>
         <Tag minimal intent="success" className="mono shrink-0">saves {s.saved}</Tag>
       </div>

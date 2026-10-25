@@ -1,4 +1,4 @@
-import { Button, Checkbox, Spinner, Tag } from '@blueprintjs/core'
+import { Button, Checkbox, HTMLSelect, Spinner, Tag } from '@blueprintjs/core'
 import { Flame, Geolocation as Locate, Home, Layers, Satellite, Tree } from '@blueprintjs/icons'
 import {
   Map as MLMap,
@@ -20,6 +20,7 @@ import {
   BASEMAP,
   BREAKS_SOURCE,
   BUILDINGS_SOURCE,
+  DENSITY_POINTS_SOURCE,
   DENSITY_SOURCE,
   FLAME_IMAGE,
   ISO_SOURCE,
@@ -44,17 +45,17 @@ import {
   zoneIconLayer,
   zoneLayers,
 } from './mapLayers'
-import { HomeTab, OverviewTab, SimTab, ZoneTab } from './OpsPanel'
+import { DensityTab, HomeTab, OverviewTab, SimTab, ZoneTab } from './OpsPanel'
 import { SearchBar } from './SearchBar'
 import type { FbpInputs } from './sim/fbp'
 import { FireLayer } from './sim/FireLayer'
 import { cellOf, gridToLngLat } from './sim/grid'
 import { Smoke } from './sim/Smoke'
-import { waterEdge, type Suggestion } from './sim/suggest'
-import { HORIZON_MIN, ISOCHRONES, ignitionKey, lowerBound, useSimulation, type FuelBreak, type Ignition, type SimActions } from './sim/useSimulation'
+import { evacuationOrder, waterEdge, type Suggestion } from './sim/suggest'
+import { HORIZON_MIN, ISOCHRONES, NO_ACTIONS, applySuggestion as withSuggestion, ignitionKey, lowerBound, useSimulation, type FuelBreak, type Ignition, type Polyline, type SimActions } from './sim/useSimulation'
 import { Timeline } from './Timeline'
 import { bandOf, drynessMultiplier, riskOf, type BuildingRow } from './types'
-import { DATA_BASE, useWildfireData } from './useWildfireData'
+import { useAreas, useWildfireData } from './useWildfireData'
 import { WindLayer } from './WindLayer'
 
 // Under Turbopack, maplibre's own `import.meta.url` is not an http(s) URL, so its default worker URL
@@ -63,7 +64,7 @@ setWorkerUrl(new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url)
 const protocol = new Protocol()
 addProtocol('pmtiles', protocol.tile)
 
-type Tab = 'overview' | 'zone' | 'home' | 'sim'
+type Tab = 'overview' | 'zone' | 'density' | 'home' | 'sim'
 type LayerKey = 'zones' | 'homes' | 'density' | 'wind'
 /** fuel categories a fire can be started in */
 const BURNABLE = new Set(['extreme', 'high', 'pine_eval', 'moderate', 'low'])
@@ -85,7 +86,10 @@ function distM(a: { lon: number; lat: number }, b: { lon: number; lat: number })
 }
 
 export default function WildfireApp() {
-  const { data, error } = useWildfireData()
+  const areas = useAreas()
+  const [areaId, setAreaId] = useState<string | null>(null)
+  const area = areas.find((a) => a.id === areaId) ?? areas[0] ?? null
+  const { data, error } = useWildfireData(area?.base ?? null)
   const containerRef = useRef<HTMLDivElement>(null)
   const smokeCanvasRef = useRef<HTMLCanvasElement>(null)
   const mapRef = useRef<MLMap | null>(null)
@@ -96,6 +100,7 @@ export default function WildfireApp() {
   const [satellite, setSatellite] = useState(true)
   const [tab, setTab] = useState<Tab>('overview')
   const [selectedZone, setSelectedZone] = useState<number | null>(null)
+  const [selectedDensity, setSelectedDensity] = useState<number | null>(null)
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ zones: true, homes: true, density: false, wind: false })
   const [layersOpen, setLayersOpen] = useState(false)
   const windCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -118,9 +123,10 @@ export default function WildfireApp() {
   // ---- simulation state
   const buildings = useMemo(() => data?.buildings ?? [], [data])
   const byFid = useMemo(() => data?.byFid ?? new Map<number, BuildingRow>(), [data])
-  const sim = useSimulation(data?.grid ?? null, buildings)
+  const roads = useMemo(() => (data?.roads.features ?? []).map((f) => ({ line: f.geometry.coordinates as Polyline, name: f.properties.name })), [data])
+  const sim = useSimulation(data?.grid ?? null, buildings, roads)
   const [weather, setWeather] = useState<FbpInputs | null>(null)
-  const [actions, setActions] = useState<SimActions>({ cleared: new Set(), breaks: [] })
+  const [actions, setActions] = useState<SimActions>(NO_ACTIONS)
   const [drawing, setDrawing] = useState<[number, number] | null | false>(false) // false = not drawing, null = waiting for 1st point
   const drawingRef = useRef(drawing)
   drawingRef.current = drawing
@@ -156,7 +162,12 @@ export default function WildfireApp() {
     map.addControl(new NavigationControl({ showCompass: true, visualizePitch: true }), 'bottom-right')
     map.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-right')
     mapRef.current = map
-    const abs = (p: string) => new URL(`${DATA_BASE}${p}`, window.location.href).href
+    const abs = (p: string) => new URL(`${data.base}${p}`, window.location.href).href
+    setReady(false)
+    setSelected(null)
+    setSelectedZone(null)
+    setSelectedDensity(null)
+    setTab('overview')
 
     map.on('load', () => {
       const style = map.getStyle()
@@ -183,16 +194,23 @@ export default function WildfireApp() {
           })),
         },
       })
-      map.addSource(DENSITY_SOURCE, {
+      map.addSource(DENSITY_SOURCE, { type: 'geojson', data: data.density })
+      map.addSource(DENSITY_POINTS_SOURCE, {
         type: 'geojson',
-        cluster: true,
-        clusterRadius: 45,
-        clusterMaxZoom: 15,
-        data: { type: 'FeatureCollection', features: data.buildings.map((b) => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [b.lon, b.lat] } })) },
+        data: {
+          type: 'FeatureCollection',
+          features: data.density.features.map((d) => ({
+            type: 'Feature',
+            id: d.properties.did,
+            properties: { did: d.properties.did, homes: d.properties.homes },
+            geometry: { type: 'Point', coordinates: [d.properties.lon, d.properties.lat] },
+          })),
+        },
       })
       const flame = flameImage()
       if (flame) map.addImage(FLAME_IMAGE, flame, { pixelRatio: 2 })
       for (const l of zoneLayers()) map.addLayer(l, before)
+      for (const l of densityLayers()) map.addLayer(l, before)
       if (data.grid) {
         const fire = new FireLayer(data.grid)
         fireRef.current = fire
@@ -207,7 +225,6 @@ export default function WildfireApp() {
       map.addLayer(breaksLayer(), before)
       for (const l of isochroneLayers()) map.addLayer(l, before)
       for (const l of selectedLayers()) map.addLayer(l, before)
-      for (const l of densityLayers()) map.addLayer(l, before)
       map.addLayer(suggestLayer(), before)
       map.addLayer(zoneIconLayer())
       setReady(true)
@@ -217,7 +234,7 @@ export default function WildfireApp() {
     let hoverZone: number | null = null
     map.on('mousemove', (e: MapMouseEvent) => {
       if (drawingRef.current !== false || ignitingRef.current || !map.getLayer(L.zonesFill)) return
-      const hits = map.queryRenderedFeatures(e.point, { layers: [L.buildingsFill, L.zonesFill] })
+      const hits = map.queryRenderedFeatures(e.point, { layers: [L.buildingsFill, L.zonesFill, L.densityFill] })
       const zone = hits.find((f) => f.layer.id === L.zonesFill)
       const zid = zone && !hits.some((f) => f.layer.id === L.buildingsFill) ? Number(zone.id) : null
       if (zid !== hoverZone) {
@@ -279,6 +296,15 @@ export default function WildfireApp() {
     prevZone.current = selectedZone
   }, [ready, selectedZone])
 
+  const prevDensity = useRef<number | null>(null)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map) return
+    if (prevDensity.current != null) map.setFeatureState({ source: DENSITY_SOURCE, id: prevDensity.current }, { selected: false })
+    if (selectedDensity != null) map.setFeatureState({ source: DENSITY_SOURCE, id: selectedDensity }, { selected: true })
+    prevDensity.current = selectedDensity
+  }, [ready, selectedDensity])
+
   // layer toggles
   useEffect(() => {
     const map = mapRef.current
@@ -288,7 +314,7 @@ export default function WildfireApp() {
     }
     vis([L.zonesGlow, L.zonesFill, L.zonesLine, L.zonesIcon], layers.zones)
     vis([L.buildingsGlow, L.buildingsFill, L.buildingsLine], layers.homes)
-    vis([L.densityCircle, L.densityCount], layers.density)
+    vis([L.densityGlow, L.densityFill, L.densityLine, L.densityCount], layers.density)
   }, [ready, layers.zones, layers.homes, layers.density])
 
   const windField = useWindField(data?.coverage.bbox ?? null, layers.wind)
@@ -321,9 +347,13 @@ export default function WildfireApp() {
     const map = mapRef.current
     if (!ready || !map) return
     const src = map.getSource(BREAKS_SOURCE) as GeoJSONSource | undefined
-    src?.setData({ type: 'FeatureCollection', features: actions.breaks.map((b) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: b } })) })
+    const line = (coords: Polyline, kind: string) => ({ type: 'Feature' as const, properties: { kind }, geometry: { type: 'LineString' as const, coordinates: coords } })
+    src?.setData({
+      type: 'FeatureCollection',
+      features: [...actions.breaks.map((b) => line(b, 'break')), ...actions.retardant.map((b) => line(b, 'retardant')), ...actions.burnouts.map((b) => line(b, 'burnout'))],
+    })
     map.getCanvas().style.cursor = drawing !== false || igniting ? 'crosshair' : ''
-  }, [ready, actions.breaks, drawing, igniting])
+  }, [ready, actions.breaks, actions.retardant, actions.burnouts, drawing, igniting])
 
   // suggested fuel breaks for the run on screen
   const suggestNow = sim.suggest && sim.suggest.forRun === sim.run ? sim.suggest : null
@@ -333,7 +363,10 @@ export default function WildfireApp() {
     const src = map.getSource(SUGGEST_SOURCE) as GeoJSONSource | undefined
     src?.setData({
       type: 'FeatureCollection',
-      features: (suggestNow?.items ?? []).flatMap((s) => (s.brk ? [{ type: 'Feature' as const, properties: { id: s.id }, geometry: { type: 'LineString' as const, coordinates: s.brk } }] : [])),
+      features: (suggestNow?.items ?? []).flatMap((s) => {
+        const coords = s.brk ?? s.road
+        return coords ? [{ type: 'Feature' as const, properties: { id: s.id, kind: s.kind }, geometry: { type: 'LineString' as const, coordinates: coords } }] : []
+      }),
     })
   }, [ready, suggestNow])
 
@@ -564,7 +597,7 @@ export default function WildfireApp() {
       return
     }
     if (!map.getLayer(L.zonesFill)) return
-    const hits = map.queryRenderedFeatures(e.point, { layers: [L.buildingsFill, L.zonesFill] })
+    const hits = map.queryRenderedFeatures(e.point, { layers: [L.buildingsFill, L.zonesFill, L.densityFill] })
     const home = hits.find((f) => f.layer.id === L.buildingsFill)
     if (home) {
       setSelected(Number(home.id ?? home.properties.fid))
@@ -576,6 +609,12 @@ export default function WildfireApp() {
     if (zone) {
       setSelectedZone(Number(zone.id))
       setTab((cur) => (cur === 'sim' ? 'sim' : 'zone'))
+      return
+    }
+    const dens = hits.find((f) => f.layer.id === L.densityFill)
+    if (dens) {
+      setSelectedDensity(Number(dens.id))
+      setTab((cur) => (cur === 'sim' ? 'sim' : 'density'))
     }
   }
 
@@ -610,12 +649,12 @@ export default function WildfireApp() {
     setPlaying(false)
     setT(0)
     sim.reset()
-    setActions({ cleared: new Set(), breaks: [] })
+    setActions(NO_ACTIONS)
     setDrawing(false)
     setIgniting(false)
     setWeather(null)
-    setTab(selected != null ? 'home' : selectedZone != null ? 'zone' : 'overview')
-  }, [sim, selected, selectedZone])
+    setTab(selected != null ? 'home' : selectedZone != null ? 'zone' : selectedDensity != null ? 'density' : 'overview')
+  }, [sim, selected, selectedZone, selectedDensity])
 
   const clearTop = useCallback(
     (n: number) => {
@@ -630,11 +669,7 @@ export default function WildfireApp() {
     [sim.run, actions.cleared, ignitionSorted],
   )
 
-  const applySuggestion = useCallback(
-    (s: Suggestion) =>
-      setActions((a) => ({ cleared: s.clear ? new Set([...a.cleared, ...s.clear]) : a.cleared, breaks: s.brk ? [...a.breaks, s.brk] : a.breaks })),
-    [],
-  )
+  const applySuggestion = useCallback((s: Suggestion) => setActions((a) => withSuggestion(a, s)), [])
 
   const toggleCleared = useCallback((fid: number) => {
     setActions((a) => {
@@ -652,6 +687,7 @@ export default function WildfireApp() {
         else if (ignitingRef.current) setIgniting(false)
         else if (tab === 'home') { setSelected(null); setTab('overview') }
         else if (tab === 'zone') { setSelectedZone(null); setTab('overview') }
+        else if (tab === 'density') { setSelectedDensity(null); setTab('overview') }
       }
       if (e.key === ' ' && sim.run && (e.target as HTMLElement)?.tagName !== 'INPUT') { e.preventDefault(); setPlaying((p) => !p) }
     }
@@ -665,6 +701,29 @@ export default function WildfireApp() {
     if (!run || !grid) return null
     return waterEdge(run.result.arrival, grid.fuel, (i) => catByIndex[i] === 'water', grid.width, grid.height, run.ignitionCell)
   }, [sim.run, data?.grid, catByIndex])
+  // which homes sit in each high-density area, for the evacuation order
+  const densityHomes = useMemo(() => {
+    if (!data) return []
+    const inside = (lon: number, lat: number, ring: number[][]) => {
+      let c = false
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i], [xj, yj] = ring[j]
+        if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) c = !c
+      }
+      return c
+    }
+    return data.density.features.map((f) => {
+      const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates
+      const [w, sN, e, n] = polys.flat(1).flat().reduce<[number, number, number, number]>((b, [x, y]) => [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)], [Infinity, Infinity, -Infinity, -Infinity])
+      const homeIdx: number[] = []
+      data.buildings.forEach((b, i) => {
+        if (b.lon < w || b.lon > e || b.lat < sN || b.lat > n) return
+        if (polys.some((p) => inside(b.lon, b.lat, p[0]))) homeIdx.push(i)
+      })
+      return { item: f.properties, homeIdx }
+    })
+  }, [data])
+  const evacuation = useMemo(() => (sim.run ? evacuationOrder(densityHomes, sim.run.result.ignition).filter((e) => e.minutes != null) : []), [sim.run, densityHomes])
   const originPlace = usePlaceName(runIgnition?.lon, runIgnition?.lat)
   const coords = runIgnition ? `${runIgnition.lat.toFixed(4)}, ${runIgnition.lon.toFixed(4)}` : ''
   const originLabel = !runIgnition
@@ -689,6 +748,7 @@ export default function WildfireApp() {
 
   const selectedRow = selected != null ? byFid.get(selected) ?? null : null
   const zoneRow = selectedZone != null ? data?.byZid.get(selectedZone) ?? null : null
+  const densityRow = selectedDensity != null ? data?.byDid.get(selectedDensity) ?? null : null
   const ffmc = ffmcClass(dryness.data?.ffmc ?? null)
   const risks = buildings.map((b) => riskOf(b.exposure, dry))
   const critical = risks.filter((r) => bandOf(r) === 'critical').length
@@ -711,7 +771,7 @@ export default function WildfireApp() {
       )}
 
       {/* search, top left */}
-      <div className="pointer-events-none absolute top-3 left-3 w-[380px]">
+      <div className="pointer-events-none absolute top-3 left-3 z-20 w-[380px]">
         <SearchBar bias={centre} onPick={onSearchHit} />
         {searchNote && <p className="panel pointer-events-auto mt-1 px-3 py-1 text-[11px]" style={{ color: 'var(--ops-amber)' }}>{searchNote}</p>}
       </div>
@@ -722,7 +782,14 @@ export default function WildfireApp() {
           <div className="panel flex items-center gap-3 px-3 py-1.5">
             <Flame size={14} style={{ color: 'var(--ops-red)' }} />
             <span className="mono text-xs tracking-widest uppercase">Wildfire Ops</span>
-            <span className="hair hidden border-l pl-3 text-xs xl:inline" style={{ color: 'var(--ops-muted)' }}>{data?.coverage.area_name ?? '…'}</span>
+            <HTMLSelect
+              minimal
+              value={area?.id ?? ''}
+              onChange={(e) => setAreaId(e.currentTarget.value)}
+              options={areas.map((a) => ({ value: a.id, label: a.name }))}
+              className="mono text-xs"
+              aria-label="Area"
+            />
             <span className="mono hidden text-xs 2xl:inline" style={{ color: 'var(--ops-muted)' }}>{now.toISOString().slice(0, 19).replace('T', ' ')}Z</span>
           </div>
           <div className="panel flex items-center gap-2 px-3 py-1.5">
@@ -748,7 +815,7 @@ export default function WildfireApp() {
             <div className="label mb-2">Map layers</div>
             <Checkbox checked={layers.zones} onChange={() => toggleLayer('zones')} labelElement={<LayerLabel color={ZONE_ORANGE} text="High fire-risk zones" />} />
             <Checkbox checked={layers.homes} onChange={() => toggleLayer('homes')} labelElement={<LayerLabel color="#ffb366" text="Home ignition risk" />} />
-            <Checkbox checked={layers.density} onChange={() => toggleLayer('density')} labelElement={<LayerLabel color="#2d72d2" text="Building density" />} />
+            <Checkbox checked={layers.density} onChange={() => toggleLayer('density')} labelElement={<LayerLabel color="#3d8bff" text="High-density home areas" />} />
             <Checkbox checked={layers.wind} onChange={() => toggleLayer('wind')} labelElement={<LayerLabel color="#d6e8ff" text="Wind" />} />
             {layers.wind && (
               <p className="mb-2 text-[11px]" style={{ color: 'var(--ops-muted)' }}>
@@ -768,11 +835,12 @@ export default function WildfireApp() {
             [
               ['overview', 'Overview', <Layers size={12} key="o" />],
               ['zone', 'Zone', <Tree size={12} key="z" />],
-              ['home', 'Home', <Home size={12} key="h" />],
+              ['density', 'Homes', <Home size={12} key="d" />],
+              ['home', 'Home', <Locate size={12} key="h" />],
               ['sim', 'Simulation', <Flame size={12} key="s" />],
             ] as [Tab, string, ReactElement][]
           ).map(([k, label, icon]) => {
-            const disabled = (k === 'zone' && !zoneRow) || (k === 'home' && !selectedRow) || (k === 'sim' && !sim.run && sim.status !== 'running')
+            const disabled = (k === 'zone' && !zoneRow) || (k === 'density' && !densityRow) || (k === 'home' && !selectedRow) || (k === 'sim' && !sim.run && sim.status !== 'running')
             return (
               <button
                 key={k}
@@ -803,10 +871,19 @@ export default function WildfireApp() {
               disabled={!data.grid}
             />
           )}
+          {data && tab === 'density' && densityRow && (
+            <DensityTab
+              d={densityRow}
+              onBack={() => { setSelectedDensity(null); setTab('overview') }}
+              onShow={() => setLayers((l) => ({ ...l, density: true }))}
+              shown={layers.density}
+            />
+          )}
           {data && tab === 'zone' && zoneRow && (
             <ZoneTab
               z={zoneRow}
               dryness={dryness.data}
+              categories={data.categories}
               onIgnite={() => igniteAt(zoneRow.lon, zoneRow.lat, { zid: zoneRow.zid, snapCells: 10 })}
               onBack={() => { setSelectedZone(null); setTab('overview') }}
               simulating={sim.status === 'running'}
@@ -844,7 +921,7 @@ export default function WildfireApp() {
                 setDrawing((d) => (d === false ? null : false))
               }}
               onClearTop={clearTop}
-              onResetActions={() => setActions({ cleared: new Set(), breaks: [] })}
+              onResetActions={() => setActions(NO_ACTIONS)}
               onPick={pickHome}
               onExit={exitSim}
               dryness={dry}
@@ -853,6 +930,8 @@ export default function WildfireApp() {
               onFindSuggestions={() => sim.run && sim.findSuggestions(sim.run)}
               onApplySuggestion={applySuggestion}
               water={water}
+              evacuation={evacuation}
+              onPickDensity={(did) => { setSelectedDensity(did); setLayers((l) => ({ ...l, density: true })) }}
             />
           )}
         </div>

@@ -1,0 +1,6 @@
+{
+  "areas": [
+    { "id": "muskoka", "name": "Huntsville / Lake of Bays", "base": "/wildfire/" },
+    { "id": "newmarket", "name": "Newmarket · Davis Drive West", "base": "/wildfire/newmarket/" }
+  ]
+}

@@ -8,6 +8,8 @@ from `frontend/public/wildfire/`:
 | --- | --- |
 | `zones.geojson` | high fire-risk zones (`zones.py`): smoothed polygons with area, fuel mix, leaf-off share, homes inside / within 30 m / within 500 m, distance to water and an inside label point |
 | `buildings.pmtiles` | layers `buildings` (footprints with screening results) and `rings` (exact 30 m buffers, same ids) (`hazard_overlap`, `hazard_within_30m`, `needs_evaluation`, `coverage_complete`, `nearest_hazard_m`, fuel codes) |
+| `density.geojson` | high-density home areas (`density.py`): smooth blobs where ≥ 2 homes/ha within 150 m, with `homes`, `area_ha`, `homes_per_ha` and a label point |
+| `roads.geojson` | drivable roads (`roads.py`, from Overture segments) used as back-burn anchors in the suggested actions |
 | `coverage.json` | pilot bbox, source metadata, summary stats |
 | `categories.json` | copy of the shared code → category → colour config |
 

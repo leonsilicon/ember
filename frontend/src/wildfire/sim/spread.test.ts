@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { IGNITION_FLOOR, type SimRequest } from './protocol'
+import { IGNITION_FLOOR, PROTECTED_FACTOR, type SimRequest } from './protocol'
 import { run, runBatch } from './spread.worker'
 
 const W = 80, H = 80
@@ -20,6 +20,8 @@ function req(over: Partial<SimRequest> = {}): SimRequest {
     buildingExposure: Float32Array.from([IGNITION_FLOOR - 0.05, 0.6]),
     cleared: new Uint8Array(2),
     blocked: null,
+    slowed: null,
+    protect: null,
     isochroneMin: [60, 180],
     ...over,
   }
@@ -71,12 +73,31 @@ describe('spread worker', () => {
     const base = req({ buildingCell: Int32Array.from([40 * W + 60]), buildingExposure: Float32Array.from([0.8]), cleared: new Uint8Array(1) })
     const blocked = new Uint8Array(W * H)
     for (let r = 0; r < H; r++) for (let c = 50; c <= 52; c++) blocked[r * W + c] = 1
-    const b = runBatch({ type: 'batch', batchId: 7, base, variants: [{ id: 1, cleared: new Uint8Array(1), blocked: null }, { id: 2, cleared: new Uint8Array(1), blocked }] })
+    const b = runBatch({ type: 'batch', batchId: 7, base, variants: [{ id: 1, cleared: new Uint8Array(1), blocked: null, slowed: null, protect: null }, { id: 2, cleared: new Uint8Array(1), blocked, slowed: null, protect: null }] })
     expect(b.batchId).toBe(7)
     expect(b.results.map((x) => x.id)).toEqual([1, 2])
     expect(b.results[0].ignitedHomes).toBe(run(base).ignitedHomes)
     expect(b.results[0].ignitedHomes).toBe(1)
     expect(b.results[1].ignitedHomes).toBe(0)
     expect(b.results[1].burnedHa).toBeLessThan(b.results[0].burnedHa)
+  })
+
+  it('a retardant line delays the fire behind it without stopping it', () => {
+    const slowed = new Uint8Array(W * H)
+    for (let r = 0; r < H; r++) for (let c = 50; c <= 52; c++) slowed[r * W + c] = 1
+    const base = req({ weather: { ffmc: 92, windKmh: 30, windFromDeg: 270, month: 10 }, horizonMin: 100000 })
+    const a = run(base), b = run({ ...base, slowed })
+    const probe = 40 * W + 60
+    expect(isFinite(b.arrival[probe])).toBe(true)
+    expect(b.arrival[probe]).toBeGreaterThan(a.arrival[probe])
+    expect(b.arrival[40 * W + 45]).toBeCloseTo(a.arrival[40 * W + 45], 3)
+  })
+
+  it('structure protection scales exposure so a borderline home no longer ignites', () => {
+    const centre = 40 * W + 40
+    const e = IGNITION_FLOOR / PROTECTED_FACTOR - 0.01 // above the floor unprotected, below it once protected
+    const base = req({ buildingCell: Int32Array.from([centre + 3]), buildingExposure: Float32Array.from([e]), cleared: new Uint8Array(1) })
+    expect(run(base).ignitedHomes).toBe(1)
+    expect(run({ ...base, protect: Uint8Array.from([1]) }).ignitedHomes).toBe(0)
   })
 })

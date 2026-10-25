@@ -206,5 +206,28 @@
     },
     "neighbour_cap": 4,
     "formula": "risk = 100 x exposure x (0.4 + 0.6 x dryness); exposure = 0.55 F + 0.25 L + 0.20 N (static, here); dryness = live CWFIS FFMC 70-95 -> 0-1 (browser)"
+  },
+  "density": {
+    "file": "density.geojson",
+    "count": 36,
+    "search_m": 150,
+    "min_homes_per_ha": 2.0,
+    "min_ha": 3.0
+  },
+  "roads": {
+    "file": "roads.geojson",
+    "count": 1838,
+    "classes": [
+      "living_street",
+      "motorway",
+      "primary",
+      "residential",
+      "secondary",
+      "tertiary",
+      "track",
+      "trunk",
+      "unclassified"
+    ],
+    "source": "Overture Maps transportation segments (OSM), ODbL"
   }
 }

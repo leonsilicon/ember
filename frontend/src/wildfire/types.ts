@@ -1,4 +1,4 @@
-import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson'
+import type { FeatureCollection, LineString, MultiPolygon, Polygon } from 'geojson'
 
 export type CategoryKey =
   | 'extreme' | 'high' | 'moderate' | 'low' | 'pine_eval' | 'water' | 'not_rated' | 'unknown' | 'nodata'
@@ -28,6 +28,8 @@ export interface Coverage {
   stats: { total: number; hazard_overlap: number; hazard_within_30m: number; needs_evaluation: number; incomplete: number; exposure_60?: number }
   tiles: { buildings: string }
   zones?: { file: string; count: number; weights: { fuel: number; leafoff: number }; min_score: number; min_ha: number; formula: string }
+  density?: { file: string; count: number; search_m: number; min_homes_per_ha: number; min_ha: number }
+  roads?: { file: string; count: number; classes: string[]; source: string }
   files?: { buildings: string }
   grid?: {
     file: string
@@ -71,6 +73,33 @@ export interface ZoneProps {
 }
 
 export type Zones = FeatureCollection<Polygon | MultiPolygon, ZoneProps>
+
+/** One high-density home area from density.geojson (pipeline `density.py`). */
+export interface DensityProps {
+  did: number
+  area_ha: number
+  homes: number
+  homes_per_ha: number
+  lon: number
+  lat: number
+}
+
+export type DensityAreas = FeatureCollection<Polygon | MultiPolygon, DensityProps>
+
+export interface RoadProps {
+  rid: number
+  name: string | null
+  class: string
+}
+
+export type Roads = FeatureCollection<LineString, RoadProps>
+
+export interface Area {
+  id: string
+  name: string
+  /** URL prefix of this area's static files, e.g. /wildfire/newmarket/ */
+  base: string
+}
 
 /** Compact per-building rows from buildings.json (same order as `fields`). */
 export interface BuildingRow {

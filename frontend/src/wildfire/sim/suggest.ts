@@ -1,5 +1,5 @@
-import { gridToLngLat, type FuelGrid } from './grid'
-import type { FuelBreak } from './useSimulation'
+import { gridToLngLat, lngLatToGrid, type FuelGrid } from './grid'
+import type { FuelBreak, Polyline } from './useSimulation'
 
 /**
  * Mitigation search. From the no-action fire we propose a handful of actions a crew could take, then re-run
@@ -7,15 +7,23 @@ import type { FuelBreak } from './useSimulation'
  *  - a 90 m fuel break across the fire's path, a few hundred metres before it reaches the first homes it
  *    would ignite (the path is traced back from each home down the arrival-time surface), and no sooner than
  *    MIN_REACH_MIN after ignition so a crew could get there;
- *  - clearing the 30 m Home Ignition Zone of the first homes to ignite.
+ *  - the same line as a retardant drop (slows the fire instead of stopping it);
+ *  - a back-burn along an existing road that crosses the fire's path in that window;
+ *  - sprinklers / structure protection, or clearing the 30 m Home Ignition Zone, on the first homes to ignite.
  */
+
+export type ActionKind = 'break' | 'retardant' | 'burnout' | 'protect' | 'clear'
 
 export interface Candidate {
   id: number
-  kind: 'break' | 'clear'
+  kind: ActionKind
+  /** break or retardant line */
   brk?: FuelBreak
   lengthM?: number
-  /** fids whose 30 m zone gets cleared */
+  /** back-burn: the stretch of road to burn out from */
+  road?: Polyline
+  roadName?: string | null
+  /** fids whose 30 m zone gets cleared, or that get sprinklers (kind 'protect') */
   clear?: number[]
   /** home the break protects: the first to ignite behind it */
   targetFid?: number
@@ -44,6 +52,8 @@ export interface CandidateInput {
   fids: number[]
   ignitionCell: number
   cleared: Set<number>
+  /** drivable roads (lon/lat polylines) for back-burn anchors */
+  roads?: { line: Polyline; name: string | null }[]
 }
 
 const SIDES = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west']
@@ -80,6 +90,9 @@ export function traceBack(arrival: Float32Array, width: number, height: number, 
 }
 
 const BACK_CELLS = [6, 12, 20] // ~180, 360 and 600 m before the home
+const RETARDANT_BACK = 12
+const ROAD_NEAR_CELLS = 12 // a road counts as "across the path" within ~360 m of the traced point
+const BURNOUT_HALF_CELLS = 20 // ~600 m of road either side of that point
 const LENGTHS_M = [600, 1200]
 const TARGET_SPACING_CELLS = 15
 const MAX_TARGETS = 5
@@ -123,22 +136,19 @@ export function candidates(inp: CandidateInput): Candidate[] {
         const half = lengthM / 2 / grid.cellM
         const a = gridToLngLat(grid, pc + 0.5 + nc * half, pr + 0.5 + nr * half)
         const b = gridToLngLat(grid, pc + 0.5 - nc * half, pr + 0.5 - nr * half)
-        out.push({
-          id: id++,
-          kind: 'break',
-          brk: [a, b],
-          lengthM,
-          targetFid: fids[i],
-          reachMin: arrival[p],
-          homeMin: ignition[i],
-          side: compass(-dc, -dr),
-          distM: Math.round(len * grid.cellM),
-        })
+        const common = { targetFid: fids[i], reachMin: arrival[p], homeMin: ignition[i], side: compass(-dc, -dr), distM: Math.round(len * grid.cellM) }
+        out.push({ id: id++, kind: 'break', brk: [a, b], lengthM, ...common })
+        if (back === RETARDANT_BACK && lengthM === LENGTHS_M[LENGTHS_M.length - 1]) out.push({ id: id++, kind: 'retardant', brk: [a, b], lengthM, ...common })
+      }
+      if (back === RETARDANT_BACK && inp.roads?.length) {
+        const r = nearestRoadStretch(inp.roads, grid, pc, pr)
+        if (r) out.push({ id: id++, kind: 'burnout', road: r.line, roadName: r.name, lengthM: r.lengthM, targetFid: fids[i], reachMin: arrival[p], homeMin: ignition[i], side: compass(-dc, -dr), distM: Math.round(len * grid.cellM) })
       }
     }
   }
 
   const first = order.map((i) => fids[i]).filter((f) => !cleared.has(f))
+  if (first.length) out.push({ id: id++, kind: 'protect', clear: first.slice(0, 10), homeMin: ignition[order[0]] })
   for (const n of [10, 25]) {
     if (!first.length) break
     const clear = first.slice(0, n)
@@ -148,8 +158,52 @@ export function candidates(inp: CandidateInput): Candidate[] {
   return out
 }
 
-/** Best few candidates that save at least one home: one per protected home, one clearing option. */
-export function rank(cands: Candidate[], results: { id: number; ignitedHomes: number }[], ignitedNow: number, max = 3): Suggestion[] {
+/** The stretch of road (≈ ±600 m) nearest to grid point (pc, pr), if any road passes within ROAD_NEAR_CELLS. */
+export function nearestRoadStretch(roads: { line: Polyline; name: string | null }[], grid: Geo, pc: number, pr: number) {
+  let best: { line: Polyline; name: string | null; lengthM: number; d: number } | null = null
+  for (const road of roads) {
+    const pts = road.line.map(([lon, lat]) => lngLatToGrid(grid, lon, lat))
+    let bi = -1, bd = Infinity
+    pts.forEach(([c, r], i) => {
+      const d = Math.hypot(c - pc, r - pr)
+      if (d < bd) { bd = d; bi = i }
+    })
+    if (bi < 0 || bd > ROAD_NEAR_CELLS || (best && bd >= best.d)) continue
+    // walk out from the nearest vertex until ~BURNOUT_HALF_CELLS of road each way
+    const take = (dir: 1 | -1) => {
+      const outPts: [number, number][] = []
+      let acc = 0
+      for (let i = bi + dir; i >= 0 && i < pts.length && acc < BURNOUT_HALF_CELLS; i += dir) {
+        acc += Math.hypot(pts[i][0] - pts[i - dir][0], pts[i][1] - pts[i - dir][1])
+        outPts.push(road.line[i])
+      }
+      return outPts
+    }
+    const line: Polyline = [...take(-1).reverse(), road.line[bi], ...take(1)]
+    if (line.length < 2) continue
+    let lengthCells = 0
+    for (let i = 1; i < line.length; i++) {
+      const a = lngLatToGrid(grid, line[i - 1][0], line[i - 1][1]), b = lngLatToGrid(grid, line[i][0], line[i][1])
+      lengthCells += Math.hypot(a[0] - b[0], a[1] - b[1])
+    }
+    best = { line, name: road.name, lengthM: Math.round(lengthCells * grid.cellM), d: bd }
+  }
+  return best
+}
+
+/** Order of high-density areas by when the fire first reaches one of their homes; null = never within the horizon. */
+export function evacuationOrder<T>(areas: { item: T; homeIdx: number[] }[], ignition: Float32Array): { item: T; minutes: number | null }[] {
+  return areas
+    .map(({ item, homeIdx }) => {
+      let m = Infinity
+      for (const i of homeIdx) if (ignition[i] < m) m = ignition[i]
+      return { item, minutes: isFinite(m) ? m : null }
+    })
+    .sort((a, b) => (a.minutes ?? Infinity) - (b.minutes ?? Infinity))
+}
+
+/** Best few candidates that save at least one home: one per protected home and kind, one of each home-side option. */
+export function rank(cands: Candidate[], results: { id: number; ignitedHomes: number }[], ignitedNow: number, max = 5): Suggestion[] {
   const byId = new Map(results.map((r) => [r.id, r.ignitedHomes]))
   const scored: Suggestion[] = []
   for (const c of cands) {
@@ -162,7 +216,7 @@ export function rank(cands: Candidate[], results: { id: number; ignitedHomes: nu
   const seen = new Set<string>()
   const out: Suggestion[] = []
   for (const s of scored) {
-    const key = s.kind === 'break' ? `break:${s.targetFid}` : 'clear'
+    const key = s.targetFid != null ? `${s.kind}:${s.targetFid}` : s.kind
     if (seen.has(key)) continue
     seen.add(key)
     out.push(s)

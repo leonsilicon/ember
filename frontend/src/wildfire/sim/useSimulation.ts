@@ -3,18 +3,28 @@ import type { BuildingRow } from '../types'
 import type { FbpInputs } from './fbp'
 import { cellOf, lngLatToGrid, type FuelGrid } from './grid'
 import type { BatchRequest, BatchResult, SimRequest, SimResult } from './protocol'
-import { candidates, rank, type Suggestion } from './suggest'
+import { candidates, rank, type Candidate, type Suggestion } from './suggest'
 
 export const HORIZON_MIN = 12 * 60
 export const ISOCHRONES = [60, 180, 360, 720]
 
 export type FuelBreak = [[number, number], [number, number]]
+export type Polyline = [number, number][]
 
 export interface SimActions {
   /** fids whose owners cleared the 30 m Home Ignition Zone */
   cleared: Set<number>
+  /** fids with sprinklers / structure protection */
+  protected: Set<number>
   breaks: FuelBreak[]
+  /** retardant lines: fire crosses them slowly */
+  retardant: FuelBreak[]
+  /** back-burns along roads: burned-out strips the fire cannot cross */
+  burnouts: Polyline[]
 }
+
+export const NO_ACTIONS: SimActions = { cleared: new Set(), protected: new Set(), breaks: [], retardant: [], burnouts: [] }
+export const hasAnyAction = (a: SimActions) => a.cleared.size > 0 || a.protected.size > 0 || a.breaks.length > 0 || a.retardant.length > 0 || a.burnouts.length > 0
 
 /** Where a run starts: a home (its lot ignites) or any grid cell (random / clicked / a zone). */
 export type Ignition =
@@ -46,11 +56,13 @@ export function lowerBound(a: Float32Array, v: number) {
   return lo
 }
 
-/** Cells within 1 cell (≈ 90 m total width) of the segment, as a sparse blocked mask. */
-export function rasterizeBreaks(grid: FuelGrid, breaks: FuelBreak[]): Uint8Array | null {
-  if (!breaks.length) return null
+/** Cells within 1 cell (≈ 90 m total width) of each polyline segment, as a sparse mask; null when there are none. */
+export function rasterizeLines(grid: FuelGrid, lines: Polyline[]): Uint8Array | null {
+  const segs: FuelBreak[] = []
+  for (const l of lines) for (let i = 1; i < l.length; i++) segs.push([l[i - 1], l[i]])
+  if (!segs.length) return null
   const mask = new Uint8Array(grid.width * grid.height)
-  for (const [a, b] of breaks) {
+  for (const [a, b] of segs) {
     const [c0, r0] = lngLatToGrid(grid, a[0], a[1])
     const [c1, r1] = lngLatToGrid(grid, b[0], b[1])
     const steps = Math.max(1, Math.ceil(Math.hypot(c1 - c0, r1 - r0) * 2))
@@ -66,6 +78,8 @@ export function rasterizeBreaks(grid: FuelGrid, breaks: FuelBreak[]): Uint8Array
   return mask
 }
 
+export const rasterizeBreaks = (grid: FuelGrid, breaks: FuelBreak[]) => rasterizeLines(grid, breaks)
+
 export interface SuggestState {
   status: 'running' | 'done'
   /** the run the suggestions were computed against */
@@ -73,6 +87,22 @@ export interface SuggestState {
   items: Suggestion[]
   tested: number
   elapsedMs: number
+}
+
+/** The actions with one suggestion added. */
+export function applySuggestion(a: SimActions, c: Candidate): SimActions {
+  switch (c.kind) {
+    case 'break':
+      return { ...a, breaks: c.brk ? [...a.breaks, c.brk] : a.breaks }
+    case 'retardant':
+      return { ...a, retardant: c.brk ? [...a.retardant, c.brk] : a.retardant }
+    case 'burnout':
+      return { ...a, burnouts: c.road ? [...a.burnouts, c.road] : a.burnouts }
+    case 'protect':
+      return { ...a, protected: new Set([...a.protected, ...(c.clear ?? [])]) }
+    case 'clear':
+      return { ...a, cleared: new Set([...a.cleared, ...(c.clear ?? [])]) }
+  }
 }
 
 function clearedMask(buildings: BuildingRow[], cleared: Set<number>) {
@@ -83,11 +113,10 @@ function clearedMask(buildings: BuildingRow[], cleared: Set<number>) {
   return m
 }
 
-const NO_ACTIONS: SimActions = { cleared: new Set(), breaks: [] }
 const sameWeather = (a: FbpInputs, b: FbpInputs) =>
   a.ffmc === b.ffmc && a.windKmh === b.windKmh && a.windFromDeg === b.windFromDeg && a.month === b.month
 
-export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[]) {
+export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[], roads: { line: Polyline; name: string | null }[] = []) {
   const workerRef = useRef<Worker | null>(null)
   const runIdRef = useRef(0)
   const baseRunIdRef = useRef(0)
@@ -132,7 +161,9 @@ export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[]) {
         buildingCell: cells.cell,
         buildingExposure: cells.exposure,
         cleared: clearedMask(buildings, acts.cleared),
-        blocked: rasterizeBreaks(grid, acts.breaks),
+        blocked: rasterizeLines(grid, [...acts.breaks, ...acts.burnouts]),
+        slowed: rasterizeLines(grid, acts.retardant),
+        protect: acts.protected.size ? clearedMask(buildings, acts.protected) : null,
         isochroneMin,
       }
     },
@@ -162,7 +193,7 @@ export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[]) {
       if (isBase) setBaseline(r)
       if (isMain) {
         setRun(r)
-        if (!meta.actions.cleared.size && !meta.actions.breaks.length) setBaseline(r)
+        if (!hasAnyAction(meta.actions)) setBaseline(r)
         setStatus('done')
       }
     }
@@ -196,7 +227,7 @@ export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[]) {
         pendingRef.current.set(runId, { weather, ignition, ignitionCell, actions: acts })
         w.postMessage(req)
       }
-      const hasActions = actions.cleared.size > 0 || actions.breaks.length > 0
+      const hasActions = hasAnyAction(actions)
       // "Homes saved" must compare against an untouched run with the *same* weather and ignition point
       const base = baselineRef.current
       if (hasActions && (!base || ignitionKey(base.ignition) !== ignitionKey(ignition) || !sameWeather(base.weather, weather))) post(++baseRunIdRef.current, NO_ACTIONS)
@@ -219,7 +250,8 @@ export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[]) {
         buildingCell: cells.cell,
         fids: buildings.map((b) => b.fid),
         ignitionCell: r.ignitionCell,
-        cleared: r.actions.cleared,
+        cleared: new Set([...r.actions.cleared, ...r.actions.protected]),
+        roads,
       })
       const batchId = ++batchIdRef.current
       setSuggest({ status: 'running', forRun: r, items: [], tested: cands.length, elapsedMs: 0 })
@@ -241,15 +273,20 @@ export function useSimulation(grid: FuelGrid | null, buildings: BuildingRow[]) {
         type: 'batch',
         batchId,
         base,
-        variants: cands.map((c) => ({
-          id: c.id,
-          cleared: clearedMask(buildings, c.clear ? new Set([...r.actions.cleared, ...c.clear]) : r.actions.cleared),
-          blocked: rasterizeBreaks(grid, c.brk ? [...r.actions.breaks, c.brk] : r.actions.breaks),
-        })),
+        variants: cands.map((c) => {
+          const a = applySuggestion(r.actions, c)
+          return {
+            id: c.id,
+            cleared: clearedMask(buildings, a.cleared),
+            blocked: rasterizeLines(grid, [...a.breaks, ...a.burnouts]),
+            slowed: rasterizeLines(grid, a.retardant),
+            protect: a.protected.size ? clearedMask(buildings, a.protected) : null,
+          }
+        }),
       }
       w.postMessage(req)
     },
-    [grid, cells, buildings, makeRequest],
+    [grid, cells, buildings, roads, makeRequest],
   )
 
   const reset = useCallback(() => {

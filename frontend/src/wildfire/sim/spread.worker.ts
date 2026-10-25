@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import { contours } from 'd3-contour'
 import { directionalRos, headDirectionRad, headRos, isi as isiOf, lengthToBreadth } from './fbp'
-import { CLEARED_FACTOR, IGNITION_FLOOR, type BatchRequest, type BatchResult, type SimRequest, type SimResult } from './protocol'
+import { CLEARED_FACTOR, IGNITION_FLOOR, PROTECTED_FACTOR, RETARDANT_FACTOR, type BatchRequest, type BatchResult, type SimRequest, type SimResult } from './protocol'
 
 /**
  * Fire-arrival-time grid by Dijkstra over a 16-neighbour lattice (minimum travel time, the same idea as
@@ -53,6 +53,11 @@ class MinHeap {
   }
 }
 
+/** A home's exposure after its owner's actions: clearing the 30 m zone and/or structure protection. */
+function exposureOf(req: SimRequest, b: number): number {
+  return req.buildingExposure[b] * (req.cleared[b] ? CLEARED_FACTOR : 1) * (req.protect?.[b] ? PROTECTED_FACTOR : 1)
+}
+
 export function run(req: SimRequest): SimResult {
   const t0 = performance.now()
   const { width, height, fuel, codes, cellM, weather, horizonMin } = req
@@ -73,7 +78,7 @@ export function run(req: SimRequest): SimResult {
   for (let b = 0; b < req.buildingCell.length; b++) {
     const c = req.buildingCell[b]
     if (c < 0) continue
-    const e = req.buildingExposure[b] * (req.cleared[b] ? CLEARED_FACTOR : 1)
+    const e = exposureOf(req, b)
     // a home that cannot ignite (below the floor) does not carry fire to its neighbours either
     if (e >= IGNITION_FLOOR) structRos[c] = Math.max(structRos[c], 0.3 + 0.7 * e)
     if (req.cleared[b]) {
@@ -86,6 +91,7 @@ export function run(req: SimRequest): SimResult {
     }
   }
   const blocked = req.blocked
+  const slowed = req.slowed
 
   const lbForest = lengthToBreadth(weather.windKmh)
   const lbGrass = lengthToBreadth(weather.windKmh, true)
@@ -111,7 +117,8 @@ export function run(req: SimRequest): SimResult {
     if (blocked && blocked[c]) return 0
     const v = dirRos[fuel[c] * OFF.length + k] * fuelScale[c]
     const s = structRos[c] * dirStruct[k]
-    return v > s ? v : s
+    const r = v > s ? v : s
+    return slowed && slowed[c] ? r * RETARDANT_FACTOR : r
   }
 
   const arrival = new Float32Array(n).fill(Infinity)
@@ -155,7 +162,7 @@ export function run(req: SimRequest): SimResult {
   for (let b = 0; b < req.buildingCell.length; b++) {
     const c = req.buildingCell[b]
     if (c < 0) continue
-    const e = req.buildingExposure[b] * (req.cleared[b] ? CLEARED_FACTOR : 1)
+    const e = exposureOf(req, b)
     if (c !== req.ignitionCell && e < IGNITION_FLOOR) continue
     const t = arrival[c]
     if (!isFinite(t)) continue
@@ -197,7 +204,7 @@ export function run(req: SimRequest): SimResult {
 export function runBatch(req: BatchRequest): BatchResult {
   const t0 = performance.now()
   const results = req.variants.map((v) => {
-    const r = run({ ...req.base, cleared: v.cleared, blocked: v.blocked, isochroneMin: [] })
+    const r = run({ ...req.base, cleared: v.cleared, blocked: v.blocked, slowed: v.slowed, protect: v.protect, isochroneMin: [] })
     return { id: v.id, ignitedHomes: r.ignitedHomes, burnedHa: r.burnedHa }
   })
   return { type: 'batch', batchId: req.batchId, results, elapsedMs: performance.now() - t0 }
