@@ -12,6 +12,7 @@ import {
   inPile,
   inWorkArea,
   isPose,
+  liveMap,
   locateDetections,
   scanDepth,
   toRover,
@@ -192,6 +193,12 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
           const tick = brain.current.tick(now, heading.current);
           // The firmware has no scoop yet; tick.step.scoop ('up' | 'down' | 'dump') is what it would get.
           if (tick.step) drive(tick.step.left, tick.step.right);
+          // The web app's live top view follows the brain's map on the camera server (rover-brain/live-map.ts).
+          try {
+            SplatCapture.publishCameraDetections(JSON.stringify(liveMap(brain.current, heading.current, tick, now)));
+          } catch {
+            // An older native build without it, or the camera server off: nobody's watching the map.
+          }
           publish({
             corridors: tick.corridors,
             hasDepth: fresh != null,

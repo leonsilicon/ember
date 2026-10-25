@@ -8,6 +8,7 @@ export * from './autopilot';
 export * from './brain';
 export * from './geometry';
 export * from './leaf-map';
+export * from './live-map';
 export * from './obstacles';
 export * from './perceive';
 export * from './sim';

@@ -4,11 +4,13 @@ import { CapturePanel } from './components/CapturePanel'
 import { ConnectionPanel } from './components/ConnectionPanel'
 import { CONNECTION_STYLES } from './components/connectionStyles'
 import { DPad } from './components/DPad'
-import { PhoneCameraPanel } from './components/PhoneCameraPanel'
+import { LiveMapView } from './components/LiveMapView'
+import { PhoneCameraPanel, type PhoneLink } from './components/PhoneCameraPanel'
 import { DEFAULT_SCENE, ScenePanel, type SceneSource } from './components/ScenePanel'
 import { SplatViewer } from './components/SplatViewer'
 import { StopButton } from './components/StopButton'
 import { captureScene, useCaptures, viewable } from './hooks/useCaptures'
+import { useLiveMap } from './hooks/useLiveMap'
 import { usePhoneDiscovery } from './hooks/usePhoneDiscovery'
 import { useRover } from './hooks/useRover'
 import { Button, Hint, Led } from './ui/kit'
@@ -50,6 +52,9 @@ export default function App() {
     }
   }, [captures.state])
   const { snapshot, mode } = rover
+  // Live mode's stage: the brain's map from the linked phone, drawn in an instant (a splat takes ages to load).
+  const [phoneLink, setPhoneLink] = useState<PhoneLink | null>(null)
+  const liveMap = useLiveMap(mode === 'live' ? (phoneLink?.origin ?? null) : null)
   const connected = snapshot.connection === 'connected'
   const conn = CONNECTION_STYLES[snapshot.connection]
 
@@ -86,7 +91,13 @@ export default function App() {
         )
       }
       // A new key per scene: each one brings its own camera (the sample is -y up, captures +y up).
-      stage={<SplatViewer key={scene?.url ?? 'none'} source={scene?.url ?? null} label={scene?.label} format={scene?.format} camera={scene?.camera} />}
+      stage={
+        mode === 'live' ? (
+          <LiveMapView stream={liveMap} phone={phoneLink?.device ?? null} />
+        ) : (
+          <SplatViewer key={scene?.url ?? 'none'} source={scene?.url ?? null} label={scene?.label} format={scene?.format} camera={scene?.camera} />
+        )
+      }
       modules={
         <>
           <Module id="drive" title="Drive" meta={`rover: ${snapshot.drive}`}>
@@ -112,9 +123,10 @@ export default function App() {
 
           {/* The iPhone riding on the rover, in live mode or as soon as its app is found on the Wi-Fi;
               otherwise the laptop webcam stand-in. */}
-          {mode === 'live' || phones.length > 0 ? <PhoneCameraPanel phones={phones} /> : <CapturePanel />}
+          {mode === 'live' || phones.length > 0 ? <PhoneCameraPanel phones={phones} onLink={setPhoneLink} /> : <CapturePanel />}
 
-          <ScenePanel scene={scene} onChange={pickScene} captures={captures.state} onRefresh={() => void captures.refresh()} />
+          {/* Scenes are for the simulated view; live mode's stage is the rover's map. */}
+          {mode === 'simulated' && <ScenePanel scene={scene} onChange={pickScene} captures={captures.state} onRefresh={() => void captures.refresh()} />}
         </>
       }
     />

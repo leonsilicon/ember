@@ -68,7 +68,9 @@ const displayAddress = (origin: string) => origin.replace(/^https?:\/\//, '').re
  * found on the Wi-Fi (usePhoneDiscovery): the panel links up by itself with the only one, or the one used last;
  * with a choice to make (a shared Wi-Fi), it lists them to pick from. Not after the user pressed Stop.
  */
-export function PhoneCameraPanel({ phones = [] }: { phones?: readonly DiscoveredPhone[] }) {
+export type PhoneLink = { origin: string; device: string }
+
+export function PhoneCameraPanel({ phones = [], onLink }: { phones?: readonly DiscoveredPhone[]; onLink?: (link: PhoneLink | null) => void }) {
   const [address, setAddress] = useState(readSaved)
   const [lastId, setLastId] = useState(readSavedId)
   const discovered = pickPhone(phones, { id: lastId, origin: phoneCameraOrigin(address) })
@@ -197,6 +199,13 @@ export function PhoneCameraPanel({ phones = [] }: { phones?: readonly Discovered
 
   const busy = state.kind === 'checking'
   const streaming = state.kind === 'streaming'
+
+  // Tells the page which phone is linked (the live top view reads its map from the same phone).
+  const linkedDevice = state.kind === 'streaming' ? state.device : null
+  useEffect(() => {
+    onLink?.(linkedDevice && origin ? { origin, device: linkedDevice } : null)
+  }, [linkedDevice, origin, onLink])
+  useEffect(() => () => onLink?.(null), [onLink])
 
   // The leaf detector's boxes, while linked: drawn over the picture, never into captured frames.
   const [showBoxes, setShowBoxes] = useState(true)

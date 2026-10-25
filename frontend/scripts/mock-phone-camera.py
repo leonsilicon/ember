@@ -1,6 +1,7 @@
 """A stand-in for the rover app's Wi-Fi camera, for working on the web app's live mode without the iPhone.
 
-Serves the same routes as the app's CameraStreamServer, /detections included (a box on the leaf and the pile) (apps/expo-app/modules/splat-capture/ios/
+Serves the same routes as the app's CameraStreamServer, /detections included (a box on the leaf and the pile,
+and the brain's map for the live top view: a rover working the circle round a pile) (apps/expo-app/modules/splat-capture/ios/
 SplatCaptureCore/Sources/SplatCaptureCore/CameraStreamServer.swift): /camera.mjpg, /frame.jpg and /status,
 with a moving test picture at about 12 fps. Needs Pillow (`pip install pillow`).
 
@@ -52,6 +53,44 @@ def detections(t: float) -> bytes:
     return json.dumps({"t": int(time.time() * 1000), "width": WIDTH, "height": HEIGHT, "boxes": boxes}).encode() + b"\n"
 
 
+# The brain's map, as the app streams it beside the boxes (mobile/src/lib/rover-brain/live-map.ts): a
+# rover working a 6 ft circle round a pile, a binful at a time, with a few leaves about.
+PILE = (0.0, 0.0)
+MAP_LEAVES = [(1, 1.1, -0.6), (2, -0.9, 0.8), (3, 0.4, 1.4), (4, -1.3, -1.0), (5, 1.5, 0.9), (6, -0.2, -1.6)]
+
+
+def live_map(t: float) -> bytes:
+    """One map line: the rover drives out to each leaf in turn and brings it back to the pile."""
+    leg = 9.0  # seconds per leaf: out, scoop, back
+    i = int(t // leg) % len(MAP_LEAVES)
+    phase = (t % leg) / leg
+    leaf_id, lx, lz = MAP_LEAVES[i]
+    if phase < 0.45:
+        k, mode, msg = phase / 0.45, "approaching", f"To leaf #{leaf_id}"
+    elif phase < 0.55:
+        k, mode, msg = 1.0, "scooping", f"Scooping leaf #{leaf_id}"
+    else:
+        k, mode, msg = 1 - (phase - 0.55) / 0.45, "returning", "To the pile"
+    x, z = PILE[0] + lx * k, PILE[1] + lz * k
+    # Facing where it's going: towards the leaf on the way out, the pile on the way back.
+    tx, tz = (lx - x, lz - z) if mode != "returning" else (PILE[0] - x, PILE[1] - z)
+    yaw = math.degrees(math.atan2(tx, -tz)) if abs(tx) + abs(tz) > 1e-3 else 0
+    # Leaves still on the ground: the ones not reached yet this round, and this one until it's scooped.
+    leaves = [{"id": lid, "x": ax, "z": az, "state": "tentative" if lid == 6 else "confirmed"}
+              for n, (lid, ax, az) in enumerate(MAP_LEAVES) if n > i or (n == i and phase < 0.55)]
+    corridors = [{"bearingDeg": b, "clearanceM": 2.5 if abs(b + 20) > 8 else 0.9, "blocked": abs(b + 20) <= 8}
+                 for b in range(-40, 41, 8)]
+    line = {
+        "type": "map", "t": int(time.time() * 1000),
+        "rover": {"x": round(x, 2), "z": round(z, 2), "yawDeg": round(yaw)},
+        "pile": {"x": PILE[0], "z": PILE[1], "radiusM": 0.75}, "workRadiusM": 1.83,
+        "leaves": leaves, "targetId": leaf_id if mode != "returning" else None, "corridors": corridors,
+        "autopilot": {"on": True, "mode": mode, "message": msg},
+        "load": 1 if mode == "returning" else 0, "capacity": 4, "dumped": i,
+    }
+    return json.dumps(line).encode() + b"\n"
+
+
 def render(t: float, size: int | None = None) -> bytes:
     """A lawn with a leaf circling a pile, and the time, so motion and latency are easy to see. With
     `size`, a still that big (longer side), as the app sends for capturing."""
@@ -97,10 +136,15 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/detections":
             self.headers_common(200, "application/x-ndjson")
             try:
+                # Boxes about as often as the phone's detector finishes a frame, the map every steering tick.
+                tick = 0
                 while True:
-                    self.wfile.write(detections(time.time() * 1.5))
+                    if tick % 5 == 0:
+                        self.wfile.write(detections(time.time() * 1.5))
+                    self.wfile.write(live_map(time.time() - START))
                     self.wfile.flush()
-                    time.sleep(0.25)  # about as often as the phone's detector finishes a frame
+                    tick += 1
+                    time.sleep(0.2)
             except (BrokenPipeError, ConnectionResetError):
                 pass
         elif path == "/frame.jpg":
