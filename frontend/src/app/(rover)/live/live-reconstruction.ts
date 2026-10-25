@@ -1,19 +1,19 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 
 import type { LiveSession, SessionStats } from '#live/hub.ts';
 
 import type { LiveScene } from './live-scene';
-import styles from './live-viewer.module.css';
 
-const CONFIDENCE = [
+/** How many keyframes must have seen a point for it to show; the index is the setting, the text its name. */
+export const CONFIDENCE = [
   [1, 'all points'],
   [2, 'seen twice+'],
   [3, 'seen 3×+'],
 ] as const;
 
-type Connection = 'connecting' | 'open' | 'reconnecting';
+export type Connection = 'connecting' | 'open' | 'reconnecting';
 
 declare global {
   interface Window {
@@ -21,28 +21,23 @@ declare global {
     liveInteractive?: boolean;
     /** react-native-webview's channel back to the app. */
     ReactNativeWebView?: { postMessage(message: string): void };
+    /** The app's floating view locks the page onto its recording by id as it starts. */
+    __liveLock?: (id: string | null) => void;
   }
 }
 
-function describeStats(s: SessionStats) {
-  const fit = s.fitError != null ? ` · depth fit ±${(s.fitError * 100).toFixed(1)}%` : '';
-  const ms = s.fuseMs != null ? ` · ${s.fuseMs} ms/keyframe` : '';
-  const skipped = s.skipped ? `, ${s.skipped.toLocaleString()} skipped` : '';
-  return `${s.voxels.toLocaleString()} points · ${s.fused.toLocaleString()} keyframes fused${skipped}${fit}${ms}`;
-}
-
 /**
- * The live reconstruction in the browser (see live-scene.ts), fed by the server's socket. With no
- * session it follows whichever phone started streaming most recently. `embed` (the app's floating
- * view while it records) drops the page's controls and text. Embedded, the view only takes touches
- * while the app shows it fullscreen (it says so by setting `liveInteractive` and dispatching
- * `liveinteractive`); otherwise it follows the phone. The app's Follow button dispatches
- * `livefollow`, and the page posts `{ type: 'following', following }` back as that changes.
+ * The live reconstruction: the server's socket (`/live/socket`), the scene that draws it
+ * (live-scene.ts) in `container` (the element the page renders for it), and what the page shows about it. With no session it follows
+ * whichever phone started streaming most recently. `embed` is the app's floating view while it
+ * records: it only takes touches while the app shows it fullscreen (the app says so by setting
+ * `liveInteractive` and dispatching `liveinteractive`), otherwise it follows the phone; the app's
+ * Follow button dispatches `livefollow`, and the page posts `{ type: 'following', following }` back
+ * as that changes.
  */
-export function LiveViewer({ session: initial, embed }: { session: string | null; embed: boolean }) {
+export function useLiveReconstruction(container: RefObject<HTMLDivElement | null>, initial: string | null, embed: boolean) {
   /** The session asked for; null follows the newest. The app's floating view changes it (`__liveLock`). */
   const [requested, setRequested] = useState(initial);
-  const container = useRef<HTMLDivElement>(null);
   const scene = useRef<LiveScene | null>(null);
   const [connection, setConnection] = useState<Connection>('connecting');
   const [agentOnline, setAgentOnline] = useState(true);
@@ -60,10 +55,9 @@ export function LiveViewer({ session: initial, embed }: { session: string | null
   // its recording by id as soon as it starts; so when the first points arrive it's long since loaded.
   useEffect(() => {
     if (!embed) return;
-    const w = window as Window & { __liveLock?: (id: string | null) => void };
-    w.__liveLock = (id) => setRequested(id);
+    window.__liveLock = (id) => setRequested(id);
     return () => {
-      delete w.__liveLock;
+      delete window.__liveLock;
     };
   }, [embed]);
 
@@ -133,7 +127,7 @@ export function LiveViewer({ session: initial, embed }: { session: string | null
       scene.current = null;
       setReady(false);
     };
-  }, [requested]);
+  }, [container, requested]);
 
   useEffect(() => {
     if (!embed) return;
@@ -161,20 +155,15 @@ export function LiveViewer({ session: initial, embed }: { session: string | null
   }, [ready, embed, follow]);
   useEffect(() => {
     scene.current?.setMinViews(CONFIDENCE[confidence][0]);
-  }, [confidence]);
+  }, [ready, confidence]);
   useEffect(() => {
     scene.current?.setPointSize((session?.voxelSize ?? 0.02) * size);
-  }, [session, size]);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'f') setFollow((on) => !on);
-      if (event.key === 'c') setConfidence((c) => (c + 1) % CONFIDENCE.length);
-    };
-    addEventListener('keydown', onKey);
-    return () => removeEventListener('keydown', onKey);
-  }, []);
+  }, [ready, session, size]);
 
-  function download() {
+  const cycleConfidence = useCallback(() => setConfidence((c) => (c + 1) % CONFIDENCE.length), []);
+
+  /** The points shown, as a PLY file the browser downloads. */
+  const download = useCallback(() => {
     if (!scene.current || !session) return;
     const url = URL.createObjectURL(scene.current.toPly(CONFIDENCE[confidence][0]));
     const link = document.createElement('a');
@@ -182,73 +171,23 @@ export function LiveViewer({ session: initial, embed }: { session: string | null
     link.download = `${session.id}-live.ply`;
     link.click();
     URL.revokeObjectURL(url);
-  }
+  }, [session, confidence]);
 
-  const label =
-    connection === 'connecting'
-      ? 'connecting…'
-      : connection === 'reconnecting'
-        ? 'reconnecting to the server…'
-        : !agentOnline
-          ? 'the Mac agent is offline'
-          : session
-            ? `${session.id}${session.device ? ` · ${session.device}` : ''}${session.mode === 'lidar' ? ' · LiDAR' : ' · no LiDAR'}`
-            : 'no session yet';
-  const phoneOn = connection === 'open' && Boolean(stats?.phoneConnected);
-
-  return (
-    <div ref={container} className={styles.root}>
-      {!embed && (
-        <div className={styles.top}>
-          <h1>Live reconstruction</h1>
-          <span>
-            <span className={`${styles.dot} ${phoneOn ? styles.on : ''}`} />
-            {label}
-          </span>
-          <span className={styles.stats}>{stats && describeStats(stats)}</span>
-          <span className={styles.skip}>{stats?.lastSkip ? `Last skip: ${stats.lastSkip}` : ''}</span>
-        </div>
-      )}
-      {!hasPoints && (
-        <div className={`${styles.empty} ${embed ? styles.compact : ''}`}>
-          <div>
-            {!agentOnline ? (
-              <>
-                <strong>The Mac agent is offline</strong>
-                {!embed && 'Live 3D starts once it reconnects (bun run agent in frontend).'}
-              </>
-            ) : embed ? (
-              <>
-                <strong>Live 3D</strong>
-                {stats && !stats.fused && stats.lastSkip ? stats.lastSkip : 'Waiting for the first keyframe…'}
-              </>
-            ) : (
-              <>
-                <strong>Waiting for the phone</strong>In the app, turn on Live 3D, then start recording.
-                <br />
-                Points appear here as you move the phone around.
-              </>
-            )}
-          </div>
-        </div>
-      )}
-      {!embed && (
-        <div className={styles.bottom}>
-          <button className={styles.button} aria-pressed={follow} title="F" onClick={() => setFollow(!follow)}>
-            Follow phone
-          </button>
-          <button className={styles.button} title="C" onClick={() => setConfidence((confidence + 1) % CONFIDENCE.length)}>
-            Show: {CONFIDENCE[confidence][1]}
-          </button>
-          <label className={styles.control}>
-            Size{' '}
-            <input type="range" min="0.4" max="3" step="0.1" value={size} onChange={(e) => setSize(Number(e.target.value))} />
-          </label>
-          <button className={styles.button} disabled={!session || !hasPoints} onClick={download}>
-            Download PLY
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  return {
+    connection,
+    agentOnline,
+    session,
+    stats,
+    hasPoints,
+    /** The phone is streaming into this session right now. */
+    phoneOn: connection === 'open' && Boolean(stats?.phoneConnected),
+    follow,
+    setFollow,
+    confidence,
+    setConfidence,
+    cycleConfidence,
+    size,
+    setSize,
+    download,
+  };
 }

@@ -1,6 +1,6 @@
-# Design: Ember rover pages (`/control`, `/sim`)
+# Design: Ember pages (`/control`, `/sim`, `/live`, `/view/[id]`)
 
-The world is a **field instrument**: one warm-grey enclosure, off-white module faces separated by gaps (the logo's firebreak), and a single ember orange that means *live* or *the primary action*, nothing else. The wildfire map (`/wildfire`) keeps its own Blueprint console and is not covered here.
+The world is a **field instrument**: one warm-grey enclosure, off-white module faces separated by gaps (the logo's firebreak), and a single ember orange that means *live* or *the primary action*, nothing else. The wildfire map (`/wildfire`) keeps its own Blueprint console under the shared top bar, and is otherwise not covered here.
 
 ## Tokens
 
@@ -27,7 +27,7 @@ Geist for UI, Geist Mono (`.num`) only for measurements, times, addresses and co
 
 ## Components (`src/rover/ui/`)
 
-- `Shell.tsx`: top bar (mark, pages, live status, page actions, panels/shortcuts/theme), banner slot, stage, rail, dock, shortcuts dialog. Global keys: `\` panels, `?` shortcuts.
+- `Shell.tsx`: `TopBar` (mark, pages, live status, page actions, panels/shortcuts/theme, who's signed in and Sign out; `account.tsx` carries the login down from the root layout), then the banner slot, stage, rail, dock and shortcuts dialog. A page without a rail (the wildfire console) uses `TopBar` alone. Global keys: `\` panels, `?` shortcuts.
 - `layout.tsx`: `Module` (collapse to header; dock to the edge tab strip; stays mounted while docked), `Rail` (resizable 300–560px by drag or arrow keys, double-click resets), `Dock`. State persists per page in `localStorage` (`ember.layout/<page>`). Below 1024px modules stack under the stage and docking is off.
 - `kit.tsx`: `Button` (primary / secondary / ghost / danger), `IconButton`, `Segmented`, `Led` (square lamp, always beside a word), `Meter` (segmented cells), `Readout`, `Field`, `Hint`, `Kbd`, `INPUT`, icon set (lucide geometry, 1.75 stroke).
 
@@ -39,6 +39,8 @@ The stage owns the screen. Floating overlays on it (status readout top-left, cam
 
 - `/control`, live mode: `LiveMapView`, the rover brain's map streamed from the phone (rover-brain `live-map.ts`, map lines on the camera server's `/detections`), drawn like the sim's top view on the `--map-*` tokens; the rover's pose eases between the 5 Hz updates. Simulated mode: the splat viewer (captures or the sample).
 - `/sim`: the 3D yard, with the top view as a rail module.
+- `/live`: the phone's recording rebuilt on the Mac as it streams (`app/(rover)/live/live-scene.ts`), its readout top-left. The rail has the session's readouts, the view's controls (follow the phone `F`, confidence `C`, point size, PLY download) and the Captures module, which the recording joins once it stops. The app's own view of the same reconstruction (`?embed`) is the scene alone.
+- `/view/[id]`: a capture's newest splat snapshot (`splat-scene.ts`, reloaded as training goes), with the capture's readouts and the other captures beside it. Live 3D stays lit in the top bar, since that is where it is reached from.
 
 ## Rules
 

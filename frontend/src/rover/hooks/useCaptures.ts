@@ -10,7 +10,7 @@ export type CapturesState =
 export const viewable = (job: Job) => job.step > 0 && job.state !== 'cancelled'
 
 /**
- * The splat captures the phone uploaded and the Mac trained (the Live 3D tab's list), from the same API:
+ * The splat captures the phone uploaded and the Mac trained (the Live 3D page's Captures module), from the same API:
  * `GET /api/captures`, signed in by the page's session cookie. Newest first.
  */
 export function useCaptures() {

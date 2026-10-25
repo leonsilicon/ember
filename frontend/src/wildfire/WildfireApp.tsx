@@ -13,7 +13,8 @@ import {
 } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Protocol } from 'pmtiles'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { TopBar } from '../rover/ui/Shell'
 import type { GeocodeHit } from './geocode'
 import { drynessFactor, ffmcClass, useDryness, useImageryInfo, useWind } from './live'
 import {
@@ -443,12 +444,14 @@ export default function WildfireApp() {
   // ---- render
   if (error)
     return (
-      <div className="ops bp6-dark grid h-full place-items-center">
+      <Frame>
+        <div className="ops bp6-dark grid min-h-0 flex-1 place-items-center">
         <div className="panel max-w-sm p-5">
           <div className="label">Data unavailable</div>
           <p className="mt-2 text-sm">Couldn't load the pilot dataset ({error}). Run <code>data/wildfire/pipeline.py</code> to generate it.</p>
         </div>
       </div>
+      </Frame>
     )
 
   const selectedRow = selected != null ? byFid.get(selected) ?? null : null
@@ -459,7 +462,8 @@ export default function WildfireApp() {
   const burnedHaNow = sim.run && data?.grid ? (lowerBound(sim.run.times, t + 1e-6) * data.grid.cellM ** 2) / 10_000 : 0
 
   return (
-    <div className={`ops bp6-dark relative h-full w-full overflow-hidden ${sim.run ? 'sim-on' : ''}`}>
+    <Frame>
+    <div className={`ops bp6-dark relative min-h-0 w-full flex-1 overflow-hidden ${sim.run ? 'sim-on' : ''}`}>
       <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
       <canvas ref={smokeCanvasRef} className="pointer-events-none absolute inset-0" />
       {!ready && (
@@ -600,6 +604,19 @@ export default function WildfireApp() {
           <Tag large intent="success" className="mono">{drawing === null ? 'Click the start of the fuel break' : 'Click the end of the fuel break · Esc to cancel'}</Tag>
         </div>
       )}
+    </div>
+    </Frame>
+  )
+}
+
+/** The console under the shared top bar (PRODUCT.md): it keeps its own dark look, so no theme toggle. */
+function Frame({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex h-full flex-col">
+      <div className="ember">
+        <TopBar page="/wildfire" themeToggle={false} />
+      </div>
+      {children}
     </div>
   )
 }

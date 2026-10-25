@@ -41,3 +41,10 @@ export function describe(job: Job) {
   const time = job.trainSeconds != null ? ` · trained in ${Math.round(job.trainSeconds)} s` : '';
   return `${gaussians}${job.frames} frames · ${seed}, ${job.seedPoints.toLocaleString()} pts${time}`;
 }
+
+/** A time as the captures list shows it: "Oct 25, 3:14 PM". */
+export function when(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}

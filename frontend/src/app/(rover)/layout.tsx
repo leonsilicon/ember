@@ -1,6 +1,9 @@
 import { Geist, Geist_Mono } from 'next/font/google';
 import Script from 'next/script';
 
+import { AccountProvider } from '#rover/ui/account.tsx';
+import { currentLogin } from '#web/auth.ts';
+
 import './rover.css';
 
 export const metadata = { icons: '/favicon.svg' };
@@ -12,11 +15,14 @@ const mono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' });
 const THEME_SCRIPT = `try{var t=localStorage.getItem('ember.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}`;
 
 /**
- * The laptop pages' root layout (rover control, the autopilot simulator, the wildfire map): full-height
- * and styled with Tailwind on the Ember tokens in rover.css. It's a root layout of its own, beside the
- * splat pages' (`../(splat)/layout.tsx`), so Tailwind's base styles never reach those pages.
+ * The signed-in pages' root layout (rover control, the autopilot simulator, the wildfire map, Live 3D
+ * and the splat viewer): full-height and styled with Tailwind on the Ember tokens in rover.css. It's a
+ * root layout of its own, beside the landing page's (`../(splat)/layout.tsx`), so Tailwind's base
+ * styles never reach that page. The top bar's account control (rover/ui/Shell.tsx) gets who's signed
+ * in from here.
  */
-export default function RoverLayout({ children }: { children: React.ReactNode }) {
+export default async function RoverLayout({ children }: { children: React.ReactNode }) {
+  const who = await currentLogin();
   return (
     <html lang="en" className={`h-full ${sans.variable} ${mono.variable}`} suppressHydrationWarning>
       <body className="h-full">
@@ -31,7 +37,7 @@ export default function RoverLayout({ children }: { children: React.ReactNode })
           FORM: field instrument, candidate 3 of 7; seed e116cec7.
           FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
         */}
-        {children}
+        <AccountProvider who={who}>{children}</AccountProvider>
       </body>
     </html>
   );

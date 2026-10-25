@@ -6,7 +6,7 @@ import styles from './landing.module.css';
 import { LoginForm } from './login-form';
 
 export const metadata = {
-  title: 'soon2026',
+  title: 'Ember',
   description: 'An autonomous rover that clears the dry leaves that feed wildfires, with its yard rebuilt live in 3D.',
 };
 
@@ -21,7 +21,7 @@ export default async function LandingPage({
   return (
     <main className={styles.page}>
       <section>
-        <p className={styles.eyebrow}>soon2026</p>
+        <p className={styles.eyebrow}>Ember</p>
         <h1 className={styles.title}>A rover that clears the leaves that feed wildfires.</h1>
         <p className={styles.lead}>
           It finds dry leaves and pine needles on the ground and collects them, breaking up the fuel that lets a small

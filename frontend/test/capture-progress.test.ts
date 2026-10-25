@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { ago, progress, uploadExpired } from '../src/app/(splat)/live/capture-progress';
+import { ago, progress, uploadExpired } from '../src/app/(rover)/live/capture-progress';
 import { newJob, UPLOAD_WINDOW_MS } from '../src/jobs';
 
 const now = Date.parse('2026-10-25T05:00:00Z');

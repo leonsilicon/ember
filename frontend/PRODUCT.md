@@ -18,6 +18,7 @@ The web app's rover pages are:
 
 - `/sim`: the autopilot simulator. The rover's real brain (`rover-brain`, the same code the phone runs) clears a work circle round a pile on a virtual lawn, shown in 3D and as a top-down map.
 - `/control`: the laptop remote. Drive (D-pad / WASD, stop), run the arm sequence, connect to the rover over WebSocket (or a simulated client), view a Gaussian splat scene, and capture frames from the rover's iPhone or the laptop webcam.
+- `/live` and `/view/[id]`: Live 3D, the phone's recording rebuilt on the Mac as it streams, and the Gaussian splats the recordings are trained into, with the list of captures beside them.
 
 Success: the team can operate confidently, and a first-time viewer understands what the rover is doing within seconds.
 

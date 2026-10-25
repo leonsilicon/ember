@@ -1,5 +1,9 @@
+'use client'
+
 import Link from 'next/link'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { logout } from '#app/(splat)/actions.ts'
+import { useAccount } from './account'
 import { Dock, LayoutProvider, Rail, useLayout } from './layout'
 import { IconButton, Icons, Kbd } from './kit'
 import { useTheme } from './theme'
@@ -42,6 +46,79 @@ export function EmberMark({ size = 20 }: { size?: number }) {
 }
 
 /**
+ * The top bar every signed-in page shares: the mark, the pages, the page's live status and actions,
+ * then the instrument buttons (a Shell adds its panels and shortcuts buttons as `tools`), the theme
+ * toggle, who's signed in and Sign out. `themeToggle` is off for a page the theme doesn't reach
+ * (the wildfire console keeps its own dark look).
+ */
+export function TopBar({
+  page,
+  status,
+  actions,
+  tools,
+  themeToggle = true,
+}: {
+  page: Page
+  /** Live status in the top bar (connection, mode, clock). */
+  status?: ReactNode
+  /** Page-level controls at the end of the top bar (e.g. a stop button). */
+  actions?: ReactNode
+  tools?: ReactNode
+  themeToggle?: boolean
+}) {
+  const theme = useTheme()
+  const who = useAccount()
+  const themeIcon = theme.choice === 'dark' ? <Icons.moon /> : theme.choice === 'light' ? <Icons.sun /> : <Icons.monitor />
+
+  return (
+    <header className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 pt-2.5 pb-2 lg:flex-nowrap lg:px-4">
+      <Link href="/control" className="flex items-center gap-2.5 rounded-md py-1 pr-1" aria-label="Ember, rover control">
+        <EmberMark />
+        <span className="hidden text-[13px] font-medium tracking-[0.28em] text-ink sm:inline" style={{ fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif" }}>
+          EMBER
+        </span>
+      </Link>
+
+      <nav aria-label="Pages" className="order-last -mx-1 flex w-full gap-0.5 overflow-x-auto px-1 [scrollbar-width:none] lg:order-none lg:mx-0 lg:w-auto lg:px-0">
+        {PAGES.map((p) => (
+          <Link
+            key={p.href}
+            href={p.href}
+            aria-current={page === p.href ? 'page' : undefined}
+            className={`relative rounded-md px-2.5 py-1.5 text-[13px] font-medium whitespace-nowrap transition-colors ${
+              page === p.href ? 'text-ink' : 'text-ink-2 hover:bg-panel hover:text-ink'
+            }`}
+          >
+            {p.label}
+            {page === p.href && <span aria-hidden className="absolute inset-x-2.5 -bottom-[3px] h-[2px] rounded-full bg-ember" />}
+          </Link>
+        ))}
+      </nav>
+
+      <div className="ml-auto flex min-w-0 items-center gap-3">
+        {status}
+        {actions}
+        <div className="flex items-center gap-0.5 border-l border-line pl-2">
+          {tools}
+          {themeToggle && (
+            <IconButton label={`Theme: ${theme.choice}. Switch theme`} onClick={theme.cycle}>
+              {themeIcon}
+            </IconButton>
+          )}
+          {/* The demo account's session (or the access token's cookie): clearing it goes back to the landing page. */}
+          <form action={logout} className="flex items-center gap-1 pl-0.5" title={who ? `Signed in as ${who}` : undefined}>
+            {who && <span className="num hidden max-w-[18ch] truncate text-xs text-ink-3 xl:inline">{who}</span>}
+            <IconButton label="Sign out" type="submit">
+              <Icons.logOut />
+            </IconButton>
+          </form>
+        </div>
+      </div>
+    </header>
+  )
+}
+
+/**
  * Every rover page's frame: the top bar (mark, pages, live status, panel/shortcut/theme buttons), the
  * stage that fills the screen, and the rail of modules with its edge dock.
  */
@@ -76,7 +153,6 @@ export function Shell({
 
 function ShellFrame({ page, status, actions, banner, stage, modules, railFooter, shortcuts }: Parameters<typeof Shell>[0]) {
   const layout = useLayout()
-  const theme = useTheme()
   const dialog = useRef<HTMLDialogElement>(null)
   const all: Shortcut[] = [...shortcuts, { keys: ['\\'], label: 'Show or hide the panels' }, { keys: ['?'], label: 'This list' }]
 
@@ -96,38 +172,14 @@ function ShellFrame({ page, status, actions, banner, stage, modules, railFooter,
     return () => window.removeEventListener('keydown', onKey)
   }, [layout])
 
-  const themeIcon = theme.choice === 'dark' ? <Icons.moon /> : theme.choice === 'light' ? <Icons.sun /> : <Icons.monitor />
-
   return (
     <div className="ember flex min-h-full flex-col lg:h-full">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 pt-2.5 pb-2 lg:flex-nowrap lg:px-4">
-        <Link href="/control" className="flex items-center gap-2.5 rounded-md py-1 pr-1" aria-label="Ember, rover control">
-          <EmberMark />
-          <span className="hidden text-[13px] font-medium tracking-[0.28em] text-ink sm:inline" style={{ fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif" }}>
-            EMBER
-          </span>
-        </Link>
-
-        <nav aria-label="Pages" className="order-last -mx-1 flex w-full gap-0.5 overflow-x-auto px-1 [scrollbar-width:none] lg:order-none lg:mx-0 lg:w-auto lg:px-0">
-          {PAGES.map((p) => (
-            <Link
-              key={p.href}
-              href={p.href}
-              aria-current={page === p.href ? 'page' : undefined}
-              className={`relative rounded-md px-2.5 py-1.5 text-[13px] font-medium whitespace-nowrap transition-colors ${
-                page === p.href ? 'text-ink' : 'text-ink-2 hover:bg-panel hover:text-ink'
-              }`}
-            >
-              {p.label}
-              {page === p.href && <span aria-hidden className="absolute inset-x-2.5 -bottom-[3px] h-[2px] rounded-full bg-ember" />}
-            </Link>
-          ))}
-        </nav>
-
-        <div className="ml-auto flex min-w-0 items-center gap-3">
-          {status}
-          {actions}
-          <div className="flex items-center gap-0.5 border-l border-line pl-2">
+      <TopBar
+        page={page}
+        status={status}
+        actions={actions}
+        tools={
+          <>
             {layout.wide && (
               <IconButton label={layout.rail ? 'Hide panels (\\)' : 'Show panels (\\)'} pressed={layout.rail} onClick={() => layout.setRail(!layout.rail)}>
                 <Icons.panel />
@@ -136,12 +188,9 @@ function ShellFrame({ page, status, actions, banner, stage, modules, railFooter,
             <IconButton label="Keyboard shortcuts (?)" onClick={() => dialog.current?.showModal()} className="hidden sm:grid">
               <Icons.keyboard />
             </IconButton>
-            <IconButton label={`Theme: ${theme.choice}. Switch theme`} onClick={theme.cycle}>
-              {themeIcon}
-            </IconButton>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {banner}
 
