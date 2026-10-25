@@ -12,7 +12,7 @@ Stages (all CPU-capable, no CUDA needed):
 2. **OpenSplat** — trains the Gaussian splat from the COLMAP project (Metal on Apple Silicon, CPU elsewhere).
 3. Writes `scene.splat`. Open it in the web app (Scene panel → Load URL `/splats/scene.splat`, or "Open .splat").
 
-Options: `--iters N` (default 2000; 300 is a fast smoke test, 7000+ looks good), `--downscale 2`, `--out <dir>` (project folder, default `<images>/../recon`), `--matcher sequential|exhaustive` (auto: sequential for 30+ frames in capture order — much faster for a 1 fps stream; exhaustive for small unordered sets), `--skip-colmap` to re-train with different settings.
+Options: `--iters N` (default 4000; 300 is a fast smoke test, 7000+ looks good), `--downscale 2`, `--out <dir>` (project folder, default `<images>/../recon`), `--matcher sequential|exhaustive` (auto: sequential for 30+ frames in capture order — much faster for a 1 fps stream; exhaustive for small unordered sets), `--skip-colmap` to re-train with different settings.
 
 ## Install on macOS (Apple Silicon)
 
@@ -50,5 +50,5 @@ cmake -DGPU_RUNTIME=CPU -DCMAKE_PREFIX_PATH=$PWD/../../libtorch -DCMAKE_BUILD_TY
 
 ## Timing
 
-CPU-only VM (8 cores), 16 images of a banana at 1/2 resolution: COLMAP ~30 s, OpenSplat 300 iters ~2 min (2000 iters ≈ 15 min).
+CPU-only VM (8 cores), 16 images of a banana at 1/2 resolution: COLMAP ~30 s, OpenSplat 300 iters ~2 min. 39 iPhone photos of a desk scene: COLMAP 38 s, 3000 iters ~18 min → ~39k Gaussians. The script forces a dense refinement schedule (`--refine-every 100 --densify-until 0.8*iters`); OpenSplat's defaults barely densify below ~5000 iterations and give a blurry result.
 Apple Silicon with Metal is several times faster for the OpenSplat stage.

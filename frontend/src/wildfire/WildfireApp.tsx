@@ -1,82 +1,57 @@
-import type { Geometry } from 'geojson'
+import { Button, Spinner, Tag } from '@blueprintjs/core'
+import { Flame, Geolocation as Locate, Home, Layers } from '@blueprintjs/icons'
 import {
   Map as MLMap,
-  Marker,
   NavigationControl,
   ScaleControl,
   addProtocol,
+  setWorkerUrl,
   type GeoJSONSource,
   type LngLatBoundsLike,
-  type MapGeoJSONFeature,
   type MapLayerMouseEvent,
+  type MapMouseEvent,
 } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Protocol } from 'pmtiles'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BuildingPanel } from './BuildingPanel'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { GeocodeHit } from './geocode'
-import { LayerControls, type Basemap } from './LayerControls'
-import { drynessFactor, fdrLabel, ffmcClass, useDryness, useImageryInfo } from './live'
+import { drynessFactor, ffmcClass, useDryness, useImageryInfo, useWind } from './live'
 import {
   BASEMAP,
+  BREAKS_SOURCE,
   BUILDINGS_SOURCE,
-  DRYNESS_SOURCE,
-  HAZARD_SOURCE,
+  ISO_SOURCE,
   L,
-  LEAFOFF_SOURCE,
   NO_SELECTION,
   SATELLITE_SOURCE,
-  SELECTED_SOURCE,
-  basemapLayerIds,
+  breaksLayer,
   buildingLayers,
-  drynessLayer,
-  drynessSource,
   firstSymbolLayer,
-  hazardLayer,
-  hazardOpacity,
-  leafoffLayer,
+  isochroneLayers,
+  restyleBuildings,
   satelliteLayer,
   satelliteSource,
   selectedLayers,
 } from './mapLayers'
+import { HomesTab, HomeTab, SimTab } from './OpsPanel'
 import { SearchBar } from './SearchBar'
-import { normalizeProps, type BuildingProps, type Coverage, type ListFilter } from './types'
-import { BTN, MICRO, PANEL } from './ui'
+import type { FbpInputs } from './sim/fbp'
+import { FireLayer } from './sim/FireLayer'
+import { gridToLngLat } from './sim/grid'
+import { Smoke } from './sim/Smoke'
+import { HORIZON_MIN, ISOCHRONES, lowerBound, useSimulation, type FuelBreak, type SimActions } from './sim/useSimulation'
+import { Timeline } from './Timeline'
+import { bandOf, drynessMultiplier, riskOf, type Band, type BuildingRow } from './types'
 import { DATA_BASE, useWildfireData } from './useWildfireData'
-import { VisibleList } from './VisibleList'
 
+// Under Turbopack, maplibre's own `import.meta.url` is not an http(s) URL, so its default worker URL
+// comes out empty and every map fails with "Worker failed to load"; point it at the bundled worker.
+setWorkerUrl(new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).href)
 const protocol = new Protocol()
 addProtocol('pmtiles', protocol.tile)
 
-const LIST_MIN_ZOOM = 13
-
-type Selected = { props: BuildingProps; geometry: Geometry }
-type SearchState =
-  | { kind: 'idle' }
-  | { kind: 'locating' }
-  | { kind: 'outside'; hit: GeocodeHit }
-  | { kind: 'choose'; hit: GeocodeHit; candidates: Selected[] }
-  | { kind: 'missing'; hit: GeocodeHit }
-
-function inBbox(lon: number, lat: number, [w, s, e, n]: Coverage['bbox']) {
-  return lon >= w && lon <= e && lat >= s && lat <= n
-}
-
-function dedupe(features: MapGeoJSONFeature[]): Selected[] {
-  const seen = new Map<number, Selected>()
-  for (const f of features) {
-    const p = normalizeProps(f.properties, f.id)
-    if (!seen.has(p.fid)) seen.set(p.fid, { props: p, geometry: f.geometry })
-  }
-  return [...seen.values()]
-}
-
-function distM(a: { lon: number; lat: number }, b: { lon: number; lat: number }) {
-  const k = Math.PI / 180
-  const x = (b.lon - a.lon) * k * Math.cos(((a.lat + b.lat) / 2) * k)
-  const y = (b.lat - a.lat) * k
-  return Math.sqrt(x * x + y * y) * 6371000
-}
+type Tab = 'homes' | 'home' | 'sim'
+const DEFAULT_WEIGHTS = { fuel: 0.55, leafoff: 0.25, neighbours: 0.2 }
 
 function useClock() {
   const [now, setNow] = useState(() => new Date())
@@ -87,424 +62,544 @@ function useClock() {
   return now
 }
 
+function distM(a: { lon: number; lat: number }, b: { lon: number; lat: number }) {
+  const x = ((b.lon - a.lon) * Math.PI * Math.cos(((a.lat + b.lat) / 2) * (Math.PI / 180))) / 180
+  const y = ((b.lat - a.lat) * Math.PI) / 180
+  return Math.sqrt(x * x + y * y) * 6371000
+}
+
 export default function WildfireApp() {
   const { data, error } = useWildfireData()
   const containerRef = useRef<HTMLDivElement>(null)
+  const smokeCanvasRef = useRef<HTMLCanvasElement>(null)
   const mapRef = useRef<MLMap | null>(null)
-  const markerRef = useRef<Marker | null>(null)
+  const fireRef = useRef<FireLayer | null>(null)
+  const smokeRef = useRef<Smoke | null>(null)
   const basemapIdsRef = useRef<string[]>([])
   const [ready, setReady] = useState(false)
-  const [basemap, setBasemap] = useState<Basemap>('satellite')
-  const [showHazard, setShowHazard] = useState(true)
-  const [showBuildings, setShowBuildings] = useState(true)
-  const [showLeafoff, setShowLeafoff] = useState(false)
-  const [showDryness, setShowDryness] = useState(false)
-  const [opacity, setOpacity] = useState(0.55)
-  const [selected, setSelected] = useState<Selected | null>(null)
-  const [visible, setVisible] = useState<BuildingProps[]>([])
-  const [view, setView] = useState({ lon: -79.2, lat: 45.33, zoom: 0 })
-  const [filter, setFilter] = useState<ListFilter>('all')
-  const [search, setSearch] = useState<SearchState>({ kind: 'idle' })
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const [layersOpen, setLayersOpen] = useState(false)
-  const openSheet = useCallback(() => {
-    setSheetOpen(true)
-    setLayersOpen(false)
-  }, [])
+  const [satellite, setSatellite] = useState(true)
+  const [tab, setTab] = useState<Tab>('homes')
+  const [filter, setFilter] = useState<Band | 'all'>('all')
+  const [selected, setSelected] = useState<number | null>(null)
+  const [searchNote, setSearchNote] = useState<string | null>(null)
+  const [view, setView] = useState({ lon: -79.15, lat: 45.33, zoom: 0 })
   const now = useClock()
 
-  // On phones the open sheet covers the lower 60% of the map; pad the camera so the selected
-  // building / search pin stays in the visible part.
-  const tapEaseRef = useRef(false)
-  const sheetOpenRef = useRef(false)
-  useEffect(() => {
-    sheetOpenRef.current = sheetOpen
-    const map = mapRef.current
-    if (!map || !ready) return
-    if (tapEaseRef.current) {
-      // the tap handler already started an easeTo with centre + padding; don't cancel it
-      tapEaseRef.current = false
-      return
-    }
-    const mobile = window.matchMedia('(max-width: 767px)').matches
-    map.easeTo({ padding: { top: 0, left: 0, right: 0, bottom: mobile && sheetOpen ? Math.round(window.innerHeight * 0.6) : 0 }, duration: 300 })
-  }, [sheetOpen, ready])
-
-  const bias = useMemo(() => {
-    if (!data) return { lon: -79.2, lat: 45.33 }
+  const centre = useMemo(() => {
+    if (!data) return { lon: -79.15, lat: 45.33 }
     const [w, s, e, n] = data.coverage.bbox
     return { lon: (w + e) / 2, lat: (s + n) / 2 }
   }, [data])
-  const dryness = useDryness(bias.lon, bias.lat)
+  const dryness = useDryness(centre.lon, centre.lat)
   const dry = drynessFactor(dryness.data?.ffmc ?? null)
+  const wind = useWind(centre.lon, centre.lat)
   const imagery = useImageryInfo(view.lon, view.lat, view.zoom)
 
+  // ---- simulation state
+  const buildings = useMemo(() => data?.buildings ?? [], [data])
+  const byFid = useMemo(() => data?.byFid ?? new Map<number, BuildingRow>(), [data])
+  const sim = useSimulation(data?.grid ?? null, buildings)
+  const [weather, setWeather] = useState<FbpInputs | null>(null)
+  const [actions, setActions] = useState<SimActions>({ cleared: new Set(), breaks: [] })
+  const [drawing, setDrawing] = useState<[number, number] | null | false>(false) // false = not drawing, null = waiting for 1st point
+  const drawingRef = useRef(drawing)
+  drawingRef.current = drawing
+  const [t, setT] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const [speed, setSpeed] = useState(15)
+  const ignitedPtrRef = useRef(0)
+  const prevIgnitedRef = useRef<number[]>([])
+
+  const liveWeather = useMemo<FbpInputs>(
+    () => ({ ffmc: dryness.data?.ffmc ?? 88, windKmh: wind.speedKmh, windFromDeg: wind.fromDeg, month: now.getMonth() + 1 }),
+    [dryness.data?.ffmc, wind.speedKmh, wind.fromDeg, now],
+  )
+  const activeWeather = weather ?? liveWeather
+
+  // ---- map
   useEffect(() => {
     if (!data || !containerRef.current || mapRef.current) return
-    const { coverage, categories } = data
+    const { coverage } = data
     const map = new MLMap({
       container: containerRef.current,
       style: BASEMAP,
       bounds: coverage.bbox as LngLatBoundsLike,
-      fitBoundsOptions: { padding: 40 },
+      fitBoundsOptions: { padding: { top: 60, bottom: 60, left: 440, right: 60 } },
       maxZoom: 19,
       attributionControl: { compact: true },
     })
-    map.addControl(new NavigationControl({ showCompass: false }), 'bottom-right')
-    map.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left')
+    map.addControl(new NavigationControl({ showCompass: true, visualizePitch: true }), 'bottom-right')
+    map.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-right')
     mapRef.current = map
-
     const abs = (p: string) => new URL(`${DATA_BASE}${p}`, window.location.href).href
 
     map.on('load', () => {
       const style = map.getStyle()
       const before = firstSymbolLayer(style.layers)
-      basemapIdsRef.current = basemapLayerIds(style)
-      // imagery sits just above the style's background so labels stay on top
+      basemapIdsRef.current = style.layers.filter((l) => l.type !== 'symbol' && l.type !== 'background').map((l) => l.id)
       const aboveBackground = style.layers.find((l) => l.type !== 'background')?.id
       map.addSource(SATELLITE_SOURCE, satelliteSource())
       map.addLayer(satelliteLayer(), aboveBackground)
-      map.addSource(DRYNESS_SOURCE, drynessSource())
-      map.addLayer(drynessLayer(), before)
-      map.addSource(HAZARD_SOURCE, { type: 'vector', url: `pmtiles://${abs(coverage.tiles.hazard)}` })
       map.addSource(BUILDINGS_SOURCE, { type: 'vector', url: `pmtiles://${abs(coverage.tiles.buildings)}` })
-      map.addSource(SELECTED_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       map.addSource('wf-coverage', { type: 'geojson', data: coverage.coverage })
-      map.addLayer(hazardLayer(categories, 0.55, true), before)
-      if (coverage.tiles.leafoff) {
-        map.addSource(LEAFOFF_SOURCE, { type: 'vector', url: `pmtiles://${abs(coverage.tiles.leafoff)}` })
-        map.addLayer(leafoffLayer(), before)
+      map.addSource(ISO_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addSource(BREAKS_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      if (data.grid) {
+        const fire = new FireLayer(data.grid)
+        fireRef.current = fire
+        map.addLayer(fire, before)
+        if (smokeCanvasRef.current) smokeRef.current = new Smoke(smokeCanvasRef.current, map, data.grid)
       }
-      for (const l of buildingLayers()) map.addLayer(l, before)
+      for (const l of buildingLayers(drynessMultiplier(0.5))) map.addLayer(l, before)
       map.addLayer(
-        { id: 'wf-coverage-line', type: 'line', source: 'wf-coverage', paint: { 'line-color': '#67e8f9', 'line-width': 1.5, 'line-dasharray': [4, 3], 'line-opacity': 0.6 } },
+        { id: 'wf-coverage-line', type: 'line', source: 'wf-coverage', paint: { 'line-color': '#48aff0', 'line-width': 1, 'line-dasharray': [6, 4], 'line-opacity': 0.5 } },
         before,
       )
+      map.addLayer(breaksLayer(), before)
+      for (const l of isochroneLayers()) map.addLayer(l, before)
       for (const l of selectedLayers()) map.addLayer(l, before)
       setReady(true)
     })
 
+    map.on('click', (e: MapMouseEvent) => {
+      const d = drawingRef.current
+      if (d === false) return
+      const p: [number, number] = [e.lngLat.lng, e.lngLat.lat]
+      if (d === null) setDrawing(p)
+      else {
+        setActions((a) => ({ ...a, breaks: [...a.breaks, [d, p] as FuelBreak] }))
+        setDrawing(false)
+      }
+    })
     map.on('click', L.buildingsFill, (e: MapLayerMouseEvent) => {
+      if (drawingRef.current !== false) return
       const f = e.features?.[0]
       if (!f) return
-      const props = normalizeProps(f.properties, f.id)
-      setSearch({ kind: 'idle' })
-      setSelected({ props, geometry: f.geometry })
-      if (window.matchMedia('(max-width: 767px)').matches) {
-        // keep the tapped footprint in the strip of map left above the sheet; flag so the
-        // sheet-padding effect doesn't start a competing easeTo that cancels this one
-        tapEaseRef.current = !sheetOpenRef.current // the effect only re-runs when the sheet was closed
-        map.easeTo({ center: [props.lon, props.lat], padding: { top: 0, left: 0, right: 0, bottom: Math.round(window.innerHeight * 0.6) }, duration: 350 })
-      }
-      openSheet()
+      const fid = Number(f.id ?? f.properties.fid)
+      setSelected(fid)
+      setTab((cur) => (cur === 'sim' ? 'sim' : 'home'))
     })
     map.on('mouseenter', L.buildingsFill, () => (map.getCanvas().style.cursor = 'pointer'))
     map.on('mouseleave', L.buildingsFill, () => (map.getCanvas().style.cursor = ''))
-
-    const refresh = () => {
+    map.on('move', () => {
       const c = map.getCenter()
       setView({ lon: c.lng, lat: c.lat, zoom: map.getZoom() })
-      if (map.getZoom() < LIST_MIN_ZOOM || !map.getLayer(L.buildingsFill)) {
-        setVisible([])
-        return
-      }
-      setVisible(dedupe(map.queryRenderedFeatures({ layers: [L.buildingsFill] })).map((s) => s.props))
-    }
-    map.on('idle', refresh)
+    })
+    map.on('resize', () => smokeRef.current?.resize())
 
     return () => {
+      smokeRef.current?.destroy()
+      smokeRef.current = null
       map.remove()
       mapRef.current = null
     }
-  }, [data, openSheet])
+  }, [data])
+
+  // today's dryness recolours every footprint
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map) return
+    restyleBuildings(map, drynessMultiplier(dry))
+  }, [ready, dry])
 
   useEffect(() => {
     const map = mapRef.current
     if (!ready || !map) return
-    const sat = basemap === 'satellite'
-    map.setLayoutProperty(L.satellite, 'visibility', sat ? 'visible' : 'none')
-    for (const id of basemapIdsRef.current) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', sat ? 'none' : 'visible')
-    map.setLayoutProperty(L.hazardFill, 'visibility', showHazard ? 'visible' : 'none')
-    map.setPaintProperty(L.hazardFill, 'fill-opacity', hazardOpacity(opacity, sat))
-    for (const id of [L.buildingsFill, L.buildingsLine]) map.setLayoutProperty(id, 'visibility', showBuildings ? 'visible' : 'none')
-    if (map.getLayer(L.leafoff)) map.setLayoutProperty(L.leafoff, 'visibility', showLeafoff ? 'visible' : 'none')
-    map.setLayoutProperty(L.dryness, 'visibility', showDryness ? 'visible' : 'none')
-  }, [ready, basemap, showHazard, showBuildings, showLeafoff, showDryness, opacity])
+    map.setLayoutProperty(L.satellite, 'visibility', satellite ? 'visible' : 'none')
+    for (const id of basemapIdsRef.current) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', satellite ? 'none' : 'visible')
+  }, [ready, satellite])
 
+  // selection highlight
+  const prevSelected = useRef<number | null>(null)
   useEffect(() => {
     const map = mapRef.current
     if (!ready || !map) return
-    const src = map.getSource(SELECTED_SOURCE) as GeoJSONSource | undefined
-    src?.setData(selected ? { type: 'Feature', geometry: selected.geometry, properties: {} } : { type: 'FeatureCollection', features: [] })
-    map.setFilter(L.selectedRing, selected ? ['==', ['id'], selected.props.fid] : NO_SELECTION)
+    const fs = (fid: number, v: boolean) => map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { selected: v })
+    if (prevSelected.current != null) fs(prevSelected.current, false)
+    if (selected != null) fs(selected, true)
+    prevSelected.current = selected
+    map.setFilter(L.selectedRing, selected != null ? ['==', ['id'], selected] : NO_SELECTION)
   }, [ready, selected])
+
+  // cleared homes highlight
+  const prevCleared = useRef<Set<number>>(new Set())
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map) return
+    for (const fid of prevCleared.current) if (!actions.cleared.has(fid)) map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { cleared: false })
+    for (const fid of actions.cleared) map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { cleared: true })
+    prevCleared.current = new Set(actions.cleared)
+  }, [ready, actions.cleared])
+
+  // fuel breaks on the map
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map) return
+    const src = map.getSource(BREAKS_SOURCE) as GeoJSONSource | undefined
+    src?.setData({ type: 'FeatureCollection', features: actions.breaks.map((b) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: b } })) })
+    map.getCanvas().style.cursor = drawing !== false ? 'crosshair' : ''
+  }, [ready, actions.breaks, drawing])
+
+  // re-run when actions or weather change while a simulation is live
+  const runFid = sim.run?.ignitionFid ?? null
+  useEffect(() => {
+    if (runFid == null) return
+    sim.simulate(runFid, activeWeather, actions)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actions, activeWeather, runFid])
+
+  // push results into the map: arrival texture, isochrones, smoke source
+  const ignitionSorted = useMemo(() => (sim.run ? [...sim.run.ignitedAt.entries()].sort((a, b) => a[1] - b[1]) : []), [sim.run])
+  useEffect(() => {
+    const map = mapRef.current
+    const grid = data?.grid
+    if (!ready || !map || !grid) return
+    const run = sim.run
+    fireRef.current?.setArrival(run?.result.arrival ?? null)
+    if (smokeRef.current) {
+      smokeRef.current.cells = run?.cells ?? null
+      smokeRef.current.times = run?.times ?? null
+      smokeRef.current.windKmh = activeWeather.windKmh
+      smokeRef.current.windFromDeg = activeWeather.windFromDeg
+    }
+    const src = map.getSource(ISO_SOURCE) as GeoJSONSource | undefined
+    src?.setData({
+      type: 'FeatureCollection',
+      features: run
+        ? run.result.isochrones.map((mp, i) => ({
+            type: 'Feature',
+            properties: { minutes: ISOCHRONES[i], label: `${ISOCHRONES[i] / 60} h` },
+            geometry: { type: 'MultiPolygon', coordinates: mp.coordinates.map((poly) => poly.map((ring) => ring.map(([c, r]) => gridToLngLat(grid, c, r)))) },
+          }))
+        : [],
+    })
+    // reset ignited feature-states: homes lit by the previous run (e.g. ones an action just saved) must not stay charred
+    ignitedPtrRef.current = 0
+    for (const fid of prevIgnitedRef.current) map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { ignited: false })
+    prevIgnitedRef.current = run ? [...run.ignitedAt.keys()] : []
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, sim.run, data?.grid])
+
+  // timeline clock
+  useEffect(() => {
+    if (!playing) return
+    let last = performance.now()
+    let raf = 0
+    const tick = (nowMs: number) => {
+      const dt = (nowMs - last) / 1000
+      last = nowMs
+      setT((cur) => {
+        const nt = cur + dt * speed
+        if (nt >= HORIZON_MIN) {
+          setPlaying(false)
+          return HORIZON_MIN
+        }
+        return nt
+      })
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [playing, speed])
+
+  useEffect(() => {
+    const map = mapRef.current
+    const fire = fireRef.current
+    const active = sim.run != null
+    if (fire) {
+      fire.t = active ? t : -1
+      fire.playing = playing
+    }
+    if (smokeRef.current) {
+      smokeRef.current.t = active ? t : -1
+      smokeRef.current.playing = playing
+    }
+    map?.triggerRepaint()
+    if (!map || !ready) return
+    map.setPaintProperty(L.isoLine, 'line-opacity', ['case', ['<=', ['get', 'minutes'], Math.floor(t)], 0.95, 0.35])
+    // ignite homes as the front reaches them (pointer walks the time-sorted list; scrubbing back resets)
+    const fs = (fid: number, v: boolean) => map.setFeatureState({ source: BUILDINGS_SOURCE, sourceLayer: 'buildings', id: fid }, { ignited: v })
+    let p = ignitedPtrRef.current
+    if (p > 0 && (ignitionSorted[p - 1]?.[1] ?? 0) > t) {
+      while (p > 0 && ignitionSorted[p - 1][1] > t) fs(ignitionSorted[--p][0], false)
+    }
+    while (p < ignitionSorted.length && ignitionSorted[p][1] <= t && active) fs(ignitionSorted[p++][0], true)
+    ignitedPtrRef.current = p
+  }, [t, playing, ready, sim.run, ignitionSorted])
+
+  // ---- interactions
+  const flyToHome = useCallback((b: BuildingRow) => {
+    const map = mapRef.current
+    if (!map) return
+    map.flyTo({ center: [b.lon, b.lat], zoom: 17.6, pitch: 55, bearing: -25, duration: 1800, padding: { top: 0, bottom: 0, left: 400, right: 0 }, essential: true })
+  }, [])
+
+  const pickHome = useCallback(
+    (b: BuildingRow) => {
+      setSelected(b.fid)
+      setSearchNote(null)
+      setTab((cur) => (cur === 'sim' ? 'sim' : 'home'))
+      flyToHome(b)
+    },
+    [flyToHome],
+  )
+
+  const onSearchHit = useCallback(
+    (hit: GeocodeHit) => {
+      let best: BuildingRow | null = null, bd = Infinity
+      for (const b of buildings) {
+        const d = distM(hit, b)
+        if (d < bd) { bd = d; best = b }
+      }
+      if (best && bd <= 80) pickHome(best)
+      else {
+        setSearchNote(bd === Infinity || bd > 5000 ? `${hit.label} is outside the pilot area.` : `No footprint within 80 m of ${hit.label}.`)
+        mapRef.current?.flyTo({ center: [hit.lon, hit.lat], zoom: 16, pitch: 0, duration: 1400 })
+      }
+    },
+    [buildings, pickHome],
+  )
+
+  const ignite = useCallback(() => {
+    if (selected == null) return
+    setWeather(activeWeather)
+    setT(0)
+    setPlaying(true)
+    setTab('sim')
+    sim.simulate(selected, activeWeather, actions)
+  }, [selected, activeWeather, actions, sim])
+
+  // frame the 12 h burned extent once the untouched run is solved
+  const framedRef = useRef<typeof sim.baseline>(null)
+  useEffect(() => {
+    const map = mapRef.current, grid = data?.grid, base = sim.baseline
+    if (!map || !grid || !base || framedRef.current === base) return
+    framedRef.current = base
+    const { cells } = base
+    if (!cells.length) return
+    let c0 = Infinity, c1 = -Infinity, r0 = Infinity, r1 = -Infinity
+    for (let i = 0; i < cells.length; i++) {
+      const col = cells[i] % grid.width, row = (cells[i] - col) / grid.width
+      if (col < c0) c0 = col
+      if (col > c1) c1 = col
+      if (row < r0) r0 = row
+      if (row > r1) r1 = row
+    }
+    const [w, n] = gridToLngLat(grid, c0 - 1, r0 - 1)
+    const [e, s] = gridToLngLat(grid, c1 + 2, r1 + 2)
+    map.fitBounds(
+      [
+        [w, s],
+        [e, n],
+      ],
+      { padding: { top: 80, bottom: 120, left: 440, right: 60 }, pitch: 45, bearing: map.getBearing(), duration: 2400, maxZoom: 16 },
+    )
+  }, [sim.baseline, data?.grid])
+
+  const exitSim = useCallback(() => {
+    setPlaying(false)
+    setT(0)
+    sim.reset()
+    setActions({ cleared: new Set(), breaks: [] })
+    setDrawing(false)
+    setWeather(null)
+    setTab(selected != null ? 'home' : 'homes')
+  }, [sim, selected])
+
+  const clearTop = useCallback(
+    (n: number) => {
+      if (!sim.run) return
+      const next = new Set(actions.cleared)
+      for (const [fid] of ignitionSorted) {
+        if (next.size >= actions.cleared.size + n) break
+        if (fid !== sim.run.ignitionFid) next.add(fid)
+      }
+      setActions((a) => ({ ...a, cleared: next }))
+    },
+    [sim.run, actions.cleared, ignitionSorted],
+  )
+
+  const toggleCleared = useCallback((fid: number) => {
+    setActions((a) => {
+      const cleared = new Set(a.cleared)
+      if (cleared.has(fid)) cleared.delete(fid)
+      else cleared.add(fid)
+      return { ...a, cleared }
+    })
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSelected(null)
+      if (e.key === 'Escape') {
+        if (drawingRef.current !== false) setDrawing(false)
+        else if (tab === 'home') { setSelected(null); setTab('homes') }
+      }
+      if (e.key === ' ' && sim.run && (e.target as HTMLElement)?.tagName !== 'INPUT') { e.preventDefault(); setPlaying((p) => !p) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [tab, sim.run])
 
-  const placeMarker = useCallback((lon: number, lat: number) => {
-    const map = mapRef.current
-    if (!map) return
-    markerRef.current?.remove()
-    markerRef.current = new Marker({ color: '#22d3ee' }).setLngLat([lon, lat]).addTo(map)
-  }, [])
-
-  const onPickHit = useCallback(
-    (hit: GeocodeHit) => {
-      const map = mapRef.current
-      if (!map || !data) return
-      setSelected(null)
-      placeMarker(hit.lon, hit.lat)
-      if (!inBbox(hit.lon, hit.lat, data.coverage.bbox)) {
-        setSearch({ kind: 'outside', hit })
-        map.flyTo({ center: [hit.lon, hit.lat], zoom: Math.max(map.getZoom(), 12), duration: 1200 })
-        return
-      }
-      setSearch({ kind: 'locating' })
-      map.flyTo({ center: [hit.lon, hit.lat], zoom: 17.5, duration: 1400 })
-      map.once('idle', () => {
-        const pt = map.project([hit.lon, hit.lat])
-        const exact = dedupe(map.queryRenderedFeatures(pt, { layers: [L.buildingsFill] }))
-        if (exact.length === 1) {
-          setSelected(exact[0])
-          openSheet()
-          setSearch({ kind: 'idle' })
-          return
-        }
-        // pixel box wide enough to cover the 80 m radius at the current zoom (plus footprint extent)
-        const mpp = (40075016.686 * Math.cos((hit.lat * Math.PI) / 180)) / (512 * 2 ** map.getZoom())
-        const r = Math.ceil(120 / mpp)
-        const near = dedupe(map.queryRenderedFeatures([[pt.x - r, pt.y - r], [pt.x + r, pt.y + r]], { layers: [L.buildingsFill] }))
-          .map((s) => ({ s, d: distM(hit, s.props) }))
-          .filter((x) => x.d <= 80)
-          .sort((a, b) => a.d - b.d)
-          .slice(0, 6)
-          .map((x) => x.s)
-        if (near.length === 0) setSearch({ kind: 'missing', hit })
-        else {
-          setSearch({ kind: 'choose', hit, candidates: near })
-          openSheet()
-        }
-      })
-    },
-    [data, placeMarker, openSheet],
-  )
-
-  const pickFromList = useCallback(
-    (b: BuildingProps) => {
-      const map = mapRef.current
-      if (!map) return
-      setSearch({ kind: 'idle' })
-      map.flyTo({ center: [b.lon, b.lat], zoom: Math.max(map.getZoom(), 17), duration: 800 })
-      map.once('idle', () => {
-        const pt = map.project([b.lon, b.lat])
-        const f = dedupe(map.queryRenderedFeatures([[pt.x - 2, pt.y - 2], [pt.x + 2, pt.y + 2]], { layers: [L.buildingsFill] })).find(
-          (s) => s.props.fid === b.fid,
-        )
-        setSelected(f ?? null)
-        openSheet()
-      })
-    },
-    [openSheet],
-  )
-
-  const searchThisArea = () => {
-    const map = mapRef.current
-    if (!map) return
-    setSelected(null)
-    setSearch({ kind: 'idle' })
-    openSheet()
-    if (map.getZoom() < LIST_MIN_ZOOM) map.zoomTo(LIST_MIN_ZOOM + 0.5, { duration: 600 })
-    else map.fire('idle')
-  }
-
-  if (error) {
+  // ---- render
+  if (error)
     return (
-      <Shell>
-        <div className={`m-auto max-w-sm p-6 text-center ${PANEL}`}>
-          <p className="font-semibold text-slate-100">Hazard data unavailable</p>
-          <p className="mt-1 text-sm text-slate-400">Couldn't load the pilot dataset ({error}). Run <code>data/wildfire/pipeline.py</code> to generate it.</p>
+      <div className="ops bp6-dark grid h-full place-items-center">
+        <div className="panel max-w-sm p-5">
+          <div className="label">Data unavailable</div>
+          <p className="mt-2 text-sm">Couldn't load the pilot dataset ({error}). Run <code>data/wildfire/pipeline.py</code> to generate it.</p>
         </div>
-      </Shell>
+      </div>
     )
-  }
 
-  const panelBody = (() => {
-    if (!data) return null
-    if (selected) return <BuildingPanel b={selected.props} categories={data.categories} coverage={data.coverage} dryness={dryness} drynessFactor={dry} onClose={() => setSelected(null)} />
-    if (search.kind === 'choose')
-      return (
-        <div className="p-4">
-          <p className={MICRO}>Which building?</p>
-          <p className="mt-1 text-sm text-slate-300">
-            The address point for <span className="font-medium text-slate-100">{search.hit.label}</span> doesn't land on a single footprint. Pick the right one:
-          </p>
-          <ul className="mt-3 space-y-1">
-            {search.candidates.map((c) => (
-              <li key={c.props.fid}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelected(c)
-                    setSearch({ kind: 'idle' })
-                  }}
-                  className="flex w-full items-center justify-between rounded-xl border border-white/10 px-3 py-2 text-left text-sm hover:bg-white/5"
-                >
-                  <span>
-                    <span className="font-mono text-slate-400">#{c.props.fid}</span> · {Math.round(c.props.area_m2)} m²
-                  </span>
-                  <span className="font-mono text-xs text-slate-500">{Math.round(distM(search.hit, c.props))} m from pin</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )
-    if (search.kind === 'missing')
-      return (
-        <StateCard title="No building footprint here">
-          We don't have a footprint within 80 m of <span className="font-medium text-slate-100">{search.hit.label}</span>. Building data misses some structures (Microsoft's
-          Canadian set reports ~72% recall). Click any nearby outline instead, or zoom to check the hazard colours under the pin.
-        </StateCard>
-      )
-    if (search.kind === 'outside')
-      return (
-        <StateCard title="Outside the pilot area">
-          <span className="font-medium text-slate-100">{search.hit.label}</span> is outside {data.coverage.area_name}, the only area with hazard screening so far. The dashed
-          outline on the map marks the covered area.
-        </StateCard>
-      )
-    if (search.kind === 'locating') return <StateCard title="Locating…">Flying to the address and finding its footprint.</StateCard>
-    return <VisibleList items={visible} filter={filter} dryness={dry} onFilter={setFilter} onPick={pickFromList} zoomedOut={view.zoom < LIST_MIN_ZOOM} />
-  })()
-
-  const flagged = visible.filter((b) => b.hazard_overlap || b.hazard_within_30m).length
+  const selectedRow = selected != null ? byFid.get(selected) ?? null : null
   const ffmc = ffmcClass(dryness.data?.ffmc ?? null)
-  const utc = now.toISOString().slice(0, 19).replace('T', ' ')
-
-  const layerControls = data && (
-    <LayerControls
-      categories={data.categories}
-      coverage={data.coverage}
-      basemap={basemap}
-      showHazard={showHazard}
-      showBuildings={showBuildings}
-      showLeafoff={showLeafoff}
-      showDryness={showDryness}
-      opacity={opacity}
-      onBasemap={setBasemap}
-      onHazard={setShowHazard}
-      onBuildings={setShowBuildings}
-      onLeafoff={setShowLeafoff}
-      onDryness={setShowDryness}
-      onOpacity={setOpacity}
-    />
-  )
+  const risks = buildings.map((b) => riskOf(b.exposure, dry))
+  const critical = risks.filter((r) => bandOf(r) === 'critical').length
+  const ignitedNow = sim.run ? lowerBound(Float32Array.from(ignitionSorted.map(([, m]) => m)), t + 1e-6) : 0
+  const burnedHaNow = sim.run && data?.grid ? (lowerBound(sim.run.times, t + 1e-6) * data.grid.cellM ** 2) / 10_000 : 0
 
   return (
-    <Shell>
-      <div className="absolute inset-0">
-        <div ref={containerRef} className="h-full w-full" />
-      </div>
+    <div className={`ops bp6-dark relative h-full w-full overflow-hidden ${sim.run ? 'sim-on' : ''}`}>
+      <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+      <canvas ref={smokeCanvasRef} className="pointer-events-none absolute inset-0" />
       {!ready && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm">
-          <div className={`flex items-center gap-3 px-5 py-3 ${PANEL}`}>
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-cyan-400" />
-            <span className="text-sm text-slate-200">{data ? 'Loading map…' : 'Loading hazard data…'}</span>
+        <div className="grid-bg absolute inset-0 grid place-items-center" style={{ background: 'var(--ops-bg)' }}>
+          <div className="flex items-center gap-3">
+            <Spinner size={20} />
+            <span className="label">Loading pilot · {data?.coverage.area_name ?? '…'}</span>
           </div>
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col gap-3 p-3 md:right-[412px] md:p-4">
-        {/* relative + z so the search dropdown paints over the Layers / Live row below it */}
-        <div className="relative z-10 flex items-start gap-3">
-          <a href="#/" className={`pointer-events-auto hidden shrink-0 px-3 py-2 md:block ${PANEL}`}>
-            <span className="flex items-center gap-2 text-sm font-semibold">
-              <span className={`h-2 w-2 rounded-full ${dryness.status === 'ok' ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : dryness.status === 'loading' ? 'bg-amber-400' : 'bg-rose-500'}`} />
-              Wildfire ops
-            </span>
-            <span className="block text-[11px] text-slate-400">{data?.coverage.area_name ?? '…'} · pilot</span>
-          </a>
-          <SearchBar bias={bias} onPick={onPickHit} />
-          <button type="button" onClick={searchThisArea} className={`pointer-events-auto ml-auto hidden shrink-0 px-3 py-2 text-sm font-medium md:block ${PANEL}`}>
-            Search this area
-          </button>
+      {/* top bar */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3">
+        <div className="panel pointer-events-auto flex items-center gap-3 px-3 py-1.5">
+          <Flame size={14} style={{ color: 'var(--ops-red)' }} />
+          <span className="mono text-xs tracking-widest uppercase">Wildfire Ops</span>
+          <span className="hair border-l pl-3 text-xs" style={{ color: 'var(--ops-muted)' }}>{data?.coverage.area_name ?? '…'}</span>
+          <span className="mono text-xs" style={{ color: 'var(--ops-muted)' }}>{now.toISOString().slice(0, 19).replace('T', ' ')}Z</span>
         </div>
-        <div className="hidden md:flex md:items-start md:gap-3">
-          {layerControls}
-          <div className={`pointer-events-auto px-3 py-2 ${PANEL}`}>
-            <p className={MICRO}>Live · {utc} UTC</p>
-            <dl className="mt-1.5 grid grid-cols-[auto_auto] gap-x-4 gap-y-0.5 font-mono text-xs tabular-nums">
-              <dt className="text-slate-500">Fine fuel</dt>
-              <dd style={{ color: ffmc.color }}>{dryness.data?.ffmc != null ? `${dryness.data.ffmc.toFixed(0)} · ${ffmc.label}` : dryness.status === 'loading' ? '…' : 'offline'}</dd>
-              <dt className="text-slate-500">FWI</dt>
-              <dd className="text-slate-200">{dryness.data?.fwi != null ? dryness.data.fwi.toFixed(1) : '—'}</dd>
-              <dt className="text-slate-500">Danger</dt>
-              <dd className="text-slate-200">{fdrLabel(dryness.data?.fdr ?? null)}</dd>
-              <dt className="text-slate-500">Weather</dt>
-              <dd className="text-slate-400">CWFIS {dryness.data?.date ?? ''}</dd>
-              <dt className="text-slate-500">Imagery</dt>
-              <dd className="text-slate-400">{imagery ? `${imagery.date ?? 'undated'}${imagery.resolution_m ? ` · ${imagery.resolution_m} m` : ''}` : '—'}</dd>
-              <dt className="text-slate-500">Hazard</dt>
-              <dd className="text-slate-400">MNRF {data?.categories.source.date ?? ''}</dd>
-            </dl>
+        <div className="pointer-events-auto flex items-center gap-2">
+          <div className="panel flex items-center gap-2 px-3 py-1.5">
+            <span className="h-2 w-2 blink" style={{ background: ffmc.color, boxShadow: `0 0 8px ${ffmc.color}` }} />
+            <span className="label">FFMC</span>
+            <span className="mono text-sm">{dryness.data?.ffmc != null ? dryness.data.ffmc.toFixed(1) : '–'}</span>
+            <Tag minimal style={{ color: ffmc.color }} className="mono">{ffmc.label}</Tag>
+            <span className="label hair border-l pl-2">Wind</span>
+            <span className="mono text-sm">{Math.round(wind.speedKmh)} km/h · {Math.round(wind.fromDeg)}°</span>
+          </div>
+          <div className="panel flex items-center gap-1 px-1 py-1">
+            <Button small minimal icon={<Layers />} active={satellite} onClick={() => setSatellite((s) => !s)} title={imagery?.date ? `Imagery ${imagery.date}` : 'Satellite imagery'}>
+              <span className="mono text-[11px]">{satellite ? (imagery?.date ?? 'SAT') : 'DARK'}</span>
+            </Button>
+            <Button
+              small
+              minimal
+              icon={<Locate />}
+              title="Reset view"
+              onClick={() => data && mapRef.current?.fitBounds(data.coverage.bbox as LngLatBoundsLike, { padding: { top: 60, bottom: 60, left: 440, right: 60 }, pitch: 0, bearing: 0, duration: 1600 })}
+            />
           </div>
         </div>
       </div>
 
-      {/* desktop side panel */}
-      <aside className={`absolute top-4 right-4 bottom-4 z-10 hidden w-[380px] flex-col overflow-hidden md:flex ${PANEL}`}>{panelBody}</aside>
-
-      {/* mobile: layers + bottom sheet */}
-      <div className="absolute bottom-0 inset-x-0 z-10 md:hidden">
-        <div className="pointer-events-none relative mb-2 flex items-end justify-between px-3">
-          <button
-            type="button"
-            onClick={() => {
-              setLayersOpen((o) => !o)
-              setSheetOpen(false)
-            }}
-            aria-expanded={layersOpen}
-            className={`pointer-events-auto ${BTN}`}
-          >
-            Layers
-          </button>
-          {layersOpen && <div className="pointer-events-auto absolute bottom-10 left-3 z-20 max-h-[70vh] overflow-y-auto rounded-2xl">{layerControls}</div>}
-          <button type="button" onClick={searchThisArea} className={`pointer-events-auto ${BTN}`}>
-            Search this area
-          </button>
+      {/* left ops panel */}
+      <aside className="panel rise pointer-events-auto absolute top-14 bottom-3 left-3 flex w-[380px] flex-col overflow-hidden">
+        <div className="hair flex border-b">
+          {(
+            [
+              ['homes', 'Homes', <Home size={12} key="h" />],
+              ['home', 'Home', <Locate size={12} key="d" />],
+              ['sim', 'Simulation', <Flame size={12} key="s" />],
+            ] as [Tab, string, ReactElement][]
+          ).map(([k, label, icon]) => {
+            const disabled = (k === 'home' && !selectedRow) || (k === 'sim' && !sim.run && sim.status !== 'running')
+            return (
+              <button
+                key={k}
+                type="button"
+                disabled={disabled}
+                onClick={() => setTab(k)}
+                className="label flex flex-1 items-center justify-center gap-1.5 py-2.5 disabled:opacity-30"
+                style={tab === k ? { color: 'var(--ops-cyan)', boxShadow: 'inset 0 -2px 0 var(--ops-cyan)' } : undefined}
+              >
+                {icon}{label}
+              </button>
+            )
+          })}
         </div>
-        <div className={`rounded-t-2xl border-t border-white/10 bg-slate-950/95 text-slate-100 shadow-[0_-8px_30px_rgba(0,0,0,0.5)] backdrop-blur-md transition-[height] ${sheetOpen ? 'h-[60vh]' : 'h-14'}`}>
-          <button type="button" onClick={() => (sheetOpen ? setSheetOpen(false) : openSheet())} className="flex h-14 w-full items-center justify-between px-4" aria-expanded={sheetOpen}>
-            <span className="text-sm font-medium">
-              {selected ? `Building #${selected.props.fid}` : view.zoom < LIST_MIN_ZOOM ? 'Zoom in to list buildings' : `${flagged} flagged · ${visible.length} visible`}
-            </span>
-            <span className="flex items-center gap-3">
-              <span className="font-mono text-xs" style={{ color: ffmc.color }}>{dryness.data?.ffmc != null ? `FFMC ${dryness.data.ffmc.toFixed(0)}` : ''}</span>
-              <span className="h-1 w-10 rounded-full bg-slate-600" />
-            </span>
-          </button>
-          {sheetOpen && <div className="h-[calc(60vh-3.5rem)] overflow-hidden">{panelBody}</div>}
+        {tab === 'homes' && (
+          <div className="p-2 hair border-b">
+            <SearchBar bias={centre} onPick={onSearchHit} />
+            {searchNote && <p className="mt-1 px-1 text-[11px]" style={{ color: 'var(--ops-amber)' }}>{searchNote}</p>}
+          </div>
+        )}
+        <div className="flex-1 overflow-y-auto">
+          {!data && <div className="p-4"><Spinner size={18} /></div>}
+          {data && tab === 'homes' && <HomesTab buildings={buildings} dryness={dry} filter={filter} onFilter={setFilter} selected={selected} onPick={pickHome} />}
+          {data && tab === 'home' && selectedRow && (
+            <HomeTab
+              b={selectedRow}
+              dryness={dryness.data}
+              drynessFactor={dry}
+              weights={data.coverage.risk?.weights ?? DEFAULT_WEIGHTS}
+              neighbourCap={data.coverage.risk?.neighbour_cap ?? 4}
+              cleared={actions.cleared.has(selectedRow.fid)}
+              onToggleCleared={() => toggleCleared(selectedRow.fid)}
+              onIgnite={ignite}
+              onBack={() => { setSelected(null); setTab('homes') }}
+              simulating={sim.status === 'running'}
+            />
+          )}
+          {data && tab === 'sim' && (
+            <SimTab
+              run={sim.run}
+              baseline={sim.baseline}
+              status={sim.status}
+              t={t}
+              weather={activeWeather}
+              liveWeather={liveWeather}
+              windSource={wind.source === 'open-meteo' ? 'live · open-meteo + cwfis' : 'default wind'}
+              onWeather={setWeather}
+              actions={actions}
+              byFid={byFid}
+              drawingBreak={drawing !== false}
+              onDrawBreak={() => setDrawing((d) => (d === false ? null : false))}
+              onClearTop={clearTop}
+              onResetActions={() => setActions({ cleared: new Set(), breaks: [] })}
+              onPick={pickHome}
+              onExit={exitSim}
+              dryness={dry}
+            />
+          )}
         </div>
-      </div>
-    </Shell>
-  )
-}
+        <div className="hair flex items-center justify-between border-t px-3 py-1.5">
+          <span className="label">{buildings.length.toLocaleString()} homes · {critical} critical today</span>
+          <span className="label">{dryness.status === 'ok' ? `CWFIS ${dryness.data?.date}` : dryness.status === 'loading' ? 'CWFIS …' : 'CWFIS offline'}</span>
+        </div>
+      </aside>
 
-function Shell({ children }: { children: React.ReactNode }) {
-  return <div className="wildfire relative flex h-full w-full overflow-hidden bg-slate-950 text-slate-100 select-text">{children}</div>
-}
-
-function StateCard({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="p-4">
-      <p className="text-sm font-semibold text-slate-100">{title}</p>
-      <p className="mt-1 text-sm leading-relaxed text-slate-400">{children}</p>
+      {/* bottom timeline */}
+      {sim.run && (
+        <div className="pointer-events-none absolute right-3 bottom-3 left-[404px]">
+          <Timeline
+            t={t}
+            playing={playing}
+            speed={speed}
+            burnedHa={burnedHaNow}
+            ignited={ignitedNow}
+            ignitedTotal={sim.run.result.ignitedHomes}
+            onPlay={setPlaying}
+            onScrub={(v) => { setT(v) }}
+            onSpeed={setSpeed}
+          />
+        </div>
+      )}
+      {drawing !== false && (
+        <div className="pointer-events-none absolute top-16 left-1/2 -translate-x-1/2">
+          <Tag large intent="success" className="mono">{drawing === null ? 'Click the start of the fuel break' : 'Click the end of the fuel break · Esc to cancel'}</Tag>
+        </div>
+      )}
     </div>
   )
 }

@@ -70,7 +70,10 @@ class BuildingResult:
     fuel_codes_footprint: list[int]
     fuel_codes_30m: list[int]
     leafoff_30m: float | None = None
-    scan_priority: int | None = None
+    f_fuel: float = 0.0
+    l_leafoff: float = 0.5
+    n_neighbours: int = 0
+    exposure: float = 0.0
 
 
 LEAFOFF_FULL = 0.35  # NDVI drop treated as "all leaves down" (p90 of the pilot is ~0.31)
@@ -95,17 +98,86 @@ def mean_under(geom, arr: np.ndarray, transform) -> float | None:
     return float(vals.mean()) if vals.size else None
 
 
-def scan_priority(res: "BuildingResult", leafoff: float | None) -> int:
-    """Static part of the scan score (0-100): mapped hazard x fresh litter. Live dryness is applied in the UI."""
+# Ignition Risk shown in the UI = 100 x exposure x (0.4 + 0.6 x live CWFIS dryness).
+# exposure is the static part computed here from three 0-1 inputs.
+RISK_WEIGHTS = {"fuel": 0.55, "leafoff": 0.25, "neighbours": 0.20}
+NEIGHBOUR_CAP = 4  # structures within 30 m at which the neighbour term saturates
+FUEL_WEIGHT = {"extreme": 1.0, "high": 0.8, "pine_eval": 0.6, "moderate": 0.4, "low": 0.15}
+
+
+def fuel_cover(geom, arr: np.ndarray, transform, nodata) -> float:
+    """Rank-weighted share of the raster cells touched by geom that carry forest fuel (0-1)."""
+    minx, miny, maxx, maxy = geom.bounds
+    win = rasterio.windows.from_bounds(minx, miny, maxx, maxy, transform)
+    r0, c0 = max(int(math.floor(win.row_off)), 0), max(int(math.floor(win.col_off)), 0)
+    r1 = min(int(math.ceil(win.row_off + win.height)), arr.shape[0])
+    c1 = min(int(math.ceil(win.col_off + win.width)), arr.shape[1])
+    if r1 <= r0 or c1 <= c0:
+        return 0.0
+    sub = arr[r0:r1, c0:c1]
+    mask = rasterio.features.geometry_mask(
+        [mapping(geom)], out_shape=sub.shape, transform=transform @ rasterio.Affine.translation(c0, r0), invert=True, all_touched=True
+    )
+    vals = sub[mask]
+    if nodata is not None:
+        vals = vals[vals != nodata]
+    if vals.size == 0:
+        return 0.0
+    w = sum(FUEL_WEIGHT.get(category_of(int(c), nodata), 0.0) * n for c, n in zip(*np.unique(vals, return_counts=True)))
+    return float(w / vals.size)
+
+
+def fuel_exposure(res: "BuildingResult", cover: float) -> float:
+    """F: half how much of the 30 m zone is forest fuel, half how close rated High/Extreme gets."""
     if res.hazard_overlap:
-        hazard = 1.0
+        prox = 1.0
     elif res.hazard_within_30m:
         d = res.nearest_hazard_m if res.nearest_hazard_m is not None else SCREEN_M / 2
-        hazard = 0.55 + 0.45 * max(0.0, 1 - d / SCREEN_M)
+        prox = 0.55 + 0.45 * max(0.0, 1 - d / SCREEN_M)
     else:
-        hazard = 0.1
-    litter = 0.5 if leafoff is None else 0.5 + 0.5 * min(1.0, max(0.0, leafoff / LEAFOFF_FULL))
-    return int(round(100 * hazard * litter))
+        prox = 0.0
+    return min(1.0, 0.5 * cover + 0.5 * prox)
+
+
+def leafoff_exposure(leafoff: float | None) -> float:
+    """L: fresh canopy drop in the 30 m zone; neutral 0.5 when the satellite had no clear view."""
+    return 0.5 if leafoff is None else min(1.0, max(0.0, leafoff / LEAFOFF_FULL))
+
+
+def exposure_of(f_fuel: float, l_leafoff: float, n_neighbours: int) -> float:
+    n = min(n_neighbours, NEIGHBOUR_CAP) / NEIGHBOUR_CAP
+    return RISK_WEIGHTS["fuel"] * f_fuel + RISK_WEIGHTS["leafoff"] * l_leafoff + RISK_WEIGHTS["neighbours"] * n
+
+
+def write_fuel_grid(arr: np.ndarray, transform, crs, nodata, bbox, out: Path) -> dict:
+    """Fuel codes resampled onto a Web Mercator grid (~30 m ground cells) for the browser fire simulation.
+
+    fuel.bin is uint8 row-major, 0 = no data / outside raster, otherwise 1-based index into `codes`."""
+    codes = sorted(int(c) for c in np.unique(arr) if nodata is None or int(c) != int(nodata))
+    idx = np.zeros(arr.shape, dtype=np.uint8)
+    for i, code in enumerate(codes, start=1):
+        idx[arr == code] = i
+    left, bottom, right, top = rasterio.warp.transform_bounds("EPSG:4326", "EPSG:3857", *bbox)
+    lat_c = (bbox[1] + bbox[3]) / 2
+    res = 30 / math.cos(math.radians(lat_c))  # mercator metres per 30 ground metres
+    width, height = math.ceil((right - left) / res), math.ceil((top - bottom) / res)
+    dst_transform = rasterio.Affine(res, 0, left, 0, -res, top)
+    dst = np.zeros((height, width), dtype=np.uint8)
+    rasterio.warp.reproject(
+        idx, dst, src_transform=transform, src_crs=crs, dst_transform=dst_transform, dst_crs="EPSG:3857",
+        src_nodata=0, dst_nodata=0, resampling=rasterio.warp.Resampling.nearest,
+    )
+    (out / "fuel.bin").write_bytes(dst.tobytes())
+    return {
+        "file": "fuel.bin",
+        "width": width,
+        "height": height,
+        "cell_m": 30,
+        "crs": "EPSG:3857",
+        "origin": [left, top],
+        "res": res,
+        "codes": [{"index": i, "code": c, "fuel": fuel_of(c), "cat": category_of(c, nodata)} for i, c in enumerate(codes, start=1)],
+    }
 
 
 def leafoff_features(drop: np.ndarray, ndvi_on: np.ndarray, transform, to_wgs84, clip=None):
@@ -283,24 +355,32 @@ def main():
 
     print("analyzing buildings…", file=sys.stderr)
     raw = json.loads(buildings_path.read_text())
-    out_feats = []
-    ring_feats = []
-    stats = {"total": 0, "hazard_overlap": 0, "hazard_within_30m": 0, "needs_evaluation": 0, "incomplete": 0, "scan_priority_60": 0}
-    for fid, feat in enumerate(raw["features"], start=1):
+    footprints = []  # (feature, wgs84 geom, raster-crs geom)
+    for feat in raw["features"]:
         g84 = shape(feat["geometry"])
         if g84.is_empty or not g84.is_valid:
             g84 = g84.buffer(0)
             if g84.is_empty:
                 continue
-        g = shp_transform(to_raster, g84)
+        footprints.append((feat, g84, shp_transform(to_raster, g84)))
+    bldg_tree = STRtree([g for _, _, g in footprints])
+    out_feats = []
+    ring_feats = []
+    rows = []
+    stats = {"total": 0, "hazard_overlap": 0, "hazard_within_30m": 0, "needs_evaluation": 0, "incomplete": 0, "exposure_60": 0}
+    for fid, (feat, g84, g) in enumerate(footprints, start=1):
         res = analyze_building(g, arr, transform, nodata, hz_tree, hz_geoms)
         if not coverage_poly.contains(g84):
             res.coverage_complete = False
+        zone = g.buffer(SCREEN_M)
         if drop is not None:
-            lo = mean_under(g.buffer(SCREEN_M), drop, transform)
+            lo = mean_under(zone, drop, transform)
             res.leafoff_30m = None if lo is None else round(lo, 3)
-        res.scan_priority = scan_priority(res, res.leafoff_30m)
-        stats["scan_priority_60"] += res.scan_priority >= 60
+        res.f_fuel = round(fuel_exposure(res, fuel_cover(zone, arr, transform, nodata)), 3)
+        res.l_leafoff = round(leafoff_exposure(res.leafoff_30m), 3)
+        res.n_neighbours = int(len(bldg_tree.query(zone, predicate="intersects")) - 1)
+        res.exposure = round(exposure_of(res.f_fuel, res.l_leafoff, res.n_neighbours), 3)
+        stats["exposure_60"] += res.exposure >= 0.6
         stats["total"] += 1
         stats["hazard_overlap"] += res.hazard_overlap
         stats["hazard_within_30m"] += res.hazard_within_30m
@@ -317,8 +397,15 @@ def main():
         props["lon"], props["lat"] = round(c.x, 6), round(c.y, 6)
         props["area_m2"] = round(g.area, 1)
         out_feats.append({"type": "Feature", "id": fid, "geometry": mapping(g84), "properties": props})
+        rows.append([fid, props["lon"], props["lat"], res.exposure, res.f_fuel, res.l_leafoff, res.n_neighbours, props["area_m2"]])
         ring84 = shp_transform(to_wgs84, g.buffer(SCREEN_M, quad_segs=6))
         ring_feats.append({"type": "Feature", "id": fid, "geometry": mapping(ring84), "properties": {"fid": fid}})
+
+    (out / "buildings.json").write_text(
+        json.dumps({"fields": ["fid", "lon", "lat", "exposure", "f_fuel", "l_leafoff", "n_neighbours", "area_m2"], "rows": rows}, separators=(",", ":"))
+    )
+    print("writing fuel grid…", file=sys.stderr)
+    grid = write_fuel_grid(arr, transform, crs, nodata, bbox, out)
 
     buildings_geojson = work / "buildings.geojson"
     buildings_geojson.write_text(json.dumps({"type": "FeatureCollection", "features": out_feats}, separators=(",", ":")))
@@ -354,7 +441,13 @@ def main():
         "hazard_features": n_hz,
         "tiles": {"buildings": "buildings.pmtiles", "hazard": "hazard.pmtiles", **({"leafoff": "leafoff.pmtiles"} if drop is not None else {})},
         "leafoff": {**leafoff_meta, "classes": [{"min_drop": t, "drop_class": c} for t, c in LEAFOFF_CLASSES], "full_drop": LEAFOFF_FULL} if leafoff_meta is not None else None,
-        "scan_priority": "static 0-100 = hazard (overlap 1.0; within 30 m 0.55-1.0 by distance; else 0.1) x litter (0.5 + 0.5 x leaf-off/0.35); the UI multiplies by live CWFIS fine-fuel dryness",
+        "files": {"buildings": "buildings.json"},
+        "grid": grid,
+        "risk": {
+            "weights": RISK_WEIGHTS,
+            "neighbour_cap": NEIGHBOUR_CAP,
+            "formula": "risk = 100 x exposure x (0.4 + 0.6 x dryness); exposure = 0.55 F + 0.25 L + 0.20 N (static, here); dryness = live CWFIS FFMC 70-95 -> 0-1 (browser)",
+        },
     }
     (out / "coverage.json").write_text(json.dumps(coverage, indent=2))
     shutil.copy(HERE / "categories.json", out / "categories.json")
