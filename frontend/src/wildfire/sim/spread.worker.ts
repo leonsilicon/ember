@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import { contours } from 'd3-contour'
 import { directionalRos, headDirectionRad, headRos, isi as isiOf, lengthToBreadth } from './fbp'
-import { CLEARED_FACTOR, IGNITION_FLOOR, type SimRequest, type SimResult } from './protocol'
+import { CLEARED_FACTOR, IGNITION_FLOOR, type BatchRequest, type BatchResult, type SimRequest, type SimResult } from './protocol'
 
 /**
  * Fire-arrival-time grid by Dijkstra over a 16-neighbour lattice (minimum travel time, the same idea as
@@ -168,12 +168,15 @@ export function run(req: SimRequest): SimResult {
 
   // Isochrones: d3-contour encloses cells with value >= threshold, so contour -arrival at -minutes
   // (unreached = -1e9) to get the polygon of cells reached by each hour rather than its complement.
-  const vals = new Float64Array(n)
-  for (let i = 0; i < n; i++) vals[i] = isFinite(arrival[i]) ? -arrival[i] : -1e9
-  // d3 sorts thresholds ascending, so map the polygons back to the requested order by value
-  const gen = contours().size([width, height]).thresholds(req.isochroneMin.map((m) => -m)).smooth(true)
-  const byValue = new Map(gen(Array.from(vals)).map((c) => [c.value, c.coordinates]))
-  const isochrones = req.isochroneMin.map((m) => ({ type: 'MultiPolygon' as const, coordinates: byValue.get(-m) ?? [] }))
+  let isochrones: SimResult['isochrones'] = []
+  if (req.isochroneMin.length) {
+    const vals = new Float64Array(n)
+    for (let i = 0; i < n; i++) vals[i] = isFinite(arrival[i]) ? -arrival[i] : -1e9
+    // d3 sorts thresholds ascending, so map the polygons back to the requested order by value
+    const gen = contours().size([width, height]).thresholds(req.isochroneMin.map((m) => -m)).smooth(true)
+    const byValue = new Map(gen(Array.from(vals)).map((c) => [c.value, c.coordinates]))
+    isochrones = req.isochroneMin.map((m) => ({ type: 'MultiPolygon' as const, coordinates: byValue.get(-m) ?? [] }))
+  }
 
   return {
     type: 'result',
@@ -190,11 +193,26 @@ export function run(req: SimRequest): SimResult {
   }
 }
 
+/** Same fire, same weather, one run per variant of the actions; only the counts come back. */
+export function runBatch(req: BatchRequest): BatchResult {
+  const t0 = performance.now()
+  const results = req.variants.map((v) => {
+    const r = run({ ...req.base, cleared: v.cleared, blocked: v.blocked, isochroneMin: [] })
+    return { id: v.id, ignitedHomes: r.ignitedHomes, burnedHa: r.burnedHa }
+  })
+  return { type: 'batch', batchId: req.batchId, results, elapsedMs: performance.now() - t0 }
+}
+
 // guarded so the solver can be imported by unit tests outside a worker
 if (typeof self !== 'undefined' && 'postMessage' in self) {
-  self.onmessage = (ev: MessageEvent<SimRequest>) => {
-    if (ev.data.type !== 'run') return
-    const res = run(ev.data)
+  self.onmessage = (ev: MessageEvent<SimRequest | BatchRequest>) => {
+    const msg = ev.data
+    if (msg.type === 'batch') {
+      ;(self as unknown as Worker).postMessage(runBatch(msg))
+      return
+    }
+    if (msg.type !== 'run') return
+    const res = run(msg)
     ;(self as unknown as Worker).postMessage(res, [res.arrival.buffer, res.ignition.buffer])
   }
 }

@@ -36,7 +36,13 @@ body {
   text-transform: uppercase;
   color: var(--ops-muted);
 }
-.ops .panel { background: var(--ops-panel); border: 1px solid var(--ops-border); }
+.ops .panel {
+  background: rgb(28 33 39 / 0.76);
+  border: 1px solid rgb(57 75 89 / 0.85);
+  border-radius: 10px;
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  backdrop-filter: blur(12px) saturate(1.2);
+}
 .ops .hair { border-color: var(--ops-border); }
 .ops .grid-bg {
   background-image:

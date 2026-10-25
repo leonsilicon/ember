@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { IGNITION_FLOOR, type SimRequest } from './protocol'
-import { run } from './spread.worker'
+import { run, runBatch } from './spread.worker'
 
 const W = 80, H = 80
 function req(over: Partial<SimRequest> = {}): SimRequest {
@@ -65,5 +65,18 @@ describe('spread worker', () => {
     for (let r = 0; r < H; r++) for (let c = 50; c <= 52; c++) blocked[r * W + c] = 1
     const r = run(req({ blocked, weather: { ffmc: 92, windKmh: 30, windFromDeg: 270, month: 10 } }))
     for (let row = 0; row < H; row++) for (let c = 53; c < W; c++) expect(r.arrival[row * W + c]).toBe(Infinity)
+  })
+
+  it('batch: a break between the fire and a home saves it; other variants match single runs', () => {
+    const base = req({ buildingCell: Int32Array.from([40 * W + 60]), buildingExposure: Float32Array.from([0.8]), cleared: new Uint8Array(1) })
+    const blocked = new Uint8Array(W * H)
+    for (let r = 0; r < H; r++) for (let c = 50; c <= 52; c++) blocked[r * W + c] = 1
+    const b = runBatch({ type: 'batch', batchId: 7, base, variants: [{ id: 1, cleared: new Uint8Array(1), blocked: null }, { id: 2, cleared: new Uint8Array(1), blocked }] })
+    expect(b.batchId).toBe(7)
+    expect(b.results.map((x) => x.id)).toEqual([1, 2])
+    expect(b.results[0].ignitedHomes).toBe(run(base).ignitedHomes)
+    expect(b.results[0].ignitedHomes).toBe(1)
+    expect(b.results[1].ignitedHomes).toBe(0)
+    expect(b.results[1].burnedHa).toBeLessThan(b.results[0].burnedHa)
   })
 })

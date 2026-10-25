@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { buildFuelGrid, type FuelGrid } from './sim/grid'
-import type { BuildingRow, Categories, Coverage } from './types'
+import type { BuildingRow, Categories, Coverage, ZoneProps, Zones } from './types'
 
 export const DATA_BASE = '/wildfire/'
 
@@ -11,6 +11,9 @@ export interface WildfireData {
   buildings: BuildingRow[]
   byFid: Map<number, BuildingRow>
   grid: FuelGrid | null
+  /** high fire-risk zones, most dangerous first */
+  zones: Zones
+  byZid: Map<number, ZoneProps>
 }
 
 async function getJson<T>(name: string, signal: AbortSignal): Promise<T> {
@@ -27,7 +30,7 @@ export function useWildfireData() {
     const ctrl = new AbortController()
     ;(async () => {
       const [coverage, categories] = await Promise.all([getJson<Coverage>('coverage.json', ctrl.signal), getJson<Categories>('categories.json', ctrl.signal)])
-      const [rowsRaw, gridBytes] = await Promise.all([
+      const [rowsRaw, gridBytes, zones] = await Promise.all([
         getJson<{ fields: string[]; rows: number[][] }>(coverage.files?.buildings ?? 'buildings.json', ctrl.signal),
         coverage.grid
           ? fetch(`${DATA_BASE}${coverage.grid.file}`, { signal: ctrl.signal }).then((r) => {
@@ -35,6 +38,7 @@ export function useWildfireData() {
               return r.arrayBuffer()
             })
           : Promise.resolve(null),
+        coverage.zones ? getJson<Zones>(coverage.zones.file, ctrl.signal) : Promise.resolve<Zones>({ type: 'FeatureCollection', features: [] }),
       ])
       const f = rowsRaw.fields
       const ix = (k: string) => f.indexOf(k)
@@ -45,7 +49,8 @@ export function useWildfireData() {
       buildings.sort((a, b) => b.exposure - a.exposure)
       const byFid = new Map(buildings.map((b) => [b.fid, b]))
       const grid = coverage.grid && gridBytes ? buildFuelGrid(coverage.grid, gridBytes) : null
-      setData({ coverage, categories, buildings, byFid, grid })
+      const byZid = new Map(zones.features.map((z) => [z.properties.zid, z.properties]))
+      setData({ coverage, categories, buildings, byFid, grid, zones, byZid })
     })().catch((e: unknown) => {
       if ((e as Error).name !== 'AbortError') setError((e as Error).message)
     })

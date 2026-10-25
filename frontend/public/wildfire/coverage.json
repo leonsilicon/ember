@@ -52,11 +52,19 @@
     "incomplete": 23,
     "exposure_60": 376
   },
-  "hazard_features": 147694,
   "tiles": {
-    "buildings": "buildings.pmtiles",
-    "hazard": "hazard.pmtiles",
-    "leafoff": "leafoff.pmtiles"
+    "buildings": "buildings.pmtiles"
+  },
+  "zones": {
+    "file": "zones.geojson",
+    "count": 307,
+    "weights": {
+      "fuel": 0.6,
+      "leafoff": 0.4
+    },
+    "min_score": 0.6,
+    "min_ha": 5.0,
+    "formula": "zone cell score = 0.6 x fuel weight (Ontario fuel category) + 0.4 x leaf-off (Sentinel-2 NDVI drop / 0.35); cells >= 0.6, smoothed, >= 5 ha"
   },
   "leafoff": {
     "leaf_on": {

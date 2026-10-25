@@ -40,6 +40,21 @@ export interface SimResult {
   elapsedMs: number
 }
 
+/** Many what-if runs that differ only in actions; used to search for the most useful mitigation. */
+export interface BatchRequest {
+  type: 'batch'
+  batchId: number
+  base: SimRequest
+  variants: { id: number; cleared: Uint8Array; blocked: Uint8Array | null }[]
+}
+
+export interface BatchResult {
+  type: 'batch'
+  batchId: number
+  results: { id: number; ignitedHomes: number; burnedHa: number }[]
+  elapsedMs: number
+}
+
 /** Exposure below which a home does not ignite even when the front passes (FireSmart "clean zone"). */
 export const IGNITION_FLOOR = 0.2
 /** Fraction of exposure left after clearing the 30 m Home Ignition Zone. */

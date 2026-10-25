@@ -1,12 +1,15 @@
-import { Button, ProgressBar, Slider, Tag } from '@blueprintjs/core'
-import { ArrowLeft, Cross, Flame, Shield, Tree, Wind } from '@blueprintjs/icons'
+import { Button, ProgressBar, Slider, Spinner, Tag } from '@blueprintjs/core'
+import { ArrowLeft, Cross, Flame, Lightbulb, MapMarker, Random, Shield, Tick, Tree, Wind } from '@blueprintjs/icons'
 import { useState, type ReactNode } from 'react'
-import type { Dryness } from './live'
+import { usePlaceName } from './geocode'
+import { ffmcClass, type Dryness } from './live'
+import { ZONE_ORANGE } from './mapLayers'
 import type { FbpInputs } from './sim/fbp'
 import { CLEARED_FACTOR } from './sim/protocol'
-import type { SimActions, SimRun } from './sim/useSimulation'
+import type { Suggestion } from './sim/suggest'
+import type { SimActions, SimRun, SuggestState } from './sim/useSimulation'
 import { fmtClock } from './format'
-import { BAND, bandOf, drynessMultiplier, riskOf, type Band, type BuildingRow } from './types'
+import { BAND, bandOf, drynessMultiplier, riskOf, type Band, type BuildingRow, type ZoneProps } from './types'
 
 // ---------------------------------------------------------------- shared bits
 
@@ -20,12 +23,13 @@ export function RiskTag({ risk }: { risk: number }) {
 }
 
 function Row({ b, risk, active, onClick, trailing }: { b: BuildingRow; risk: number; active: boolean; onClick: () => void; trailing?: ReactNode }) {
+  const place = usePlaceName(b.lon, b.lat)
   return (
     <button type="button" onClick={onClick} className={`row-hover flex w-full items-center gap-3 border-b px-3 py-2 text-left hair ${active ? 'selected' : ''}`}>
       <span className="h-2 w-2 shrink-0" style={{ background: BAND[bandOf(risk)].color, boxShadow: `0 0 8px ${BAND[bandOf(risk)].color}` }} />
       <span className="flex-1 truncate">
-        <span className="mono text-xs" style={{ color: 'var(--ops-muted)' }}>#{b.fid}</span>
-        <span className="ml-2 text-xs" style={{ color: 'var(--ops-muted)' }}>{Math.round(b.area_m2)} m² · {b.n_neighbours} nbr</span>
+        <span className="text-xs">{place ?? `Home #${b.fid}`}</span>
+        <span className="ml-2 text-[11px]" style={{ color: 'var(--ops-muted)' }}>{Math.round(b.area_m2)} m²</span>
       </span>
       {trailing}
       <RiskTag risk={risk} />
@@ -45,51 +49,156 @@ export function Section({ title, children, right }: { title: string; children: R
   )
 }
 
-// ---------------------------------------------------------------- Homes
+// ---------------------------------------------------------------- Overview
 
-interface HomesProps {
+interface OverviewProps {
   buildings: BuildingRow[]
   dryness: number
-  filter: Band | 'all'
-  onFilter: (f: Band | 'all') => void
-  selected: number | null
-  onPick: (b: BuildingRow) => void
+  zones: ZoneProps[]
+  onRandomIgnite: () => void
+  clickIgnite: boolean
+  onClickIgnite: () => void
+  disabled: boolean
 }
 
-export function HomesTab({ buildings, dryness, filter, onFilter, selected, onPick }: HomesProps) {
-  const risks = buildings.map((b) => riskOf(b.exposure, dryness))
-  const counts = { critical: 0, elevated: 0, low: 0 }
-  risks.forEach((r) => counts[bandOf(r)]++)
-  const rows: { b: BuildingRow; r: number }[] = []
-  for (let i = 0; i < buildings.length && rows.length < 300; i++) {
-    const band = bandOf(risks[i])
-    if (filter === 'all' || band === filter) rows.push({ b: buildings[i], r: risks[i] })
-  }
+export function OverviewTab({ buildings, dryness, zones, onRandomIgnite, clickIgnite, onClickIgnite, disabled }: OverviewProps) {
+  const counts: Record<Band, number> = { critical: 0, elevated: 0, low: 0 }
+  for (const b of buildings) counts[bandOf(riskOf(b.exposure, dryness))]++
+  const ha = zones.reduce((s, z) => s + z.area_ha, 0)
+  const near = zones.reduce((s, z) => s + z.homes_30m, 0)
   return (
     <>
+      <div className="scan relative border-b p-4 hair" style={{ background: `linear-gradient(180deg, ${ZONE_ORANGE}26, transparent)` }}>
+        <div className="label">High fire-risk zones</div>
+        <div className="mt-1 flex items-end gap-3">
+          <div className="mono text-5xl leading-none" style={{ color: ZONE_ORANGE, textShadow: `0 0 24px ${ZONE_ORANGE}88` }}>{zones.length}</div>
+          <div className="pb-0.5 text-xs" style={{ color: 'var(--ops-muted)' }}>
+            {Math.round(ha).toLocaleString()} ha of high-hazard forest
+            <br />
+            {near.toLocaleString()} homes inside or within 30 m of one
+          </div>
+        </div>
+        <p className="mt-3 text-xs" style={{ color: 'var(--ops-muted)' }}>Click an orange zone or a home on the map to see why it is at risk and what to do about it.</p>
+      </div>
       <div className="grid grid-cols-3 border-b hair">
         {(['critical', 'elevated', 'low'] as Band[]).map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => onFilter(filter === k ? 'all' : k)}
-            className={`row-hover border-r p-3 text-left last:border-r-0 hair ${filter === k ? 'selected' : ''}`}
-          >
+          <div key={k} className="border-r p-3 last:border-r-0 hair">
             <div className="label" style={{ color: BAND[k].color }}>{BAND[k].label}</div>
             <div className="mono text-2xl leading-tight">{counts[k].toLocaleString()}</div>
-          </button>
+            <div className="text-[10px]" style={{ color: 'var(--ops-muted)' }}>homes today</div>
+          </div>
         ))}
       </div>
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="label">{filter === 'all' ? 'Highest risk today' : `${BAND[filter].label} homes`} · top {rows.length}</span>
-        <span className="label">Risk</span>
+      <Section title="Start a fire">
+        <div className="space-y-2">
+          <Button fill alignText="left" intent="danger" minimal icon={<Random />} onClick={onRandomIgnite} disabled={disabled}>
+            Random ignition in the forest
+          </Button>
+          <Button fill alignText="left" intent="danger" minimal icon={<MapMarker />} active={clickIgnite} onClick={onClickIgnite} disabled={disabled}>
+            {clickIgnite ? 'Click a forest spot on the map…' : 'Click the map to ignite'}
+          </Button>
+          <p className="text-[11px]" style={{ color: 'var(--ops-muted)' }}>Random picks a forest spot 0.3–1 km from homes. Fires use today's live wind and dryness; zone and home cards can start one too.</p>
+        </div>
+      </Section>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------- Zone
+
+interface ZoneTabProps {
+  z: ZoneProps
+  dryness: Dryness | null
+  onIgnite: () => void
+  onBack: () => void
+  simulating: boolean
+}
+
+const pct = (v: number) => `${Math.round(v * 100)} %`
+
+export function ZoneTab({ z, dryness, onIgnite, onBack, simulating }: ZoneTabProps) {
+  const place = usePlaceName(z.lon, z.lat)
+  const ff = ffmcClass(dryness?.ffmc ?? null)
+  const mix = z.fuel_mix
+  const conifer = (mix.extreme ?? 0) + (mix.high ?? 0) + (mix.pine_eval ?? 0)
+  const drivers = [
+    { k: 'High-hazard conifer', v: conifer, note: z.top_fuel ? `mostly ${z.top_fuel}` : undefined },
+    { k: 'Mixedwood (moderate)', v: mix.moderate ?? 0 },
+    { k: 'Fresh leaf litter (leaf-off)', v: z.leafoff_share },
+  ]
+  const steps: { icon: ReactNode; title: string; text: string }[] = []
+  if (conifer >= 0.3)
+    steps.push({ icon: <Tree size={12} />, title: 'Thin the conifers', text: `${pct(conifer)} of this zone is high-hazard conifer. Thinning and removing low branches keeps a surface fire from climbing into the crowns.` })
+  if (z.homes_500m > 0)
+    steps.push({ icon: <Tree size={12} />, title: 'Cut a fuel break towards the homes', text: `${z.homes_500m} homes are within 500 m. A 90 m break on the side facing them gives crews a line to hold. Simulate a fire to see where it pays off.` })
+  if (z.leafoff_share >= 0.05)
+    steps.push({ icon: <Tree size={12} />, title: 'Rake out fresh leaf litter', text: `${pct(z.leafoff_share)} of the zone dropped its leaves in the last month (Sentinel-2). Dry litter carries surface fire.` })
+  if (z.homes_30m > 0)
+    steps.push({ icon: <Shield size={12} />, title: 'Clear the 30 m zone around homes', text: `${z.homes_30m} home${z.homes_30m === 1 ? ' is' : 's are'} inside or within 30 m of this zone. FireSmart 0–30 m clearing is the owner's most effective step.` })
+  if (z.water_m != null && z.water_m <= 150)
+    steps.push({ icon: <Shield size={12} />, title: 'Anchor any break on the water', text: `Water is ${z.water_m === 0 ? 'right at the edge' : `${z.water_m} m away`}. Tie a fuel break into the shoreline so fire cannot run around its end.` })
+  return (
+    <>
+      <div className="flex items-center gap-2 border-b px-2 py-2 hair">
+        <Button small minimal icon={<ArrowLeft />} onClick={onBack} />
+        <span className="label" style={{ color: ZONE_ORANGE }}>High fire-risk zone</span>
+        <span className="ml-auto mono text-[11px]" style={{ color: 'var(--ops-muted)' }}>{z.lat.toFixed(4)}, {z.lon.toFixed(4)}</span>
       </div>
-      <div>
-        {rows.map(({ b, r }) => (
-          <Row key={b.fid} b={b} risk={r} active={selected === b.fid} onClick={() => onPick(b)} />
-        ))}
+      <div className="scan relative border-b p-4 hair" style={{ background: `linear-gradient(180deg, ${ZONE_ORANGE}26, transparent)` }}>
+        <div className="text-base">{place ? `Near ${place}` : `Zone ${z.zid}`}</div>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <Stat label="Area" value={`${z.area_ha.toLocaleString()}`} unit="ha" />
+          <Stat label="Homes ≤ 30 m" value={`${z.homes_30m}`} unit="inside or touching" />
+          <Stat label="Homes ≤ 500 m" value={`${z.homes_500m}`} unit="nearby" />
+        </div>
+      </div>
+      <Section title="Why it's risky">
+        <div className="space-y-2">
+          {drivers.map((d) => (
+            <div key={d.k}>
+              <div className="flex justify-between text-xs">
+                <span>{d.k}{d.note && <span style={{ color: 'var(--ops-muted)' }}> · {d.note}</span>}</span>
+                <span className="mono" style={{ color: 'var(--ops-muted)' }}>{pct(d.v)}</span>
+              </div>
+              <ProgressBar value={d.v} stripes={false} animate={false} intent={d.v > 0.5 ? 'danger' : d.v > 0.2 ? 'warning' : 'primary'} className="mt-1" />
+            </div>
+          ))}
+          <div className="flex justify-between border-t pt-2 text-xs hair">
+            <span className="flex items-center gap-1"><Wind size={12} />Dryness today (FFMC {dryness?.ffmc != null ? dryness.ffmc.toFixed(1) : '–'})</span>
+            <span className="mono" style={{ color: ff.color }}>{ff.label}</span>
+          </div>
+          <p className="text-[11px]" style={{ color: 'var(--ops-muted)' }}>
+            Dryness is one live CWFIS reading for the whole area: it sets how dangerous every zone is today, not where the zones are. The zones come from Ontario forest types and Sentinel-2 leaf-off.
+          </p>
+        </div>
+      </Section>
+      <Section title="How to reduce it">
+        {steps.length === 0 && <p className="text-xs" style={{ color: 'var(--ops-muted)' }}>No homes nearby; monitor and keep access routes open.</p>}
+        <div className="space-y-2">
+          {steps.map((st) => (
+            <div key={st.title} className="text-xs">
+              <div className="flex items-center gap-1.5" style={{ color: '#3dcc91' }}>{st.icon}{st.title}</div>
+              <div className="mt-0.5" style={{ color: 'var(--ops-muted)' }}>{st.text}</div>
+            </div>
+          ))}
+        </div>
+      </Section>
+      <div className="p-3">
+        <Button fill intent="danger" large icon={<Flame />} onClick={onIgnite} loading={simulating} className="mono uppercase tracking-widest">
+          Simulate fire here
+        </Button>
       </div>
     </>
+  )
+}
+
+function Stat({ label, value, unit }: { label: string; value: string; unit: string }) {
+  return (
+    <div>
+      <div className="label">{label}</div>
+      <div className="mono text-xl leading-tight">{value}</div>
+      <div className="text-[10px]" style={{ color: 'var(--ops-muted)' }}>{unit}</div>
+    </div>
   )
 }
 
@@ -109,6 +218,7 @@ interface HomeProps {
 }
 
 export function HomeTab({ b, dryness, drynessFactor, weights, neighbourCap, cleared, onToggleCleared, onIgnite, onBack, simulating }: HomeProps) {
+  const place = usePlaceName(b.lon, b.lat)
   const exposure = cleared ? b.exposure * CLEARED_FACTOR : b.exposure
   const risk = riskOf(exposure, drynessFactor)
   const band = BAND[bandOf(risk)]
@@ -122,7 +232,7 @@ export function HomeTab({ b, dryness, drynessFactor, weights, neighbourCap, clea
     <>
       <div className="flex items-center gap-2 border-b px-2 py-2 hair">
         <Button small minimal icon={<ArrowLeft />} onClick={onBack} />
-        <span className="mono text-xs" style={{ color: 'var(--ops-muted)' }}>HOME #{b.fid}</span>
+        <span className="truncate text-xs">{place ?? `Home #${b.fid}`}</span>
         <span className="ml-auto mono text-[11px]" style={{ color: 'var(--ops-muted)' }}>{b.lat.toFixed(5)}, {b.lon.toFixed(5)}</span>
       </div>
       <div className="scan relative border-b p-4 hair" style={{ background: `linear-gradient(180deg, ${band.color}22, transparent)` }}>
@@ -190,9 +300,17 @@ interface SimProps {
   onPick: (b: BuildingRow) => void
   onExit: () => void
   dryness: number
+  /** where the fire started, as a place name */
+  origin: string
+  /** suggestions for this run, or null if not searched yet */
+  suggest: SuggestState | null
+  onFindSuggestions: () => void
+  onApplySuggestion: (s: Suggestion) => void
+  water: { share: number; side: string } | null
 }
 
-export function SimTab({ run, baseline, status, t, weather, liveWeather, windSource, onWeather, actions, byFid, drawingBreak, onDrawBreak, onClearTop, onResetActions, onPick, onExit, dryness }: SimProps) {
+export function SimTab(props: SimProps) {
+  const { run, baseline, status, t, weather, liveWeather, windSource, onWeather, actions, byFid, drawingBreak, onDrawBreak, onClearTop, onResetActions, onPick, onExit, dryness } = props
   const ign = run ? [...run.ignitedAt.entries()].sort((a, b) => a[1] - b[1]) : []
   const ignitedNow = ign.filter(([, m]) => m <= t).length
   const saved = baseline && run && baseline !== run ? baseline.result.ignitedHomes - run.result.ignitedHomes : 0
@@ -207,7 +325,7 @@ export function SimTab({ run, baseline, status, t, weather, liveWeather, windSou
     <>
       <div className="flex items-center gap-2 border-b px-2 py-2 hair">
         <Flame size={14} style={{ color: 'var(--ops-red)' }} className={status === 'running' ? 'blink' : ''} />
-        <span className="mono text-xs">FIRE SPREAD · {run ? `from #${run.ignitionFid}` : '…'}</span>
+        <span className="mono truncate text-xs">FIRE SPREAD · {run ? `from ${props.origin}` : '…'}</span>
         <Button small minimal icon={<Cross />} className="ml-auto" onClick={onExit} aria-label="End simulation" />
       </div>
       <div className={`grid grid-cols-3 border-b hair ${status === 'running' ? 'sweep' : ''}`}>
@@ -250,6 +368,7 @@ export function SimTab({ run, baseline, status, t, weather, liveWeather, windSou
           </div>
         )}
       </Section>
+      <Suggestions {...props} />
       <Section
         title="Actions"
         right={hasActions ? <Button small minimal intent="danger" onClick={onResetActions}>reset</Button> : undefined}
@@ -284,6 +403,62 @@ export function SimTab({ run, baseline, status, t, weather, liveWeather, windSou
         })}
       </Section>
     </>
+  )
+}
+
+function Suggestions({ run, status, suggest, onFindSuggestions, onApplySuggestion, water, byFid }: SimProps) {
+  const nothingToSave = run != null && run.result.ignitedHomes === 0
+  return (
+    <Section
+      title="Suggested actions"
+      right={suggest?.status === 'done' ? <span className="label">{suggest.tested} tried · {(suggest.elapsedMs / 1000).toFixed(1)} s</span> : undefined}
+    >
+      {water && (
+        <p className="mb-2 text-xs">
+          <span style={{ color: 'var(--ops-cyan)' }}>Natural barrier: </span>
+          water stops {Math.round(water.share * 100)} % of this fire's 12 h edge, mostly on the {water.side} side.
+        </p>
+      )}
+      {nothingToSave && <p className="text-xs" style={{ color: 'var(--ops-muted)' }}>No homes ignite within 12 h, so there is nothing to protect.</p>}
+      {!nothingToSave && !suggest && (
+        <Button fill intent="primary" icon={<Lightbulb />} onClick={onFindSuggestions} disabled={!run || status === 'running'}>
+          Find the best fuel breaks
+        </Button>
+      )}
+      {suggest?.status === 'running' && (
+        <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--ops-muted)' }}>
+          <Spinner size={14} /> Re-running the fire with {suggest.tested} options…
+        </div>
+      )}
+      {suggest?.status === 'done' && suggest.items.length === 0 && (
+        <p className="text-xs" style={{ color: 'var(--ops-muted)' }}>None of the {suggest.tested} breaks or clearings tried saves a home against this fire. Try drawing one by hand.</p>
+      )}
+      {suggest?.status === 'done' && suggest.items.map((s) => <SuggestionCard key={s.id} s={s} byFid={byFid} onApply={() => onApplySuggestion(s)} />)}
+    </Section>
+  )
+}
+
+function SuggestionCard({ s, byFid, onApply }: { s: Suggestion; byFid: Map<number, BuildingRow>; onApply: () => void }) {
+  const target = s.targetFid != null ? byFid.get(s.targetFid) : undefined
+  const place = usePlaceName(target?.lon, target?.lat)
+  const title =
+    s.kind === 'break' ? `Cut a 90 m fuel break, ${((s.lengthM ?? 0) / 1000).toFixed(1)} km long` : `Clear the 30 m zones of the next ${s.clear?.length ?? 0} homes`
+  const why =
+    s.kind === 'break'
+      ? `${s.distM} m ${s.side} of ${place ?? 'the first home in its path'}. The fire reaches this line at ${fmtClock(s.reachMin ?? 0)}; that home would ignite at ${fmtClock(s.homeMin)}.`
+      : `They are the first homes to ignite, from ${fmtClock(s.homeMin)}. FireSmart 0–30 m clearing.`
+  return (
+    <div className="mb-2 rounded-md border p-2 hair">
+      <div className="flex items-start gap-2 text-xs">
+        <span className="mt-0.5" style={{ color: '#3dcc91' }}>{s.kind === 'break' ? <Tree size={12} /> : <Shield size={12} />}</span>
+        <span className="flex-1">{title}</span>
+        <Tag minimal intent="success" className="mono shrink-0">saves {s.saved}</Tag>
+      </div>
+      <p className="mt-1 text-[11px]" style={{ color: 'var(--ops-muted)' }}>{why}</p>
+      <Button small intent="success" icon={<Tick />} className="mt-1" onClick={onApply}>
+        Apply
+      </Button>
+    </div>
   )
 }
 
