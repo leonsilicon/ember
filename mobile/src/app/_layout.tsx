@@ -17,20 +17,11 @@ export default function RootLayout() {
         {/* The phone rides on the rover, so the app opens straight to the camera. */}
         <Stack>
           <Stack.Screen name="index" options={{ title: 'Camera', headerShown: false }} />
-          {/*
-            Like the Photos app: the newest capture full screen, then every capture as a grid. Only
-            its back button returns to the camera; swiping right pages through captures instead.
-          */}
+          {/* Every capture as a grid, from the camera screen's gallery, which its back button returns to. */}
           <Stack.Screen
-            name="captures"
-            options={{
-              title: 'Gallery',
-              headerShown: false,
-              gestureEnabled: false,
-              contentStyle: { backgroundColor: '#000' },
-            }}
+            name="all-captures"
+            options={{ title: 'All Captures', headerLargeTitle: true, headerBackTitle: 'Gallery' }}
           />
-          <Stack.Screen name="all-captures" options={{ title: 'All Captures', headerLargeTitle: true }} />
           <Stack.Screen
             name="capture-info"
             options={{

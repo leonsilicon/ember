@@ -1,10 +1,9 @@
 import { useEvent } from 'expo';
 import { Image } from 'expo-image';
-import { router, useFocusEffect, useIsFocused, useLocalSearchParams } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
+import { router, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -16,13 +15,14 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
 
-import { Glass } from '@/components/glass';
-import { SplatStatus } from '@/components/splat-status';
+import { BottomTray, TRAY_MARGIN } from './bottom-tray';
+import { SplatStatus } from './splat-status';
+
 import { Spacing } from '@/constants/theme';
 import { useSplatSettings } from '@/hooks/use-splat-settings';
 import { describeDay, describeTime, formatDuration, shareCapture } from '@/lib/captures';
@@ -32,49 +32,66 @@ function message(error: unknown) {
 }
 
 /**
- * The gallery, like the Photos app: the newest capture fills the screen and its video plays, and
- * swiping right goes back through older ones. Tapping shows or hides the controls; the grid button
- * shows every capture. The `id` param is the capture on screen (the newest without one), so the
- * grid opens a capture by coming back here with its id.
+ * The camera screen's gallery mode, laid out like its remote mode: the capture on screen plays
+ * whole in a card where the viewfinder was, and its controls (the splat it's being made into, the
+ * scrubber, share, info, delete and the grid of every capture) rise in a tray of glass under it,
+ * which the card makes room for. Swiping the card right goes back through older captures (the
+ * newest first, as in Photos), and pulling the tray down returns to the camera: there's no back
+ * button. The capture on screen is the camera screen's `capture` param (the newest without one), so
+ * the grid (/all-captures) opens one by coming back with its id; the camera screen clears it on
+ * closing, so the gallery opens on the newest again.
  */
-export default function GalleryScreen() {
-  const { id } = useLocalSearchParams<{ id?: string }>();
-  const { width, height } = useWindowDimensions();
+export function Gallery({ onClose }: { onClose: () => void }) {
+  const screen = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();
   const splat = useSplatSettings();
   /** Oldest first, so the newest is on the right, as in Photos. */
   const [captures, setCaptures] = useState<SavedCapture[] | null>(null);
-  const [chrome, setChrome] = useState(true);
+  /** The capture on screen; the newest while unset. */
+  const { capture: currentId } = useLocalSearchParams<{ capture?: string }>();
   const [error, setError] = useState<string | null>(null);
+  /** The tray's height once it's laid out, which the card leaves room for. */
+  const [trayHeight, setTrayHeight] = useState(0);
   const list = useRef<FlatList<SavedCapture>>(null);
-  /** The page the list rests on, so it's only scrolled when the capture on screen changes otherwise. */
-  const restingIndex = useRef<number | null>(null);
+  /** The page and page width the list rests at, so it's only scrolled when either changes under it. */
+  const resting = useRef<{ index: number; width: number } | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setCaptures((await SplatCapture.listCaptures()).reverse());
-    } catch (e) {
-      setError(message(e));
-    }
+  useEffect(() => {
+    let alive = true;
+    SplatCapture.listCaptures().then(
+      (list) => alive && setCaptures(list.reverse()),
+      (e) => alive && setError(message(e)),
+    );
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  // Re-read the folder whenever the screen is shown (a capture may have just been saved).
-  useFocusEffect(
-    useCallback(() => {
-      refresh();
-    }, [refresh]),
-  );
+  function select(captureId: string | undefined) {
+    router.setParams({ capture: captureId });
+  }
 
-  const found = captures?.findIndex((capture) => capture.captureId === id) ?? -1;
+  const found = captures?.findIndex((capture) => capture.captureId === currentId) ?? -1;
   const index = found >= 0 ? found : (captures?.length ?? 0) - 1;
   const current = index >= 0 ? captures?.[index] : undefined;
 
+  // The card: the screen's width at the shape of the camera's frames, under the status bar, with
+  // the tray's margin between it and the tray, unless that leaves it too tall, when it narrows
+  // rather than crops. It waits for the tray's height, so it appears at its size, once.
+  const roomBelow = trayHeight > 0 ? trayHeight + TRAY_MARGIN * 2 : 0;
+  const cardHeight = Math.max(
+    Math.min(screen.width / ASPECT, screen.height - insets.top - roomBelow),
+    MIN_CARD_HEIGHT,
+  );
+  const cardWidth = Math.min(cardHeight * ASPECT, screen.width);
+  const frame = { top: insets.top, left: (screen.width - cardWidth) / 2, width: cardWidth, height: cardHeight };
+
   useEffect(() => {
-    if (index < 0 || restingIndex.current === index) return;
-    restingIndex.current = index;
-    list.current?.scrollToOffset({ offset: index * width, animated: false });
-  }, [index, width]);
+    if (index < 0 || (resting.current?.index === index && resting.current.width === cardWidth)) return;
+    resting.current = { index, width: cardWidth };
+    list.current?.scrollToOffset({ offset: index * cardWidth, animated: false });
+  }, [index, cardWidth]);
 
   // One player for the capture on screen. Recordings have no sound; muted, they also leave other
   // apps' audio playing.
@@ -126,11 +143,11 @@ export default function GalleryScreen() {
             const neighbor = captures?.[index - 1] ?? captures?.[index + 1];
             try {
               await SplatCapture.deleteCapture(capture.captureId);
-              router.setParams({ id: neighbor?.captureId });
+              select(neighbor?.captureId);
+              setCaptures((list) => list?.filter((c) => c.captureId !== capture.captureId) ?? null);
             } catch (e) {
               setError(message(e));
             }
-            refresh();
           },
         },
       ],
@@ -148,88 +165,110 @@ export default function GalleryScreen() {
   const date = current ? new Date(current.savedAt) : null;
 
   return (
-    <View style={styles.container}>
-      {focused && <StatusBar style="light" hidden={!chrome} animated />}
-
-      {captures && captures.length > 0 && (
-        <FlatList
-          ref={list}
-          data={captures}
-          keyExtractor={(capture) => capture.captureId}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          initialScrollIndex={index}
-          getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
-          windowSize={3}
-          extraData={`${current?.captureId}|${loadedUri}`}
-          onMomentumScrollEnd={(event) => {
-            const i = Math.round(event.nativeEvent.contentOffset.x / width);
-            const capture = captures[i];
-            restingIndex.current = i;
-            if (capture && capture.captureId !== current?.captureId) router.setParams({ id: capture.captureId });
-          }}
-          renderItem={({ item }) => (
-            <Page
-              capture={item}
-              style={{ width, height }}
-              player={item === current && item.videoUri && item.videoUri === loadedUri ? player : null}
-              onPress={() => setChrome((shown) => !shown)}
+    <>
+      {trayHeight > 0 && (
+        <Animated.View entering={APPEAR} exiting={VANISH} layout={SWAP} style={[styles.card, frame]}>
+          {captures && captures.length > 0 && (
+            <FlatList
+              ref={list}
+              data={captures}
+              keyExtractor={(capture) => capture.captureId}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              initialScrollIndex={index}
+              getItemLayout={(_, i) => ({ length: cardWidth, offset: cardWidth * i, index: i })}
+              windowSize={3}
+              extraData={`${current?.captureId}|${loadedUri}`}
+              onMomentumScrollEnd={(event) => {
+                const i = Math.round(event.nativeEvent.contentOffset.x / cardWidth);
+                const capture = captures[i];
+                resting.current = { index: i, width: cardWidth };
+                if (capture && capture.captureId !== current?.captureId) select(capture.captureId);
+              }}
+              renderItem={({ item }) => (
+                <Page
+                  capture={item}
+                  style={{ width: cardWidth, height: cardHeight }}
+                  player={item === current && item.videoUri && item.videoUri === loadedUri ? player : null}
+                  onPress={item.videoUri ? () => togglePlaying(player) : undefined}
+                />
+              )}
             />
           )}
-        />
+
+          {captures?.length === 0 && (
+            <View style={styles.empty}>
+              <Text style={styles.emptyTitle}>No captures yet</Text>
+              <Text style={styles.emptyText}>Record one with the camera&apos;s record button.</Text>
+            </View>
+          )}
+        </Animated.View>
       )}
 
-      {captures?.length === 0 && (
-        <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>No captures yet</Text>
-          <Text style={styles.emptyText}>Record one with the camera&apos;s record button.</Text>
+      <BottomTray
+        label="Gallery"
+        // The card above it is part of the gallery too.
+        modal={false}
+        onClose={onClose}
+        onLayout={(event) => setTrayHeight(event.nativeEvent.layout.height)}>
+        <View style={styles.controls}>
+          <View style={styles.header}>
+            <View style={styles.title}>
+              {date ? (
+                <>
+                  <Text style={styles.titleDay} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                    {describeDay(date)}
+                  </Text>
+                  <Text style={styles.titleTime}>{describeTime(date)}</Text>
+                </>
+              ) : (
+                captures?.length === 0 && <Text style={styles.titleDay}>No captures</Text>
+              )}
+            </View>
+            <View style={styles.actions}>
+              {current && (
+                <>
+                  <IconButton icon="square.and.arrow.up" label="Share the capture" onPress={() => share(current)} />
+                  <IconButton
+                    icon="info.circle"
+                    label="Info"
+                    onPress={() => router.push({ pathname: '/capture-info', params: { id: current.captureId } })}
+                  />
+                  <IconButton icon="trash" label="Delete" onPress={() => confirmDelete(current)} />
+                </>
+              )}
+              <IconButton icon="square.grid.2x2" label="All captures" onPress={() => router.push('/all-captures')} />
+            </View>
+          </View>
+
+          {error && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={error}
+              accessibilityHint="Dismisses it"
+              onPress={() => setError(null)}>
+              <Text style={styles.errorText}>{error}</Text>
+            </Pressable>
+          )}
+
+          {current && (
+            // Its splat: sent to the Mac as soon as it was recorded (or from here, if that never happened), with pause and cancel.
+            <SplatStatus key={`splat-${current.captureId}`} capture={current} serverUrl={splat.serverUrl} autoStart onDark />
+          )}
+
+          {current?.videoUri && (
+            <PlaybackBar key={current.captureId} player={player} fallbackDuration={current.durationSeconds} />
+          )}
         </View>
-      )}
-
-      <Fade hidden={!chrome} style={[styles.top, { paddingTop: insets.top + Spacing.two }]}>
-        <RoundButton icon="chevron.left" label="Back to the camera" onPress={() => router.back()} />
-        {date && (
-          <View style={styles.title}>
-            <Text style={styles.titleDay}>{describeDay(date)}</Text>
-            <Text style={styles.titleTime}>{describeTime(date)}</Text>
-          </View>
-        )}
-        <RoundButton icon="square.grid.2x2" label="All captures" onPress={() => router.push('/all-captures')} />
-      </Fade>
-
-      <Fade hidden={!chrome} style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, Spacing.three) }]}>
-        {error && (
-          <Pressable accessibilityRole="button" onPress={() => setError(null)} style={styles.errorPanel}>
-            <Text style={styles.errorText}>{error}</Text>
-          </Pressable>
-        )}
-        {current && (
-          // Its splat: sent to the Mac as soon as it was recorded (or from here, if that never happened), with pause and cancel.
-          <SplatStatus key={`splat-${current.captureId}`} capture={current} serverUrl={splat.serverUrl} autoStart onDark />
-        )}
-        {current?.videoUri && (
-          <PlaybackBar key={current.captureId} player={player} fallbackDuration={current.durationSeconds} />
-        )}
-        {current && (
-          <View style={styles.toolbar}>
-            <RoundButton icon="square.and.arrow.up" label="Share the capture" onPress={() => share(current)} />
-            <RoundButton
-              icon="info.circle"
-              label="Info"
-              onPress={() => router.push({ pathname: '/capture-info', params: { id: current.captureId } })}
-            />
-            <RoundButton icon="trash" label="Delete" onPress={() => confirmDelete(current)} />
-          </View>
-        )}
-      </Fade>
-    </View>
+      </BottomTray>
+    </>
   );
 }
 
 /**
  * One capture, as large as fits. Its first frame stands in until `player` (only set for the page
- * on screen, once it holds this capture's video) draws over it.
+ * on screen, once it holds this capture's video) draws over it. A tap plays or pauses it.
  */
 function Page({
   capture,
@@ -240,14 +279,15 @@ function Page({
   capture: SavedCapture;
   player: VideoPlayer | null;
   style: StyleProp<ViewStyle>;
-  onPress: () => void;
+  onPress?: () => void;
 }) {
   const date = new Date(capture.savedAt);
   return (
     <Pressable
-      accessibilityRole="imagebutton"
+      accessibilityRole={onPress ? 'imagebutton' : 'image'}
       accessibilityLabel={`Capture, ${describeDay(date)} ${describeTime(date)}`}
-      accessibilityHint="Shows or hides the controls"
+      accessibilityHint={onPress ? 'Plays or pauses it' : undefined}
+      disabled={!onPress}
       onPress={onPress}
       style={style}>
       {capture.thumbnailUri ? (
@@ -261,7 +301,7 @@ function Page({
         )
       )}
       {player && (
-        // Taps go to the page, to show or hide the controls.
+        // Taps go to the page, to play or pause.
         <View style={[StyleSheet.absoluteFill, styles.inert]}>
           <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="contain" nativeControls={false} />
         </View>
@@ -270,7 +310,7 @@ function Page({
   );
 }
 
-/** Play/pause and a scrubber for the video on screen, in a glass capsule like the Photos app's. */
+/** Play/pause and a scrubber for the video on screen, in a dark capsule on the tray's glass. */
 function PlaybackBar({ player, fallbackDuration }: { player: VideoPlayer; fallbackDuration?: number }) {
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   const time = useEvent(player, 'timeUpdate')?.currentTime ?? 0;
@@ -289,25 +329,14 @@ function PlaybackBar({ player, fallbackDuration }: { player: VideoPlayer; fallba
     seek(player, fraction * duration);
   }
 
-  function togglePlaying() {
-    if (isPlaying) {
-      player.pause();
-      return;
-    }
-    // From the start again once it has played to the end.
-    if (duration > 0 && player.currentTime >= duration - 0.1) seek(player, 0);
-    player.play();
-  }
-
   const progress = scrub?.fraction ?? (duration > 0 ? Math.min(time / duration, 1) : 0);
 
   return (
     <View style={styles.playback}>
-      <Glass style={[StyleSheet.absoluteFill, styles.capsuleShape]} />
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
-        onPress={togglePlaying}
+        onPress={() => togglePlaying(player)}
         style={({ pressed }) => [styles.playButton, pressed && styles.pressed]}>
         <SymbolView name={isPlaying ? 'pause.fill' : 'play.fill'} size={18} tintColor="#fff" />
       </Pressable>
@@ -351,99 +380,98 @@ function seek(player: VideoPlayer, seconds: number) {
   player.currentTime = seconds;
 }
 
-/** Fades out while `hidden`, staying mounted, and meanwhile lets taps and VoiceOver past it. */
-function Fade({ hidden, style, children }: { hidden: boolean; style?: StyleProp<ViewStyle>; children: ReactNode }) {
-  const fade = useAnimatedStyle(() => ({ opacity: withTiming(hidden ? 0 : 1, { duration: 200 }) }));
-
-  return (
-    <Animated.View
-      accessibilityElementsHidden={hidden}
-      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
-      style={[style, fade, hidden ? styles.inert : styles.passThrough]}>
-      {children}
-    </Animated.View>
-  );
+/** Pauses, or plays: from the start again once it has played to the end. */
+function togglePlaying(player: VideoPlayer) {
+  if (player.playing) {
+    player.pause();
+    return;
+  }
+  const { duration } = player;
+  if (duration > 0 && player.currentTime >= duration - 0.1) seek(player, 0);
+  player.play();
 }
 
-function RoundButton({ icon, label, onPress }: { icon: SFSymbol; label: string; onPress: () => void }) {
+/** A plain white symbol, as the Camera app's tray draws its controls. */
+function IconButton({ icon, label, onPress }: { icon: SFSymbol; label: string; onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      hitSlop={Spacing.one}
       onPress={onPress}
-      style={({ pressed }) => [styles.round, pressed && styles.pressed]}>
-      <Glass style={[StyleSheet.absoluteFill, styles.roundShape]} />
-      <SymbolView name={icon} size={20} weight="medium" tintColor="#fff" />
+      style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
+      <SymbolView name={icon} size={ICON_GLYPH} weight="medium" tintColor="#fff" />
     </Pressable>
   );
 }
 
+/** The shape of the camera's frames (ARKit's world tracking, upright), which is all that records. */
+const ASPECT = 3 / 4;
+/** However tall the tray, the card keeps this much: the tray overlaps it rather than squash it. */
+const MIN_CARD_HEIGHT = 160;
+/** The card's corners, like the camera's. */
+const CARD_RADIUS = 24;
 const ROUND_SIZE = 48;
+const ICON_SIZE = 40;
+const ICON_GLYPH = 20;
 const KNOB_SIZE = 14;
-const SHADOW = {
-  textShadowColor: 'rgba(0,0,0,0.5)',
-  textShadowRadius: 4,
-} as const;
+// Eased like the camera's card, not sprung.
+const SWAP = LinearTransition.duration(260).easing(Easing.out(Easing.cubic));
+const APPEAR = FadeIn.duration(200);
+const VANISH = FadeOut.duration(200);
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  /** Where the camera's card was, edge to edge with its rounded corners. */
+  card: {
+    position: 'absolute',
+    overflow: 'hidden',
+    borderRadius: CARD_RADIUS,
+    borderCurve: 'continuous',
     backgroundColor: '#000',
   },
-  top: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.three,
+  controls: {
+    gap: Spacing.two,
   },
-  /** Centred on the screen, whatever the buttons either side. */
-  title: {
-    position: 'absolute',
-    left: Spacing.three + ROUND_SIZE,
-    right: Spacing.three + ROUND_SIZE,
-    bottom: 0,
-    height: ROUND_SIZE,
+  header: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    pointerEvents: 'none',
+    gap: Spacing.two,
+    minHeight: ICON_SIZE,
+  },
+  title: {
+    flex: 1,
   },
   titleDay: {
     color: '#fff',
     fontSize: 17,
     fontWeight: 600,
-    ...SHADOW,
   },
   titleTime: {
-    color: 'rgba(255,255,255,0.85)',
+    color: 'rgba(255,255,255,0.7)',
     fontSize: 13,
     fontWeight: 500,
-    ...SHADOW,
   },
-  bottom: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: Spacing.three,
-    gap: Spacing.three,
-  },
-  toolbar: {
+  /** The last symbol lines up with the text's edge, not its button's. */
+  actions: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: Spacing.one,
+    marginRight: -(ICON_SIZE - ICON_GLYPH) / 2,
   },
+  iconButton: {
+    width: ICON_SIZE,
+    height: ICON_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  /** Dark on the tray's glass, like the remote's joystick. */
   playback: {
     flexDirection: 'row',
     alignItems: 'center',
     height: ROUND_SIZE,
     paddingRight: Spacing.three,
-  },
-  capsuleShape: {
     borderRadius: ROUND_SIZE / 2,
+    backgroundColor: 'rgba(0,0,0,0.3)',
   },
   playButton: {
     width: ROUND_SIZE,
@@ -484,17 +512,8 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     textAlign: 'right',
   },
-  round: {
-    width: ROUND_SIZE,
-    height: ROUND_SIZE,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  roundShape: {
-    borderRadius: ROUND_SIZE / 2,
-  },
   empty: {
-    flex: 1,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.two,
@@ -511,23 +530,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   noPreview: {
-    position: 'absolute',
-    inset: 0,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.three,
   },
-  errorPanel: {
-    padding: Spacing.three,
-    borderRadius: Spacing.four,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
   errorText: {
     color: '#ffb4a8',
-    textAlign: 'center',
-  },
-  passThrough: {
-    pointerEvents: 'box-none',
+    fontSize: 14,
+    lineHeight: 20,
   },
   inert: {
     pointerEvents: 'none',

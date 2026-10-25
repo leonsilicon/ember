@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -37,6 +38,14 @@ class SplatCaptureView(context: Context, appContext: AppContext) : ExpoView(cont
       update()
     }
 
+  /** Light the scene with the torch, like the Camera app's flash in video mode; lit while the camera runs. */
+  var torch = false
+    set(value) {
+      if (field == value) return
+      field = value
+      camera?.cameraControl.enableTorch(value)
+    }
+
   // A TextureView, so the preview zooms (a transform) and clips to the card's rounded corners.
   private val preview = PreviewView(context).apply {
     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -44,6 +53,8 @@ class SplatCaptureView(context: Context, appContext: AppContext) : ExpoView(cont
   }
   private val analysisExecutor = Executors.newSingleThreadExecutor()
   private var provider: ProcessCameraProvider? = null
+  /** The bound camera, whose torch is the flash. */
+  private var camera: Camera? = null
   private var bound = false
   private var asked = false
   private var lastFrameAt = 0L
@@ -98,13 +109,17 @@ class SplatCaptureView(context: Context, appContext: AppContext) : ExpoView(cont
       .build()
     analysis.setAnalyzer(analysisExecutor) { image -> image.use { stream(it) } }
     provider.unbindAll()
-    provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, previewUseCase, analysis)
+    val camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, previewUseCase, analysis)
+    this.camera = camera
+    if (torch) camera.cameraControl.enableTorch(true)
     bound = true
   }
 
   private fun unbind() {
     if (!bound) return
+    // Unbinding closes the camera, torch and all.
     provider?.unbindAll()
+    camera = null
     bound = false
   }
 

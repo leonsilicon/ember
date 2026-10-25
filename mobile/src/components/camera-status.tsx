@@ -39,8 +39,12 @@ export const TONES = {
   on: '#FFD60A',
 };
 
-/** How many show before the chevron, as in TikTok's camera. */
-const COLLAPSED = 5;
+/**
+ * How many show before the chevron, as in TikTok's camera: on the back camera, the zoom, flip,
+ * flash and LiDAR controls, then tracking and detection, which fit above the record button on the
+ * smallest iPhone.
+ */
+const COLLAPSED = 6;
 
 /**
  * The camera's tools and status, like TikTok's camera tools: icons down the top right of the

@@ -222,7 +222,11 @@ Frames are only encoded while someone watches. The server is `CameraStreamServer
 
 The app is in **mount mode** by default: the phone rides on the rover, and its camera is the one
 that matters. It shows it whole (uncropped, in the frame's own 3:4 shape), detects leaves in it,
-records it and serves it on the Wi-Fi as above. The **Remote** button beside the record button
+records it and serves it on the Wi-Fi as above. In the dark, the **Flash** tool in the camera's rail
+(below the camera flip, yellow when on) lights the scene with the torch, as the Camera app's flash
+does in video mode: it stays lit while the back camera runs, goes out with it (in remote mode, say),
+and like LiDAR can't change mid-recording, since a change of light would show in the splat. The
+**Remote** button beside the record button
 switches to **remote mode**: the phone is in someone's hand, driving the rover, so its own camera
 pauses (unless it's recording), and the viewfinder shows the camera of the phone in mount mode
 instead, above the remote's tray (connection, speeds, joystick). Closing the tray goes back to

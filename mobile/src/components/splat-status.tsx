@@ -30,7 +30,7 @@ function message(error: unknown) {
  * this follows that upload wherever the capture is shown. With `autoStart`, a capture the server
  * has never seen and nothing has tried to send (one from before, or whose app was closed first) is
  * sent as soon as this shows (the gallery does that); one that was cancelled or failed waits to be
- * asked. `onDark`: over the gallery's black, in white.
+ * asked. `onDark`: on the gallery's tray, in white.
  */
 export function SplatStatus({
   capture,
@@ -101,7 +101,7 @@ export function SplatStatus({
   return (
     // Fixed heights: the status changes every couple of seconds while training, and the row must
     // not grow or shrink under the user's finger as it does.
-    <View style={[styles.container, onDark && styles.onDark]}>
+    <View style={styles.container}>
       <Text style={[styles.status, { color: dim }]} numberOfLines={2}>
         {state.kind === 'checking' && 'Splat: checking…'}
         {state.kind === 'idle' && 'Splat: not made yet'}
@@ -178,13 +178,6 @@ const styles = StyleSheet.create({
   container: {
     gap: Spacing.one,
     paddingTop: Spacing.one,
-  },
-  /** A translucent panel over the gallery's black, like its error panel. */
-  onDark: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
-    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   status: {
     fontSize: 14,

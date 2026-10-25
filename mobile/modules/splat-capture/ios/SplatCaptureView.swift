@@ -22,6 +22,11 @@ class SplatCaptureView: ExpoView {
     didSet { updateSession() }
   }
 
+  /// Lights the scene with the back camera's torch, like the Camera app's flash in video mode.
+  var torch = false {
+    didSet { CaptureController.shared.setTorch(torch) }
+  }
+
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
     clipsToBounds = true
