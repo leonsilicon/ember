@@ -50,6 +50,11 @@ public final class CameraStreamServer {
   /// can recognise the phone it used last. In the Bonjour TXT record and `/status`.
   public let id: String
   private var listener: NWListener?
+  /// The port `start` was given, until `stop`: where a listener cut off from Bonjour starts over.
+  private var port: UInt16?
+  /// Times in a row the listener has started over (see `canRetry`); 1 s, 2 s, 4 s… apart.
+  private var retries = 0
+  private static let maxRetries = 5
   private var viewers: [ObjectIdentifier: Viewer] = [:]
   private var latest: Data?
   /// The newest detections line (JSON, no newline), sent first to each `/detections` viewer.
@@ -81,39 +86,59 @@ public final class CameraStreamServer {
   /// Starts listening on `port` (0 picks a free one; see `state` for which). Restarts if already running.
   public func start(port: UInt16 = defaultPort) {
     queue.async { [self] in
-      self.stopListening()
-      self.setState(.starting)
-      do {
-        let parameters = NWParameters.tcp
-        parameters.allowLocalEndpointReuse = true
-        let listener = try NWListener(using: parameters, on: port == 0 ? .any : NWEndpoint.Port(rawValue: port)!)
-        // The TXT record says which device it is; Bonjour renames the service if the name is taken.
-        let txt = NWTXTRecord(["device": self.device, "id": self.id, "path": "/camera.mjpg"])
-        listener.service = NWListener.Service(name: "Rover camera (\(self.device))", type: Self.serviceType,
-                                              txtRecord: txt)
-        listener.stateUpdateHandler = { [weak self, weak listener] state in
-          guard let self, let listener, listener === self.listener else { return }
-          switch state {
-          case .ready: self.setState(.ready(port: listener.port?.rawValue ?? port))
-          case .waiting(let error): self.setState(Self.state(waitingOn: error))
-          case .failed(let error):
-            self.setState(.failed(error.localizedDescription))
-            self.stopListening()
-          default: break
+      self.retries = 0
+      self.listen(on: port)
+    }
+  }
+
+  /// On the queue.
+  private func listen(on port: UInt16) {
+    stopListening()
+    self.port = port
+    setState(.starting)
+    do {
+      let parameters = NWParameters.tcp
+      parameters.allowLocalEndpointReuse = true
+      let listener = try NWListener(using: parameters, on: port == 0 ? .any : NWEndpoint.Port(rawValue: port)!)
+      // The TXT record says which device it is; Bonjour renames the service if the name is taken.
+      let txt = NWTXTRecord(["device": device, "id": id, "path": "/camera.mjpg"])
+      listener.service = NWListener.Service(name: "Rover camera (\(device))", type: Self.serviceType,
+                                            txtRecord: txt)
+      listener.stateUpdateHandler = { [weak self, weak listener] state in
+        guard let self, let listener, listener === self.listener else { return }
+        switch state {
+        case .ready:
+          self.retries = 0
+          self.setState(.ready(port: listener.port?.rawValue ?? port))
+        case .waiting(let error) where self.canRetry(error), .failed(let error) where self.canRetry(error):
+          // iOS cuts a suspended app off from Bonjour, and the listener never recovers; the new one can
+          // find the old one's port still taken for a moment. Start over, waiting longer each time.
+          self.stopListening()
+          self.setState(.starting)
+          self.retries += 1
+          self.queue.asyncAfter(deadline: .now() + .seconds(1 << (self.retries - 1))) {
+            guard self.listener == nil, let port = self.port else { return }
+            self.listen(on: port)
           }
+        case .waiting(let error): self.setState(Self.state(waitingOn: error))
+        case .failed(let error):
+          self.setState(.failed(error.localizedDescription))
+          self.stopListening()
+        default: break
         }
-        listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
-        self.listener = listener
-        listener.start(queue: self.queue)
-      } catch {
-        self.setState(.failed(error.localizedDescription))
       }
+      listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+      self.listener = listener
+      listener.start(queue: queue)
+    } catch {
+      setState(.failed(error.localizedDescription))
     }
   }
 
   public func stop() {
     queue.async {
       self.stopListening()
+      self.port = nil
       self.setState(.stopped)
     }
   }
@@ -123,6 +148,21 @@ public final class CameraStreamServer {
   static func state(waitingOn error: NWError) -> State {
     if case .dns(let code) = error, code == -65570 { return .blocked }
     return .failed(error.localizedDescription)
+  }
+
+  /// kDNSServiceErr_DefunctConnection: iOS closed the app's connection to Bonjour, as it does while the
+  /// app is suspended. The listener or browser has to be made again.
+  static func isDefunct(_ error: NWError) -> Bool {
+    if case .dns(let code) = error { return code == -65569 }
+    return false
+  }
+
+  /// Whether a listener that stopped on `error` should start over by itself: cut off from Bonjour, or
+  /// (starting over after that) the port not free yet, a few times before saying so.
+  private func canRetry(_ error: NWError) -> Bool {
+    guard retries < Self.maxRetries else { return false }
+    if case .posix(.EADDRINUSE) = error { return true }
+    return Self.isDefunct(error)
   }
 
   /// A new camera frame: kept for `/frame.jpg` and sent to every viewer that's ready for one.

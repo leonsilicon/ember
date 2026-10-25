@@ -27,6 +27,8 @@ public final class CameraStreamBrowser {
 
   private let queue = DispatchQueue(label: "soon2026.camera-stream-browser")
   private let ownId: String
+  /// Between `start` and `stop`: whether a browser that failed should start over.
+  private var wanted = false
   private var browser: NWBrowser?
   private var results: Set<NWBrowser.Result> = []
   /// Connections made only to learn a service's address, by service.
@@ -39,6 +41,7 @@ public final class CameraStreamBrowser {
 
   public func start() {
     queue.async { [self] in
+      wanted = true
       guard browser == nil else { return }
       let browser = NWBrowser(for: .bonjourWithTXTRecord(type: CameraStreamServer.serviceType, domain: nil),
                               using: .tcp)
@@ -47,10 +50,18 @@ public final class CameraStreamBrowser {
         self?.update()
       }
       browser.stateUpdateHandler = { [weak self, weak browser] state in
-        // Failed (the network went away, say): start over in a moment.
-        guard case .failed = state, let self, let browser, self.browser === browser else { return }
+        // Failed (the network went away, say), or cut off from Bonjour (as iOS does to a suspended
+        // app): start over in a moment.
+        switch state {
+        case .failed: break
+        case .waiting(let error) where CameraStreamServer.isDefunct(error): break
+        default: return
+        }
+        guard let self, let browser, self.browser === browser else { return }
         self.stopBrowsing()
-        self.queue.asyncAfter(deadline: .now() + 2) { self.start() }
+        self.queue.asyncAfter(deadline: .now() + 2) {
+          if self.wanted { self.start() }
+        }
       }
       self.browser = browser
       browser.start(queue: queue)
@@ -59,6 +70,7 @@ public final class CameraStreamBrowser {
 
   public func stop() {
     queue.async { [self] in
+      wanted = false
       stopBrowsing()
     }
   }
