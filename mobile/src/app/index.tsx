@@ -282,6 +282,12 @@ export default function CameraScreen() {
   // The web app's live mode watches this camera over the Wi-Fi while the screen is open: in mount
   // mode, or while this phone records.
   const cameraStream = useCameraStream(capabilities.arkit && focused && (!remote || recording));
+  // The same boxes and tags for the web app's live view (none while detection is off).
+  usePublishDetections(
+    cameraStream,
+    detection ? detections.result : undefined,
+    detections.result && brain.captionsFor === detections.result ? brain.captions : undefined,
+  );
   // In remote mode, the camera of the phone in mount mode.
   const mountCamera = useMountCamera(remote && focused);
   /** Its frames' shape (width / height), once they play. */
@@ -462,12 +468,6 @@ export default function CameraScreen() {
           ? brain.autopilot.message
           : cameraStreamProblem(cameraStream);
   const result = detections.result;
-  // The same boxes and tags for the web app's live view (none while detection is off).
-  usePublishDetections(
-    cameraStream,
-    detection ? result : undefined,
-    result && brain.captionsFor === result ? brain.captions : undefined,
-  );
   // The viewfinder shows the camera's whole frame, uncropped, so all the rover can see is on screen
   // and under the detection boxes: it takes the frame's shape at the screen's full width, under the
   // status bar, in a card with rounded corners like Instagram's camera. The detector's frames are
