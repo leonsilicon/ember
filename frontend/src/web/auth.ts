@@ -98,9 +98,9 @@ export async function currentLogin() {
   return validSession((await cookies()).get(SESSION_COOKIE)?.value);
 }
 
-/** Where to go after signing in: a path on this site (never another origin), or the dashboard. */
+/** Where to go after signing in: a path on this site (never another origin), or the first tool. */
 export function safeNext(value: unknown) {
-  return typeof value === 'string' && /^\/(?![/\\])/.test(value) ? value : '/dashboard';
+  return typeof value === 'string' && /^\/(?![/\\])/.test(value) ? value : '/control';
 }
 
 /** For gated pages: a browser that hasn't signed in goes to the landing page, and back to `path` after. */

@@ -28,7 +28,7 @@ export function SplatViewer({ id }: { id: string }) {
   return (
     <div ref={container} className={styles.root}>
       <div className={styles.hud}>
-        <Link href="/">All captures</Link> · <span>{status}</span>
+        <Link href="/live">All captures</Link> · <span>{status}</span>
       </div>
     </div>
   );

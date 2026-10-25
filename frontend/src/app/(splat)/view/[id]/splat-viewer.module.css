@@ -1,5 +1,5 @@
 .root {
-  position: fixed;
+  position: absolute;
   inset: 0;
   overflow: hidden;
   background: #0d0d0d;
@@ -11,7 +11,7 @@
 }
 
 .hud {
-  position: fixed;
+  position: absolute;
   left: 12px;
   right: 12px;
   top: 12px;

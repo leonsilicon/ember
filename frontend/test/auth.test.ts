@@ -59,9 +59,9 @@ test('API routes take the session cookie as well as the token', () => {
 test('after signing in, only a path on this site is followed', () => {
   expect(safeNext('/control')).toBe('/control');
   expect(safeNext('/view/cap-1?step=3')).toBe('/view/cap-1?step=3');
-  expect(safeNext('//evil.example')).toBe('/dashboard');
-  expect(safeNext('/\\evil.example')).toBe('/dashboard');
-  expect(safeNext('https://evil.example')).toBe('/dashboard');
-  expect(safeNext(undefined)).toBe('/dashboard');
-  expect(safeNext(['/a', '/b'])).toBe('/dashboard');
+  expect(safeNext('//evil.example')).toBe('/control');
+  expect(safeNext('/\\evil.example')).toBe('/control');
+  expect(safeNext('https://evil.example')).toBe('/control');
+  expect(safeNext(undefined)).toBe('/control');
+  expect(safeNext(['/a', '/b'])).toBe('/control');
 });

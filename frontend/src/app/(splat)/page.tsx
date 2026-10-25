@@ -10,7 +10,7 @@ export const metadata = {
   description: 'An autonomous rover that clears the dry leaves that feed wildfires, with its yard rebuilt live in 3D.',
 };
 
-/** The landing page: sign in to reach the dashboard. A browser that already has goes straight there. */
+/** The landing page: sign in to reach the tools. A browser that already has goes straight there. */
 export default async function LandingPage({
   searchParams,
 }: {
@@ -50,7 +50,7 @@ export default async function LandingPage({
       </section>
       <section className={styles.card} aria-labelledby="sign-in">
         <h2 id="sign-in">Sign in</h2>
-        <p className={styles.hint}>The dashboard is for the demo team. There's no sign-up.</p>
+        <p className={styles.hint}>The tools are for the demo team. There's no sign-up.</p>
         <LoginForm next={next} />
         <p className={styles.fine}>Opened from the app? Its links sign this browser in on their own.</p>
       </section>

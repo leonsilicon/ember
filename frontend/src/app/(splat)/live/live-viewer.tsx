@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 
 import type { LiveSession, SessionStats } from '#live/hub.ts';
@@ -208,7 +207,6 @@ export function LiveViewer({ session: initial, embed }: { session: string | null
           </span>
           <span className={styles.stats}>{stats && describeStats(stats)}</span>
           <span className={styles.skip}>{stats?.lastSkip ? `Last skip: ${stats.lastSkip}` : ''}</span>
-          <Link href="/">Splat captures</Link>
         </div>
       )}
       {!hasPoints && (

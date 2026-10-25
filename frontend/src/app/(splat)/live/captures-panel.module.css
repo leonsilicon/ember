@@ -1,0 +1,96 @@
+.panel {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  width: min(340px, calc(100% - 32px));
+  box-sizing: border-box;
+  background: rgb(20 21 24 / 88%);
+  border: 1px solid #3a3c40;
+  border-radius: 12px;
+  color: #e8e8e6;
+  font-size: 13px;
+  backdrop-filter: blur(6px);
+}
+
+.panel summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-weight: 600;
+}
+
+.body {
+  max-height: min(50vh, 480px);
+  overflow: auto;
+  padding: 0 12px 10px;
+}
+
+.body p {
+  margin: 0 0 6px;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.list li {
+  padding: 8px 0;
+  border-top: 1px solid #2c2e33;
+}
+
+.list a {
+  color: #e8e8e6;
+  font-weight: 600;
+}
+
+.state {
+  display: block;
+  color: #b9b9b4;
+  font-size: 12px;
+}
+
+.failed {
+  color: #f27c6f;
+}
+
+.error {
+  white-space: pre-wrap;
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #b9b9b4;
+}
+
+@media (max-width: 720px) {
+  .panel {
+    top: auto;
+    bottom: 96px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+
+  .body {
+    max-height: 30vh;
+  }
+}
+
+.badge {
+  margin-left: 8px;
+  font-weight: 500;
+  color: #f0b35a;
+}
+
+.heading {
+  margin: 12px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9a9a94;
+}
+
+.name {
+  display: block;
+  font-weight: 600;
+}

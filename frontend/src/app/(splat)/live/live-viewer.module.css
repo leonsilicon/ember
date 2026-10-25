@@ -1,5 +1,5 @@
 .root {
-  position: fixed;
+  position: absolute;
   inset: 0;
   overflow: hidden;
   background: #0b0c0e;
@@ -12,7 +12,7 @@
 }
 
 .hud {
-  position: fixed;
+  position: absolute;
   left: 16px;
   right: 16px;
   pointer-events: none;
@@ -106,7 +106,7 @@
 }
 
 .empty {
-  position: fixed;
+  position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
@@ -131,4 +131,11 @@
 .compact strong {
   font-size: 13px;
   margin-bottom: 2px;
+}
+
+/* Room for the captures panel (captures-panel.module.css) at the top right. */
+@media (min-width: 721px) {
+  .top {
+    right: 380px;
+  }
 }

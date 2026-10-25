@@ -10,6 +10,8 @@ const config: NextConfig = {
   },
   // ws (for upgradeWebSocket) and ioredis load optional native addons at runtime; leave them unbundled.
   serverExternalPackages: ['ws', 'ioredis', 'bonjour-service'],
+  // The dashboard became the tab bar on every tool; its old links land on the first tab.
+  redirects: async () => [{ source: '/dashboard', destination: '/control', permanent: true }],
 };
 
 export default config;

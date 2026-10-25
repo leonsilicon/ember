@@ -29,7 +29,7 @@ export function LoginForm({ next }: { next: string }) {
       </label>
       <label className={styles.field}>
         <span>Password</span>
-        <input name="password" type="password" autoComplete="current-password" placeholder="••••" required />
+        <input name="password" type="password" autoComplete="current-password" placeholder="••••••••" required />
       </label>
       {state?.error && (
         <p className={styles.error} role="alert">
