@@ -66,7 +66,20 @@ jobs:
             git remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
           fi
           auth=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64)
-          git -c http.extraheader="AUTHORIZATION: basic $auth" fetch -q --depth 1 origin "$GITHUB_SHA"
+          # This Mac's network comes and goes (a phone's hotspot, Wi-Fi), so a transfer that stalls for a minute is
+          # given up and tried again rather than hanging for ten.
+          for attempt in 1 2 3; do
+            if git -c http.extraheader="AUTHORIZATION: basic $auth" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 \
+              fetch -q --depth 1 origin "$GITHUB_SHA"; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::could not fetch $GITHUB_SHA from GitHub"
+              exit 1
+            fi
+            echo "fetch attempt $attempt failed; trying again in 20 s"
+            sleep 20
+          done
           git checkout -q --detach FETCH_HEAD
           git clean -fdq
           git log -1 --oneline
