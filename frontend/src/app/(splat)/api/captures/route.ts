@@ -1,14 +1,13 @@
 import { del, issueSignedToken, presignUrl } from '@vercel/blob';
 
-import { blobPath, newJob, publicJob } from '#jobs.ts';
+import { blobPath, newJob, publicJob, UPLOAD_WINDOW_MS } from '#jobs.ts';
 import { authorized } from '#web/auth.ts';
 import { CAPTURE_ID, json, preflight, unauthorized } from '#web/http.ts';
 import { jobStore } from '#web/redis.ts';
 
 export const dynamic = 'force-dynamic';
 
-/** How long the phone has to upload, and the most it may upload (captures are a few hundred MB). */
-const UPLOAD_WINDOW_MS = 2 * 60 * 60 * 1000;
+/** The most the phone may upload (captures are a few hundred MB). */
 const MAX_UPLOAD_BYTES = 4 * 1024 ** 3;
 
 export async function GET(request: Request) {

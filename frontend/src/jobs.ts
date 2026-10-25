@@ -59,6 +59,9 @@ export function newJob(id: string): StoredJob {
   };
 }
 
+/** How long the phone has to finish an upload: its presigned upload URL lasts this long. */
+export const UPLOAD_WINDOW_MS = 2 * 60 * 60 * 1000;
+
 /** Where a capture's files are in the Blob store. */
 export const blobPath = {
   zip: (id: string) => `captures/${id}/capture.zip`,

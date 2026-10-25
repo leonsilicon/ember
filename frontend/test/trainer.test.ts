@@ -99,6 +99,42 @@ describe('training a queued capture', () => {
     expect((await readdir(t.runDir('cap-1'))).filter((f) => f.endsWith('.ply'))).toEqual(['splat_300.ply']);
   }, 20_000);
 
+  test('keeps training when a snapshot cannot be published for a while', async () => {
+    await queueCapture('cap-1', [{ file_path: 'images/frame_00000.jpg' }]);
+    // The first snapshot's upload finds the network down (past storage's own retries); a later tick sends it.
+    const storage = directoryStorage(blobDir);
+    let plyUploads = 0;
+    const flaky = { ...storage, upload: async (...args: Parameters<typeof storage.upload>) => {
+      if (args[0].endsWith('.ply') && ++plyUploads === 1) throw new TypeError('ECONNRESET: The socket connection was closed unexpectedly.');
+      return storage.upload(...args);
+    } };
+    const t = trainer(SLOW_BRUSH, flaky);
+    t.enqueue('cap-1');
+    await t.whenIdle();
+    expect(plyUploads).toBeGreaterThanOrEqual(2);
+    expect(await store.get('cap-1')).toMatchObject({ state: 'done', step: 300, gaussians: 3000, snapshots: [300] });
+    expect(await stored(blobPath.snapshot('cap-1', 300))).toContain('element vertex 3000');
+  }, 20_000);
+
+  test('says so when the splat is trained but cannot be stored', async () => {
+    await queueCapture('cap-1', [{ file_path: 'images/frame_00000.jpg' }]);
+    const storage = directoryStorage(blobDir);
+    const down = { ...storage, upload: async (...args: Parameters<typeof storage.upload>) => {
+      if (args[0].endsWith('.ply')) throw new TypeError('ECONNRESET: The socket connection was closed unexpectedly.');
+      return storage.upload(...args);
+    } };
+    const t = trainer(FAKE_BRUSH, down);
+    t.enqueue('cap-1');
+    await t.whenIdle();
+    const job = await store.get('cap-1');
+    expect(job?.state).toBe('failed');
+    expect(job?.error).toContain("trained, but the splat couldn't be stored");
+    expect(job?.error).toContain('ECONNRESET');
+    // The splat is still on disk, and the zip in storage, for when the network is back.
+    expect(await readdir(t.runDir('cap-1'))).toContain('splat_300.ply');
+    expect(await stored(blobPath.zip('cap-1'))).not.toBeNull();
+  });
+
   test('passes the growth fraction and splat cap to Brush', async () => {
     await queueCapture('cap-1', [{ file_path: 'images/frame_00000.jpg' }]);
     const t = trainer(FAKE_BRUSH);

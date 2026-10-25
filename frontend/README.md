@@ -6,7 +6,8 @@ that switches between the four tools and signs out, the rover pages under Ember'
 with the same four; sign-in lands on `/control`. Two sides share the app:
 
 - **The splat server** (`/live`, `/view/[id]`, `/api/*`; `src/app/(splat)`, `src/web`, `src/live`): the Live 3D tab also
-  lists the captures (finished splats, and the ones still uploading or training; `live/captures-panel.tsx`). It
+  lists the captures (finished splats, and the ones still uploading or training; an upload the phone never
+  finished is called out once its two-hour upload window is over; `live/captures-panel.tsx`). It
   trains the phone's captures into Gaussian splats and rebuilds recordings live in 3D through a Bun agent on a Mac
   (`src/agent`). The app reaches its API with one access token (`SPLAT_TOKEN`). The whole story is in
   [`mobile/SPLATS.md`](../mobile/SPLATS.md).

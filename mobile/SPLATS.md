@@ -98,7 +98,11 @@ recording stops, and shows the result in the gallery. It has two halves, so a ph
 - **The Mac agent** (`frontend/src/agent`, `bun run agent` there, or `vpx _dev`): a Bun process with no
   server of its own. It trains queued captures with Brush (one at a time) and runs the live
   reconstruction, talking to the same Redis and Blob store. Nothing trains while it's offline; the
-  queue waits for it.
+  queue waits for it. Its Blob calls are tried again for about a minute when the Mac's network
+  drops (the MacBook flips between the phone's hotspot and Wi-Fi), and a snapshot that still can't
+  be stored waits for the next tick, so a reset socket doesn't fail a job mid-training; only a
+  splat that can't be stored once training is over fails its job, and it stays in
+  `frontend/data/runs/<id>`.
 
 ```bash
 cd frontend
