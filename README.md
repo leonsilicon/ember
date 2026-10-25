@@ -1,4 +1,8 @@
-# soon2026
+<p align="center"><img src="assets/ember-mark.svg" alt="Ember logo" width="120"></p>
+
+# Ember
+
+An autonomous wildfire-prevention rover that clears dry leaves and pine needles before they burn.
 
 ## Quickstart
 
