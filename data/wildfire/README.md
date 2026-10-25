@@ -44,7 +44,7 @@ area-specific.
 
 `pytest tests` covers inside / boundary / 20 m / far / pine / nodata cases on a synthetic raster.
 
-## Canopy leaf-off layer and scan priority
+## Canopy leaf-off layer and Ignition Risk
 
 `leafoff.py` pulls two Sentinel-2 L2A scenes from Microsoft Planetary Computer (no key): the clearest
 leaf-on scene (Aug–Sep) and the latest clear autumn scene, masks clouds with SCL, and writes the NDVI
@@ -54,13 +54,14 @@ drop on the hazard grid:
         --out pilot_leafoff_30m_epsg3978.tif
 
 Pass it to the pipeline with `--leafoff`. Each building then gets `leafoff_30m` (mean NDVI drop in its
-30 m band) and a static `scan_priority` (0–100): mapped hazard (overlap 1.0; within 30 m 0.55–1.0 by
-distance; else 0.1) × litter (0.5 + 0.5 × drop/0.35). The UI multiplies this by today's CWFIS Fine Fuel
-Moisture Code (live GetFeatureInfo), so the number on screen moves with the weather. `leafoff.pmtiles`
-holds the drop classes (≥0.25 / ≥0.32 / ≥0.40) where there was canopy (leaf-on NDVI > 0.4).
+30 m band) and a static `exposure` (0–1) = 0.55 × fuel + 0.25 × leaf-off + 0.20 × neighbours, where fuel is
+the High/Extreme cover and proximity in the 30 m zone, leaf-off is the drop scaled to 0.35, and neighbours is
+the count of other structures within 30 m capped at 4 (`RISK_WEIGHTS`, `NEIGHBOUR_CAP`). The UI shows
+Ignition Risk = 100 × exposure × (0.4 + 0.6 × today's CWFIS fine-fuel dryness), so the number moves with the
+weather. `leafoff.pmtiles` holds the drop classes (≥0.25 / ≥0.32 / ≥0.40) where there was canopy (leaf-on
+NDVI > 0.4); `fuel.bin` is the hazard grid resampled for the fire-spread simulation.
 
-Satellites can't see a leaf pile; the drop measures canopy greenness loss, not litter on the ground. It ranks where the
-rover should look first, the rover verifies.
+Satellites can't see a leaf pile; the drop measures canopy greenness loss, not litter on the ground.
 
 `validate_leafoff.py` checks the layer against Ontario's fuel types (independent data): on the pilot, hardwood (D-1)
 cells show a median NDVI drop of 0.26 (57% ≥ 0.25), conifer stands 0.09 (0.5% ≥ 0.25), water 0.01; the drop separates

@@ -199,9 +199,10 @@ export function SimTab({ run, baseline, status, t, weather, liveWeather, windSou
   const hasActions = actions.cleared.size > 0 || actions.breaks.length > 0
   const [whatIf, setWhatIf] = useState(false)
   const isLive =
-    Math.round(weather.ffmc) === Math.round(liveWeather.ffmc) &&
-    Math.round(weather.windKmh) === Math.round(liveWeather.windKmh) &&
-    Math.round(weather.windFromDeg) === Math.round(liveWeather.windFromDeg)
+    weather.ffmc === liveWeather.ffmc &&
+    weather.windKmh === liveWeather.windKmh &&
+    weather.windFromDeg === liveWeather.windFromDeg &&
+    weather.month === liveWeather.month
   return (
     <>
       <div className="flex items-center gap-2 border-b px-2 py-2 hair">
