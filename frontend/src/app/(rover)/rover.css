@@ -1,11 +1,18 @@
 /* Tailwind for the laptop pages. Classes are read from everything under src/ (the path is relative to
    this file); the splat pages have their own root layout and CSS, so this never applies to them. */
-/* Blueprint (the wildfire console) sits in its own layer: above Tailwind's reset, below its utilities,
-   so its element styles (blue links and the like) never override a utility class. */
-@layer theme, base, blueprint, components, utilities;
 @import 'tailwindcss' source('../..');
-@import '@blueprintjs/core/lib/css/blueprint.css' layer(blueprint);
-@import '@blueprintjs/icons/lib/css/blueprint-icons.css' layer(blueprint);
+@import '@blueprintjs/core/lib/css/blueprint.css';
+@import '@blueprintjs/icons/lib/css/blueprint-icons.css';
+
+/* Blueprint (the wildfire console) styles bare elements without a layer, which would beat every Tailwind
+   utility on the rover pages (blue links and the like). Inside `.ember` those few rules revert to the layered
+   cascade, so the utilities apply. (Importing Blueprint into a layer instead breaks on its @charset.) */
+.ember a,
+.ember a:hover { color: revert-layer; text-decoration: revert-layer; cursor: revert-layer; }
+.ember p { margin: revert-layer; }
+.ember small { font-size: revert-layer; }
+.ember strong { font-weight: revert-layer; }
+.ember :focus { outline: revert-layer; outline-offset: revert-layer; }
 
 /* ---- Ember tokens (rover control + autopilot sim) ----
    A field instrument: warm grey enclosure, off-white module faces, one ember orange that means "live" or

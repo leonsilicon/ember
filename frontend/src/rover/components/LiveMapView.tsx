@@ -24,11 +24,31 @@ const MODE_LABEL: Record<string, string> = {
 }
 
 /** The browser's autopilot, when it's the one driving. */
-export type PilotView = { on: boolean; mode: string | null; message: string; targetId: number | null; load: number }
+export type PilotView = {
+  on: boolean
+  mode: string | null
+  message: string
+  targetId: number | null
+  load: number
+  /** The button it's holding (null: hold still). */
+  pressing: string | null
+  dryRun: boolean
+}
+
+/** The button the autopilot holds, said as an instruction to whoever (or whatever) is driving. */
+const INSTRUCTION: Record<string, { text: string; rotate: number | null }> = {
+  forward: { text: 'Forward', rotate: 0 },
+  back: { text: 'Back up', rotate: 180 },
+  left: { text: 'Turn left', rotate: -90 },
+  right: { text: 'Turn right', rotate: 90 },
+}
 
 type Props = {
   stream: LiveMapStream
   pilot?: PilotView
+  /** Clicking the map puts the pile there (`onPlace`, AR-world floor x/z). */
+  placing?: boolean
+  onPlace?: (x: number, z: number) => void
   /** The linked phone, for the readout; null when no phone is linked. */
   phone: string | null
 }
@@ -38,7 +58,7 @@ type Props = {
  * (rover, camera wedge, clear and blocked paths, tracked leaves, pile and work circle), from the map
  * lines the phone streams every steering tick. Fast where a splat is slow: it's a few hundred numbers.
  */
-export function LiveMapView({ stream, phone, pilot }: Props) {
+export function LiveMapView({ stream, phone, pilot, placing = false, onPlace }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef(stream)
   const [follow, setFollow] = useState(false)
@@ -47,10 +67,14 @@ export function LiveMapView({ stream, phone, pilot }: Props) {
   const [now, setNow] = useState(0)
 
   const pilotRef = useRef(pilot)
+  const placingRef = useRef(placing)
+  const onPlaceRef = useRef(onPlace)
   useEffect(() => {
     streamRef.current = stream
     pilotRef.current = pilot
-  }, [stream, pilot])
+    placingRef.current = placing
+    onPlaceRef.current = onPlace
+  }, [stream, pilot, placing, onPlace])
   useEffect(() => {
     viewRef.current = { follow, zoom: ZOOMS[zoom] }
   }, [follow, zoom])
@@ -77,6 +101,27 @@ export function LiveMapView({ stream, phone, pilot }: Props) {
 
     // What's drawn eases toward the newest pose, so 5 updates a second still move smoothly.
     const shown = { x: 0, z: 0, yaw: 0, cx: 0, cz: 0, init: false }
+    // The last frame's view, to turn a click into a floor position; and the pointer, for the pile's ghost.
+    const view = { w: 1, h: 1, scale: 1 }
+    let hover: [number, number] | null = null
+    const toWorld = (e: PointerEvent): [number, number] => {
+      const r = canvas.getBoundingClientRect()
+      return [shown.cx + (e.clientX - r.left - view.w / 2) / view.scale, shown.cz + (e.clientY - r.top - view.h / 2) / view.scale]
+    }
+    const onMove = (e: PointerEvent) => {
+      hover = toWorld(e)
+      canvas.style.cursor = placingRef.current ? 'crosshair' : ''
+    }
+    const onLeave = () => (hover = null)
+    const onDown = (e: PointerEvent) => {
+      if (!placingRef.current) return
+      e.preventDefault()
+      const [x, z] = toWorld(e)
+      onPlaceRef.current?.(Math.round(x * 100) / 100, Math.round(z * 100) / 100)
+    }
+    canvas.addEventListener('pointermove', onMove)
+    canvas.addEventListener('pointerleave', onLeave)
+    canvas.addEventListener('pointerdown', onDown)
     let raf = 0
     let last = performance.now()
 
@@ -116,6 +161,7 @@ export function LiveMapView({ stream, phone, pilot }: Props) {
       shown.cz += (target.z - shown.cz) * kc
       const span = Math.max(4, ((map?.workRadiusM ?? 1.8) * 2 + 1.5) / z)
       const scale = Math.min(w, h) / span
+      Object.assign(view, { w, h, scale })
       const px = (x: number) => w / 2 + (x - shown.cx) * scale
       const py = (zz: number) => h / 2 + (zz - shown.cz) * scale
 
@@ -143,6 +189,23 @@ export function LiveMapView({ stream, phone, pilot }: Props) {
       if (!map) {
         raf = requestAnimationFrame(draw)
         return
+      }
+      // Placing the pile: a ghost of it and its work circle under the pointer.
+      if (placingRef.current && hover) {
+        ctx.setLineDash([6, 5])
+        ctx.strokeStyle = C.pile
+        ctx.fillStyle = C.pileFill
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(px(hover[0]), py(hover[1]), (map.pile?.radiusM ?? 0.75) * scale, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+        ctx.strokeStyle = T.work
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.arc(px(hover[0]), py(hover[1]), map.workRadiusM * scale, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.setLineDash([])
       }
       const stale = receivedAt > 0 && performance.now() - receivedAt > STALE_MS
       ctx.globalAlpha = stale ? 0.45 : 1
@@ -265,6 +328,9 @@ export function LiveMapView({ stream, phone, pilot }: Props) {
     return () => {
       cancelAnimationFrame(raf)
       observer.disconnect()
+      canvas.removeEventListener('pointermove', onMove)
+      canvas.removeEventListener('pointerleave', onLeave)
+      canvas.removeEventListener('pointerdown', onDown)
     }
   }, [])
 
@@ -331,6 +397,28 @@ export function LiveMapView({ stream, phone, pilot }: Props) {
           <Icons.minus />
         </IconButton>
       </div>
+      {pilot?.on && (
+        <div
+          aria-live="assertive"
+          className="pointer-events-none absolute inset-x-3 bottom-12 mx-auto flex w-fit max-w-full items-center gap-3 rounded-2xl border border-line bg-panel/95 py-2.5 pr-5 pl-3 shadow-float backdrop-blur-sm"
+        >
+          <span
+            className={`grid h-11 w-11 place-items-center rounded-xl ${pilot.pressing ? 'bg-ink text-panel' : 'bg-danger text-white'}`}
+            style={pilot.pressing && INSTRUCTION[pilot.pressing]?.rotate != null ? { transform: `rotate(${INSTRUCTION[pilot.pressing].rotate}deg)` } : undefined}
+          >
+            {pilot.pressing ? <Icons.arrow /> : <span className="h-3.5 w-3.5 rounded-[3px] bg-white" />}
+          </span>
+          <span>
+            <span className="block text-xl font-semibold tracking-[-0.01em] text-ink">{pilot.pressing ? (INSTRUCTION[pilot.pressing]?.text ?? pilot.pressing) : 'Hold still'}</span>
+            <span className="block text-[11px] tracking-[0.12em] text-ink-3 uppercase">{pilot.dryRun ? 'Dry run · rover not connected' : 'Autopilot driving'}</span>
+          </span>
+        </div>
+      )}
+      {placing && (
+        <p className={`pointer-events-none absolute inset-x-3 mx-auto w-fit max-w-full rounded-full border border-ember bg-panel px-3.5 py-1.5 text-center text-xs font-medium text-ink shadow-float ${pilot?.on ? 'bottom-[7.25rem]' : 'bottom-12'}`}>
+          Click the map to put the pile there. <span className="text-ink-3">Esc cancels.</span>
+        </p>
+      )}
       <p className="pointer-events-none absolute right-3 bottom-3 rounded-md bg-panel/90 px-2 py-0.5 text-[11px] text-ink-2">1 m grid</p>
     </section>
   )

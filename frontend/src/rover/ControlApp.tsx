@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArmPanel } from './components/ArmPanel'
 import { CapturePanel } from './components/CapturePanel'
 import { ConnectionPanel } from './components/ConnectionPanel'
 import { CONNECTION_STYLES } from './components/connectionStyles'
 import { DPad } from './components/DPad'
+import { LiveJobPanel } from './components/LiveJobPanel'
 import { LiveMapView } from './components/LiveMapView'
 import { PhoneCameraPanel, type PhoneLink } from './components/PhoneCameraPanel'
 import { DEFAULT_SCENE, ScenePanel, type SceneSource } from './components/ScenePanel'
@@ -13,6 +14,7 @@ import { captureScene, useCaptures, viewable } from './hooks/useCaptures'
 import { useLiveMap } from './hooks/useLiveMap'
 import { useWebAutopilot } from './hooks/useWebAutopilot'
 import { usePhoneDiscovery } from './hooks/usePhoneDiscovery'
+import { applyJob, useLiveJob } from './liveJob'
 import { useRover } from './hooks/useRover'
 import { Button, Hint, Icons, Led } from './ui/kit'
 import { Module } from './ui/layout'
@@ -69,8 +71,19 @@ export default function App() {
   // Live mode's stage: the brain's map from the linked phone, drawn in an instant (a splat takes ages to load).
   const [phoneLink, setPhoneLink] = useState<PhoneLink | null>(null)
   const liveMap = useLiveMap(mode === 'live' ? (phoneLink?.origin ?? null) : null)
-  const pilot = useWebAutopilot(rover, liveMap, mode === 'live')
-  // A hand on the controls takes over from the autopilot.
+  // The job set here (radius, bin, pile) on top of the phone's map: what the autopilot works to and the map draws.
+  const [job, setJob] = useLiveJob()
+  const [placingPile, setPlacingPile] = useState(false)
+  const { map: phoneMap, receivedAt, trail, silent } = liveMap
+  const jobMap = useMemo(() => ({ map: applyJob(phoneMap, job), receivedAt, trail, silent }), [phoneMap, receivedAt, trail, silent, job])
+  const pilot = useWebAutopilot(rover, jobMap, mode === 'live')
+  useEffect(() => {
+    if (!placingPile) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setPlacingPile(false)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [placingPile])
+  // A hand on the controls takes over from the autopilot (it stops it first).
   const pressByHand: typeof rover.press = (direction) => {
     if (pilot.on) pilot.stop('Stopped: driving by hand')
     rover.press(direction)
@@ -101,7 +114,7 @@ export default function App() {
           </span>
         </span>
       }
-      actions={<StopButton compact disabled={!connected} onStop={stopByHand} />}
+      actions={<StopButton compact disabled={!connected && !pilot.on} onStop={stopByHand} />}
       banner={
         mode === 'simulated' && (
           <div className="hatch mx-2 mb-2 flex items-center justify-between gap-3 rounded-[10px] border border-warn/40 py-1.5 pr-1.5 pl-3.5 lg:mx-2.5">
@@ -117,7 +130,16 @@ export default function App() {
       // A new key per scene: each one brings its own camera (the sample is -y up, captures +y up).
       stage={
         mode === 'live' ? (
-          <LiveMapView stream={liveMap} phone={phoneLink?.device ?? null} pilot={pilot} />
+          <LiveMapView
+            stream={jobMap}
+            phone={phoneLink?.device ?? null}
+            pilot={pilot}
+            placing={placingPile}
+            onPlace={(x, z) => {
+              setJob((j) => ({ ...j, pile: { x, z } }))
+              setPlacingPile(false)
+            }}
+          />
         ) : (
           <SplatViewer key={scene?.url ?? 'none'} source={scene?.url ?? null} label={scene?.label} format={scene?.format} camera={scene?.camera} />
         )
@@ -131,7 +153,7 @@ export default function App() {
               meta={
                 <span className="inline-flex items-center gap-1.5 font-sans">
                   <Led tone={pilot.on ? 'live' : 'off'} blink={pilot.on && pilot.pressing == null} />
-                  {pilot.on ? (MODE_LABEL[pilot.mode ?? ''] ?? 'on') : 'off'}
+                  {pilot.on ? `${pilot.dryRun ? 'dry run · ' : ''}${MODE_LABEL[pilot.mode ?? ''] ?? 'on'}` : 'off'}
                 </span>
               }
             >
@@ -143,7 +165,7 @@ export default function App() {
               ) : (
                 <Button size="lg" variant="primary" className="w-full" disabled={pilot.blocker != null} onClick={pilot.start}>
                   <Icons.play />
-                  Start autopilot
+                  {connected ? 'Start autopilot' : 'Start dry run'}
                 </Button>
               )}
               <dl className="mt-3">
@@ -160,14 +182,24 @@ export default function App() {
               </dl>
               <Hint className="mt-2">
                 Steers by the phone's live map with the rover's own autopilot and presses the drive buttons as you would. Any drive key, a D-pad button or Stop takes over.
+                {!connected && ' With no rover connected it runs dry: the buttons are pressed on screen and nothing moves, so you can carry the phone and follow it.'}
               </Hint>
             </Module>
           )}
 
+          {mode === 'live' && <LiveJobPanel job={job} onChange={setJob} map={phoneMap} placing={placingPile} onPlacing={setPlacingPile} />}
+
           <Module id="drive" title="Drive" meta={`${pilot.on ? 'autopilot' : 'rover'}: ${snapshot.drive}`}>
             <div className="flex flex-col items-center gap-3.5">
-              <DPad held={rover.held} reportedDrive={snapshot.drive} disabled={!connected} onPress={pressByHand} onRelease={rover.release} auto={pilot.on} />
-              <StopButton disabled={!connected} onStop={stopByHand} />
+              <DPad
+                held={pilot.on ? pilot.pressing : rover.held}
+                reportedDrive={snapshot.drive}
+                disabled={!connected && !pilot.on}
+                onPress={pressByHand}
+                onRelease={rover.release}
+                auto={pilot.on}
+              />
+              <StopButton disabled={!connected && !pilot.on} onStop={stopByHand} />
             </div>
             <Hint className="mt-3">
               Hold a key or button to drive; let go to stop. Commands repeat every 100 ms, and the rover stops by itself after 300 ms of silence.

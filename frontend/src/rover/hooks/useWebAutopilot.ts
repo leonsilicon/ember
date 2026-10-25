@@ -19,6 +19,8 @@ export type WebAutopilot = {
   load: number
   /** Why Start is unavailable, or null when it can start. */
   blocker: string | null
+  /** Running without the rover connected: the buttons are pressed on screen, nothing is sent. */
+  dryRun: boolean
   start: () => void
   stop: (reason?: string) => void
 }
@@ -43,6 +45,9 @@ export function useWebAutopilot(rover: Rover, live: LiveMapStream, enabled: bool
   const state = useRef<AutopilotState | null>(null)
   const memory = useRef(newMemory())
   const pressingRef = useRef<Direction | null>(null)
+  /** Whether the rover was connected when it started: a run never switches between driving and dry. */
+  const drivingRef = useRef(false)
+  const [dryRun, setDryRun] = useState(false)
   const roverRef = useRef(rover)
   useEffect(() => {
     roverRef.current = rover
@@ -52,18 +57,18 @@ export function useWebAutopilot(rover: Rover, live: LiveMapStream, enabled: bool
   const { map, receivedAt } = live
   const blocker = !enabled
     ? 'Switch to Live rover to use the autopilot.'
-    : !connected
-      ? 'Connect to the rover first.'
-      : !map
+    : !map
         ? "Link the rover's iPhone: the autopilot steers by its live map."
         : !map.pile
-          ? 'Set the pile on the phone first: the autopilot works the circle round it.'
+          ? 'Place the pile first (Job panel or on the phone): the autopilot works the circle round it.'
           : null
 
   const hold = useCallback((direction: Direction | null) => {
     if (pressingRef.current === direction) return
     pressingRef.current = direction
     setPressing(direction)
+    // A dry run only shows the press.
+    if (!drivingRef.current) return
     if (direction) roverRef.current.press(direction)
     else roverRef.current.stop()
   }, [])
@@ -72,8 +77,9 @@ export function useWebAutopilot(rover: Rover, live: LiveMapStream, enabled: bool
     if (onRef.current) {
       pressingRef.current = null
       setPressing(null)
-      roverRef.current.stop()
+      if (drivingRef.current) roverRef.current.stop()
     }
+    drivingRef.current = false
     onRef.current = false
     state.current = null
     setOn(false)
@@ -82,12 +88,14 @@ export function useWebAutopilot(rover: Rover, live: LiveMapStream, enabled: bool
 
   const start = useCallback(() => {
     if (blocker) return
+    drivingRef.current = connected
+    setDryRun(!connected)
     state.current = initialAutopilotState(performance.now(), 0)
     memory.current = newMemory()
     setStatus({ message: 'Starting…', mode: 'searching', targetId: null, load: 0 })
     onRef.current = true
     setOn(true)
-  }, [blocker])
+  }, [blocker, connected])
 
   // One step per map update.
   useEffect(() => {
@@ -102,7 +110,7 @@ export function useWebAutopilot(rover: Rover, live: LiveMapStream, enabled: bool
     if (step.failedId != null) memory.current.failed.add(step.failedId)
     if (step.checkedId != null) memory.current.checked.add(step.checkedId)
     // The arm sequence is the scoop: run it once as each scoop starts.
-    if (entering === 'scooping') roverRef.current.runArm()
+    if (entering === 'scooping' && drivingRef.current) roverRef.current.runArm()
     hold(directionFor(step.left, step.right))
     // The step is the source of truth for the panel, mirrored into state for rendering.
     setStatus({ message: step.message, mode: step.state.mode, targetId: step.state.targetId ?? null, load: step.state.load })
@@ -116,11 +124,19 @@ export function useWebAutopilot(rover: Rover, live: LiveMapStream, enabled: bool
     }, 150)
     return () => window.clearInterval(timer)
   }, [on, live.receivedAt, stop])
+  // The rover dropping mid-run stops it; so does one connecting mid dry run (start again to drive it).
   useEffect(() => {
-    if (on && (!connected || !enabled)) {
-      const timer = window.setTimeout(() => stop(!connected ? 'Stopped: the rover disconnected' : 'Stopped'), 0)
-      return () => window.clearTimeout(timer)
-    }
+    if (!on) return
+    const reason = !enabled
+      ? 'Stopped'
+      : drivingRef.current && !connected
+        ? 'Stopped: the rover disconnected'
+        : !drivingRef.current && connected
+          ? 'Stopped: the rover connected. Start again to drive it'
+          : null
+    if (!reason) return
+    const timer = window.setTimeout(() => stop(reason), 0)
+    return () => window.clearTimeout(timer)
   }, [on, connected, enabled, stop])
 
   // Driving or stopping by hand takes over: drive keys, Space or Esc switch the autopilot off.
@@ -137,5 +153,5 @@ export function useWebAutopilot(rover: Rover, live: LiveMapStream, enabled: bool
 
   useEffect(() => () => roverRef.current.stop(), [])
 
-  return { on, ...status, pressing, blocker, start, stop }
+  return { on, ...status, pressing, blocker, dryRun: on && dryRun, start, stop }
 }
