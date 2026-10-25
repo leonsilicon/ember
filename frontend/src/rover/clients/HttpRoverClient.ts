@@ -146,7 +146,8 @@ export class HttpRoverClient extends BaseRoverClient {
     const motion: MotionState = { ...this.snapshot.motion, wheel: 0, pan: 0, lift: 0 }
     if (token) void this.request('control', encodeFrame({ token, seq: ++this.seq, ...motion }), true).catch(() => {})
     this.endSession()
-    this.update({ connection: 'error', motion, lastError: message(err) })
+    // The last status report is from the lost session: nothing on it (ready, PWM, pan/lift) is current any more.
+    this.update({ connection: 'error', motion, status: null, lastError: message(err) })
   }
 
   private async readStatus() {

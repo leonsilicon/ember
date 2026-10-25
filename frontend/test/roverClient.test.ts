@@ -108,6 +108,7 @@ describe('HttpRoverClient', () => {
     const snap = client.getSnapshot();
     expect(snap.motion).toMatchObject({ wheel: 0, pan: 0, lift: 0 });
     expect(snap.lastError).toContain('409');
+    expect(snap.status).toBeNull();
     const last = rover.controls().at(-1)!;
     expect(last.form).toMatchObject({ wheel: '0', pan: '0', lift: '0', seq: '3' });
     expect(last.keepalive).toBe(true);
