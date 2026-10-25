@@ -25,6 +25,8 @@ export type Job = {
   error: string | null;
   /** World point a viewer should orbit around, from the seed cloud (null if unknown). */
   focus: [number, number, number] | null;
+  /** The username the phone that uploaded it was set to (its `X-Room` header; see rooms.ts); null from a phone with none. */
+  room: string | null;
 };
 
 /**
@@ -41,9 +43,10 @@ export function publicJob({ snapshots: _, pausedFrom: __, ...job }: StoredJob): 
   return job;
 }
 
-export function newJob(id: string): StoredJob {
+export function newJob(id: string, room: string | null = null): StoredJob {
   return {
     id,
+    room,
     createdAt: new Date().toISOString(),
     state: 'uploading',
     mode: 'unknown',

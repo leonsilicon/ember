@@ -2,7 +2,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import Script from 'next/script';
 
 import { AccountProvider } from '#rover/ui/account.tsx';
-import { currentLogin } from '#web/auth.ts';
+import { currentUsername } from '#web/auth.ts';
 
 import './rover.css';
 
@@ -19,10 +19,10 @@ const THEME_SCRIPT = `try{var t=localStorage.getItem('ember.theme');if(t==='ligh
  * and the splat viewer): full-height and styled with Tailwind on the Ember tokens in rover.css. It's a
  * root layout of its own, beside the landing page's (`../(splat)/layout.tsx`), so Tailwind's base
  * styles never reach that page. The top bar's account control (rover/ui/Shell.tsx) gets who's signed
- * in from here.
+ * in from here: the username, which is also the room the pages show (see rooms.ts).
  */
 export default async function RoverLayout({ children }: { children: React.ReactNode }) {
-  const who = await currentLogin();
+  const who = await currentUsername();
   return (
     <html lang="en" className={`h-full ${sans.variable} ${mono.variable}`} suppressHydrationWarning>
       <body className="h-full">

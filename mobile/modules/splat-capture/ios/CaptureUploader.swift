@@ -13,7 +13,8 @@ final class CaptureUploader: NSObject, URLSessionTaskDelegate {
   }
 
   /// The server's reply to the last step that ran: 201 and the job when it all worked.
-  static func upload(_ file: URL, server: URL, captureId: String, token: String,
+  /// `room` is the username the capture belongs to (frontend/src/rooms.ts), sent as `X-Room`; nil for none.
+  static func upload(_ file: URL, server: URL, captureId: String, token: String, room: String?,
                      onProgress: @escaping (Int64, Int64) -> Void) async throws -> (status: Int, body: String) {
     func api(_ path: String) -> URLRequest {
       var request = URLRequest(url: URL(string: path, relativeTo: server) ?? server)
@@ -24,6 +25,7 @@ final class CaptureUploader: NSObject, URLSessionTaskDelegate {
 
     var start = api("api/captures")
     start.setValue(captureId, forHTTPHeaderField: "X-Capture-Id")
+    if let room, !room.isEmpty { start.setValue(room, forHTTPHeaderField: "X-Room") }
     let started = try await send(start)
     guard started.status == 201,
           let reply = try? JSONSerialization.jsonObject(with: Data(started.body.utf8)) as? [String: Any],

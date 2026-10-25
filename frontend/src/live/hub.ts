@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Role } from '../bus';
+import { inRoom } from '../rooms';
 import type { DepthEstimator } from './depth-worker';
 import { anchorsInView, depthFromDisparity, fitDisparity, scaleIntrinsics } from './geometry';
 import {
@@ -25,8 +26,12 @@ export type LiveConfig = {
 
 export type PeerData =
   | { role: 'phone'; session: string | null }
-  /** `wanted`: the session a viewer asked for, which it gets once the phone starts it if it hasn't yet. */
-  | { role: 'viewer'; session: string | null; wanted: string | null; follow: boolean };
+  /**
+   * `wanted`: the session a viewer asked for, which it gets once the phone starts it if it hasn't yet.
+   * `room`: the username it signed in as; following the newest session means the newest in its room
+   * (null: of any room). See rooms.ts.
+   */
+  | { role: 'viewer'; session: string | null; wanted: string | null; follow: boolean; room: string | null };
 
 /** A phone or browser connected to the hub, by the id of its socket (see bus.ts). */
 export type Peer = { id: string; data: PeerData };
@@ -57,6 +62,8 @@ export type LiveSession = SessionStats & {
   id: string;
   mode: CaptureMode;
   device: string | null;
+  /** The username the phone sends to (its hello's `room`); null from a phone with none set. */
+  room: string | null;
   startedAt: string;
   voxelSize: number;
 };
@@ -67,6 +74,7 @@ type Session = {
   id: string;
   mode: CaptureMode;
   device: string | null;
+  room: string | null;
   startedAt: string;
   cloud: VoxelCloud;
   phone: Peer | null;
@@ -90,8 +98,8 @@ const POINTS_PER_MESSAGE = 50_000;
  * browser watching that session gets the voxels that changed.
  */
 export class LiveHub {
+  /** In the order they started; a phone's hello for a known id moves it to the end, as the newest. */
   private sessions = new Map<string, Session>();
-  private latest: Session | null = null;
   private peers = new Map<string, Peer>();
   private viewers = new Set<Peer>();
   private estimator: Promise<DepthEstimator> | null = null;
@@ -102,19 +110,29 @@ export class LiveHub {
     private startEstimator: () => Promise<DepthEstimator>,
   ) {}
 
-  /** A phone or viewer connected. A viewer asks for one session, or follows the newest without one. */
-  open(id: string, role: Role, wanted: string | null = null) {
+  /**
+   * A phone or viewer connected. A viewer asks for one session, or follows the newest without one:
+   * the newest in its `room` (the username it signed in as), or of any room when it has none.
+   */
+  open(id: string, role: Role, wanted: string | null = null, room: string | null = null) {
     this.close(id);
-    console.log(`${role} ${id.slice(0, 8)} connected${wanted ? ` for ${wanted}` : ''}`);
+    console.log(`${role} ${id.slice(0, 8)} connected${wanted ? ` for ${wanted}` : ''}${room ? ` in ${room}` : ''}`);
     const peer: Peer = {
       id,
-      data: role === 'phone' ? { role, session: null } : { role, session: wanted, wanted, follow: !wanted },
+      data: role === 'phone' ? { role, session: null } : { role, session: wanted, wanted, follow: !wanted, room },
     };
     this.peers.set(id, peer);
     if (peer.data.role === 'viewer') {
       this.viewers.add(peer);
-      this.sendSession(peer, peer.data.follow ? this.latest : (this.sessions.get(wanted ?? '') ?? null));
+      this.sendSession(peer, peer.data.follow ? this.latestIn(room) : (this.sessions.get(wanted ?? '') ?? null));
     }
+  }
+
+  /** The session that started (or picked back up) most recently in `room`; of any room for null. */
+  private latestIn(room: string | null): Session | null {
+    let latest: Session | null = null;
+    for (const session of this.sessions.values()) if (inRoom(room, session.room)) latest = session;
+    return latest;
   }
 
   /** A message from a phone. Anything malformed is reported back to it. */
@@ -162,6 +180,7 @@ export class LiveHub {
       id: s.id,
       mode: s.mode,
       device: s.device,
+      room: s.room,
       startedAt: s.startedAt,
       voxelSize: s.cloud.voxelSize,
       ...s.stats,
@@ -206,6 +225,7 @@ export class LiveHub {
         id: hello.session,
         mode: hello.mode,
         device: hello.device ?? null,
+        room: hello.room ?? null,
         startedAt: new Date().toISOString(),
         cloud: new VoxelCloud(this.config.voxelSize),
         phone: null,
@@ -217,18 +237,19 @@ export class LiveHub {
         lastPose: null,
         lastKeyframe: null,
       };
-      this.sessions.set(session.id, session);
-      for (const old of [...this.sessions.keys()].slice(0, -KEEP_SESSIONS)) this.sessions.delete(old);
-      console.log(`Live session ${session.id} (${session.mode}${session.device ? `, ${session.device}` : ''})`);
+      for (const old of [...this.sessions.keys()].slice(0, 1 - KEEP_SESSIONS)) this.sessions.delete(old);
+      console.log(`Live session ${session.id} (${session.mode}${session.device ? `, ${session.device}` : ''}${session.room ? `, ${session.room}` : ''})`);
     }
+    // Newest last (a Map keeps insertion order), so followers of its room find it.
+    this.sessions.delete(session.id);
+    this.sessions.set(session.id, session);
     if (session.phone && session.phone !== peer) this.transport.close(session.phone, 4000, 'replaced by a newer connection');
     session.phone = peer;
     session.stats.phoneConnected = true;
     peer.data.session = session.id;
-    this.latest = session;
     for (const viewer of this.viewers) {
       if (viewer.data.role !== 'viewer' || viewer.data.session === session.id) continue;
-      if (viewer.data.follow || viewer.data.wanted === session.id) this.sendSession(viewer, session);
+      if ((viewer.data.follow && inRoom(viewer.data.room, session.room)) || viewer.data.wanted === session.id) this.sendSession(viewer, session);
     }
     this.broadcastStats(session);
   }
@@ -338,7 +359,7 @@ export class LiveHub {
       peer,
       JSON.stringify(
         session
-          ? { type: 'session', id: session.id, mode: session.mode, device: session.device, startedAt: session.startedAt, voxelSize: session.cloud.voxelSize, stats: session.stats }
+          ? { type: 'session', id: session.id, mode: session.mode, device: session.device, room: session.room, startedAt: session.startedAt, voxelSize: session.cloud.voxelSize, stats: session.stats }
           : { type: 'session', id: null },
       ),
     );

@@ -5,17 +5,19 @@ import { ConnectionPanel } from './components/ConnectionPanel'
 import { CONNECTION_STYLES } from './components/connectionStyles'
 import { DPad } from './components/DPad'
 import { LiveJobPanel } from './components/LiveJobPanel'
-import { LiveMapView } from './components/LiveMapView'
+import { LiveMapView, type MapSource } from './components/LiveMapView'
 import { PhoneCameraPanel, type PhoneLink } from './components/PhoneCameraPanel'
 import { DEFAULT_SCENE, ScenePanel, type SceneSource } from './components/ScenePanel'
 import { SplatViewer } from './components/SplatViewer'
 import { StopButton } from './components/StopButton'
 import { captureScene, useCaptures, viewable } from './hooks/useCaptures'
-import { useLiveMap } from './hooks/useLiveMap'
+import { useLiveMap, type LiveMapStream } from './hooks/useLiveMap'
+import { useRoomMap } from './hooks/useRoomMap'
 import { useWebAutopilot } from './hooks/useWebAutopilot'
 import { usePhoneDiscovery } from './hooks/usePhoneDiscovery'
 import { applyJob, useLiveJob } from './liveJob'
 import { useRover } from './hooks/useRover'
+import { useAccount } from './ui/account'
 import { Button, Hint, Icons, Led } from './ui/kit'
 import { Module } from './ui/layout'
 import { Shell, type Shortcut } from './ui/Shell'
@@ -68,9 +70,15 @@ export default function App() {
     }
   }, [captures.state])
   const { snapshot, mode } = rover
-  // Live mode's stage: the brain's map from the linked phone, drawn in an instant (a splat takes ages to load).
+  // Live mode's stage: the brain's map from the phone, drawn in an instant (a splat takes ages to load). Over
+  // the Wi-Fi from the linked phone; without one (the site on Vercel), through the server from the phone set
+  // to this browser's username (see rooms.ts).
+  const who = useAccount()
   const [phoneLink, setPhoneLink] = useState<PhoneLink | null>(null)
-  const liveMap = useLiveMap(mode === 'live' ? (phoneLink?.origin ?? null) : null)
+  const wifiMap = useLiveMap(mode === 'live' ? (phoneLink?.origin ?? null) : null)
+  const roomMap = useRoomMap(mode === 'live' && !phoneLink)
+  const liveMap: LiveMapStream = phoneLink ? wifiMap : roomMap
+  const mapSource: MapSource | null = phoneLink ? { kind: 'wifi', phone: phoneLink.device } : who ? { kind: 'room', username: who } : null
   // The job set here (radius, bin, pile) on top of the phone's map: what the autopilot works to and the map draws.
   const [job, setJob] = useLiveJob()
   const [placingPile, setPlacingPile] = useState(false)
@@ -132,7 +140,7 @@ export default function App() {
         mode === 'live' ? (
           <LiveMapView
             stream={jobMap}
-            phone={phoneLink?.device ?? null}
+            source={mapSource}
             pilot={pilot}
             placing={placingPile}
             onPlace={(x, z) => {

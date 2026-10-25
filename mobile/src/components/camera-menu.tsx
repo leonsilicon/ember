@@ -1,4 +1,4 @@
-import { Section, Toggle } from '@expo/ui/swift-ui';
+import { Button, Section, Toggle } from '@expo/ui/swift-ui';
 
 import { RailMenu } from './rail-menu';
 
@@ -15,6 +15,9 @@ export type CameraMenuProps = {
   onDebugChange: (debug: boolean) => void;
   /** Heads the detection section: the model, or why it isn't running. */
   detectionInfo: string;
+  /** The app-wide username (lib/username.ts), '' for none, and the dialog that changes it. */
+  username: string;
+  onChangeUsername: () => void;
 };
 
 /** The camera screen's options, as a native menu behind the ⋯ at the foot of the camera's rail. */
@@ -28,6 +31,8 @@ export function CameraMenu({
   debug,
   onDebugChange,
   detectionInfo,
+  username,
+  onChangeUsername,
 }: CameraMenuProps) {
   return (
     <RailMenu icon="dots-horizontal" label="Camera options">
@@ -47,6 +52,14 @@ export function CameraMenu({
       />
       <Toggle label="Live 3D while recording" systemImage="cube" isOn={liveStream} onIsOnChange={onLiveStreamChange} />
       <Toggle label="Debug" systemImage="ladybug" isOn={debug} onIsOnChange={onDebugChange} />
+      {/* App-wide: the web pages signed in with this username show this phone (see lib/username.ts). */}
+      <Section title={username ? `Username: ${username}` : 'No username: the web pages can’t show this phone'}>
+        <Button
+          label={username ? 'Change username…' : 'Set username…'}
+          systemImage="person.crop.circle"
+          onPress={onChangeUsername}
+        />
+      </Section>
     </RailMenu>
   );
 }

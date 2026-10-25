@@ -1,5 +1,6 @@
 package expo.modules.splatcapture
 
+import android.content.pm.PackageManager
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -29,7 +30,13 @@ class SplatCaptureModule : Module() {
     }
 
     Function("getCapabilities") {
-      mapOf("arkit" to false, "lidar" to false, "frontCamera" to false, "cameraStream" to true)
+      mapOf(
+        "arkit" to false,
+        "lidar" to false,
+        "frontCamera" to false,
+        "cameraStream" to true,
+        "torch" to context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH),
+      )
     }
 
     AsyncFunction("startCapture") { _: Map<String, Any?>, promise: Promise ->
@@ -44,7 +51,7 @@ class SplatCaptureModule : Module() {
 
     AsyncFunction("currentCamera") { _: Boolean -> null as Map<String, Any>? }
 
-    Function("setLiveServer") { _: String?, _: String? -> }
+    Function("setLiveServer") { _: String?, _: String?, _: String? -> }
 
     Function("startCameraStream") { port: Int ->
       val server = requireNotNull(server)
@@ -76,13 +83,16 @@ class SplatCaptureModule : Module() {
 
     AsyncFunction("deleteCapture") { _: String -> }
 
-    AsyncFunction("uploadCapture") { _: String, _: String, _: String, promise: Promise ->
+    AsyncFunction("uploadCapture") { _: String, _: String, _: String, _: String?, promise: Promise ->
       promise.reject("ERR_UPLOAD", "There are no captures on Android", null)
     }
 
     View(SplatCaptureView::class) {
       Prop("active") { view: SplatCaptureView, active: Boolean ->
         view.active = active
+      }
+      Prop("torch") { view: SplatCaptureView, on: Boolean ->
+        view.torch = on
       }
       // The back camera only, without feature points: ARKit's.
       Prop("camera") { _: SplatCaptureView, _: String -> }

@@ -16,6 +16,8 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
   /// Where it streams to, so a connection made ahead of a recording can serve one to the same server.
   let serverURL: URL
   let token: String?
+  /// The username the recording is sent to (the hello's `room`; see frontend/src/rooms.ts), if any.
+  let room: String?
   private let endpoint: URL
   /// The recording being streamed; nil while standing by, connected before a recording so one streams from its first frame.
   private(set) var sessionId: String?
@@ -49,9 +51,10 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
   /// The server's latest `stats` message for this session.
   private var serverStats: [String: Any] = [:]
 
-  /// `serverURL` is the splat server's address (e.g. https://<project>.vercel.app), `token` its access token.
-  /// Connects at once and stands by; `begin` starts streaming a recording.
-  init?(serverURL: URL, token: String?, frameQueue: DispatchQueue, ciContext: CIContext) {
+  /// `serverURL` is the splat server's address (e.g. https://<project>.vercel.app), `token` its access token,
+  /// `room` the username whose browsers see the recording. Connects at once and stands by; `begin` starts
+  /// streaming a recording.
+  init?(serverURL: URL, token: String?, room: String?, frameQueue: DispatchQueue, ciContext: CIContext) {
     guard var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false),
           components.scheme == "http" || components.scheme == "https" else { return nil }
     components.scheme = components.scheme == "https" ? "wss" : "ws"
@@ -62,6 +65,7 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
     self.serverURL = serverURL
     self.endpoint = endpoint
     self.token = token
+    self.room = room
     self.frameQueue = frameQueue
     self.ciContext = ciContext
     super.init()
@@ -233,9 +237,9 @@ final class LiveStreamer: NSObject, URLSessionWebSocketDelegate {
 
   /// Frame queue only. Announces the recording to the server, which starts (or picks back up) its session.
   private func sendHello(on task: URLSessionWebSocketTask) {
-    guard let sessionId, let mode,
-          let hello = Self.message(["type": "hello", "session": sessionId, "mode": mode.rawValue, "device": hardwareModel()])
-    else { return }
+    var header: [String: Any] = ["type": "hello", "session": sessionId ?? "", "mode": mode?.rawValue ?? "", "device": hardwareModel()]
+    if let room, !room.isEmpty { header["room"] = room }
+    guard sessionId != nil, mode != nil, let hello = Self.message(header) else { return }
     task.send(.data(hello)) { _ in }
   }
 

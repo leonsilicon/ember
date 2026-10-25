@@ -38,6 +38,8 @@ export function keys(prefix = process.env.SPLAT_REDIS_PREFIX ?? 'splat:') {
     agent: `${prefix}agent`,
     liveIn: `${prefix}live:in`,
     liveOut: `${prefix}live:out`,
+    /** A room's pub/sub channel: the live map a phone sends to a username, for the browsers signed in as it (web/rooms.ts). */
+    room: (username: string) => `${prefix}room:${username}`,
   };
 }
 
@@ -75,7 +77,8 @@ export const STREAM_LENGTH = 200;
 export type Role = 'phone' | 'viewer';
 
 export type InEntry =
-  | { kind: 'open'; peer: string; role: Role; session: string | null }
+  /** `room`: the username a viewer signed in as (null: every room). A phone's room comes in its hello. */
+  | { kind: 'open'; peer: string; role: Role; session: string | null; room: string | null }
   | { kind: 'data'; peer: string; data: Uint8Array }
   | { kind: 'resync'; peer: string }
   | { kind: 'close'; peer: string };
@@ -90,7 +93,7 @@ type Field = string | Buffer;
 export function inFields(entry: InEntry): Field[] {
   switch (entry.kind) {
     case 'open':
-      return ['kind', 'open', 'peer', entry.peer, 'role', entry.role, 'session', entry.session ?? ''];
+      return ['kind', 'open', 'peer', entry.peer, 'role', entry.role, 'session', entry.session ?? '', 'room', entry.room ?? ''];
     case 'data':
       return ['kind', 'data', 'peer', entry.peer, 'data', Buffer.from(entry.data.buffer, entry.data.byteOffset, entry.data.byteLength)];
     default:
@@ -130,7 +133,7 @@ export function parseIn(fields: Buffer[]): InEntry | null {
   if (kind === 'open') {
     const role = f.get('role')?.toString();
     if (role !== 'phone' && role !== 'viewer') return null;
-    return { kind, peer, role, session: f.get('session')?.toString() || null };
+    return { kind, peer, role, session: f.get('session')?.toString() || null, room: f.get('room')?.toString() || null };
   }
   if (kind === 'data') {
     const data = f.get('data');

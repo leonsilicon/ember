@@ -93,8 +93,17 @@ function rejectionCaption(r: RejectedDetection): string | undefined {
  * over Bluetooth to scoop leaves up and take them to the pile. Pure logic lives in
  * src/lib/rover-brain (`Brain`, which the simulator runs too).
  */
-export function useRoverBrain(result: DetectionResult | undefined, enabled: boolean): RoverBrain {
+export function useRoverBrain(
+  result: DetectionResult | undefined,
+  enabled: boolean,
+  /** Gets each live map line (lib/rover-brain/live-map.ts) besides the Wi-Fi camera's viewers: the username's room on the server. */
+  onMap?: (json: string) => void,
+): RoverBrain {
   const rover = useRover();
+  const onMapRef = useRef(onMap);
+  useEffect(() => {
+    onMapRef.current = onMap;
+  }, [onMap]);
   const connected = rover.connection.state === 'connected';
   // Leaf map, recent LiDAR points (so obstacles stay known after they leave the camera's narrow
   // view), pile and autopilot.
@@ -193,12 +202,15 @@ export function useRoverBrain(result: DetectionResult | undefined, enabled: bool
           const tick = brain.current.tick(now, heading.current);
           // The firmware has no scoop yet; tick.step.scoop ('up' | 'down' | 'dump') is what it would get.
           if (tick.step) drive(tick.step.left, tick.step.right);
-          // The web app's live top view follows the brain's map on the camera server (rover-brain/live-map.ts).
+          // The web app's live top view follows the brain's map (rover-brain/live-map.ts): over the Wi-Fi from
+          // the camera server, or through the splat server from the username's room.
+          const line = JSON.stringify(liveMap(brain.current, heading.current, tick, now));
           try {
-            SplatCapture.publishCameraDetections(JSON.stringify(liveMap(brain.current, heading.current, tick, now)));
+            SplatCapture.publishCameraDetections(line);
           } catch {
-            // An older native build without it, or the camera server off: nobody's watching the map.
+            // An older native build without it, or the camera server off: nobody's watching the map there.
           }
+          onMapRef.current?.(line);
           publish({
             corridors: tick.corridors,
             hasDepth: fresh != null,

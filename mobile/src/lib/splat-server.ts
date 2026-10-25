@@ -6,6 +6,8 @@
 import Constants from 'expo-constants';
 import { Platform, TurboModuleRegistry, type TurboModule } from 'react-native';
 
+import { getAccount } from './username';
+
 /** A capture's training job, as the splat server reports it. */
 export type SplatJob = {
   id: string;
@@ -102,11 +104,22 @@ export function liveViewerUrl(serverUrl: string) {
 }
 
 /**
- * The same page following whichever recording is newest, without its controls: the app loads it
- * ahead of recording, then locks it onto its recording (see LiveSplatView's `lockSession`).
+ * The same page following whichever recording in the username's room is newest (see lib/username.ts;
+ * any room's with no username), without its controls: the app loads it ahead of recording, then locks
+ * it onto its recording (see LiveSplatView's `lockSession`).
  */
-export function liveFollowEmbedUrl(serverUrl: string) {
-  return signedIn(endpoint(serverUrl, '/live?embed'));
+export function liveFollowEmbedUrl(serverUrl: string, username = getAccount().username) {
+  return signedIn(endpoint(serverUrl, `/live?embed${username ? `&room=${encodeURIComponent(username)}` : ''}`));
+}
+
+/**
+ * The socket the rover brain's live map goes to (hooks/use-room-publisher.ts): the username's room
+ * on the server (frontend/src/web/rooms.ts), for the control page's top view. The token goes in the
+ * URL, as the embed's does: a WebSocket can't send a header from here.
+ */
+export function roomMapIngestUrl(serverUrl: string, username: string) {
+  const socket = endpoint(serverUrl, '/live/map/ingest').replace(/^http/, 'ws');
+  return `${socket}?room=${encodeURIComponent(username)}&token=${encodeURIComponent(SPLAT_TOKEN)}`;
 }
 
 /** The same page for one recording (its capture id), without its controls, for showing in the app. */

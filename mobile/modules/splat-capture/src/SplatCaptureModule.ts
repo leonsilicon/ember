@@ -35,9 +35,10 @@ declare class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> 
   /**
    * Where recordings stream for live reconstruction (`liveServerUrl`), from now on; null for nowhere.
    * The connection is made straight away while the viewfinder is on screen (back camera), so a
-   * recording streams from its first frame rather than after a handshake.
+   * recording streams from its first frame rather than after a handshake. `room` is the username the
+   * recordings are sent to (see src/lib/username.ts); null for none.
    */
-  setLiveServer(url: string | null, token: string | null): void;
+  setLiveServer(url: string | null, token: string | null, room: string | null): void;
   startCameraStream(port: number): CameraStreamStatus;
   stopCameraStream(): void;
   /** Hands the Wi-Fi camera's viewers the leaf detector's boxes: one JSON line, streamed at `/detections`. */
@@ -53,10 +54,11 @@ declare class SplatCaptureModule extends NativeModule<SplatCaptureModuleEvents> 
   listCaptures(): Promise<SavedCapture[]>;
   deleteCapture(captureId: string): Promise<void>;
   /**
-   * Debug splat preview: uploads a saved capture zip to the splat server (see frontend), with its
-   * access token. Resolves with the server's reply to the finished upload (201 and the job).
+   * Uploads a saved capture zip to the splat server (see frontend), with its access token, into the
+   * username's room (`room`, the `X-Room` header; null for none). Resolves with the server's reply to
+   * the finished upload (201 and the job).
    */
-  uploadCapture(captureId: string, serverUrl: string, token: string): Promise<UploadResult>;
+  uploadCapture(captureId: string, serverUrl: string, token: string, room: string | null): Promise<UploadResult>;
 }
 
 export default requireNativeModule<SplatCaptureModule>('SplatCapture');

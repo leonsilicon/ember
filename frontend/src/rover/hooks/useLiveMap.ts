@@ -8,6 +8,13 @@ const RETRY_MS = 2000
 const TRAIL_STEP_M = 0.03
 const TRAIL_MAX = 800
 
+/** The rover's position added to its path so far: points closer than TRAIL_STEP_M to the last aren't kept, and at most TRAIL_MAX are. */
+export function appendTrail(trail: readonly [number, number][], rover: { x: number; z: number } | null): readonly [number, number][] {
+  if (!rover) return trail
+  const last = trail.at(-1)
+  return last && Math.hypot(rover.x - last[0], rover.z - last[1]) <= TRAIL_STEP_M ? trail : [...trail.slice(-(TRAIL_MAX - 1)), [rover.x, rover.z]]
+}
+
 export type LiveMapStream = {
   map: LiveMap | null
   /** performance.now() of the newest map line, 0 before the first. */
@@ -20,8 +27,9 @@ export type LiveMapStream = {
 
 /**
  * The rover brain's map, live, from the linked phone's `/detections` stream (the map lines beside the
- * box lines, rover-brain/live-map.ts). Its own connection, so it runs whether or not the camera picture
- * is on screen; changing phone or unlinking closes it.
+ * box lines, rover-brain/live-map.ts), over the Wi-Fi. Its own connection, so it runs whether or not
+ * the camera picture is on screen; changing phone or unlinking closes it. With no phone on the Wi-Fi
+ * (the site on Vercel), useRoomMap brings the same lines through the server.
  */
 export function useLiveMap(origin: string | null): LiveMapStream {
   const [map, setMap] = useState<LiveMap | null>(null)
@@ -52,13 +60,7 @@ export function useLiveMap(origin: string | null): LiveMapStream {
           setSilent(false)
           setMap(latest)
           setReceivedAt(performance.now())
-          const r = latest.rover
-          if (r) {
-            setTrail((t) => {
-              const last = t.at(-1)
-              return last && Math.hypot(r.x - last[0], r.z - last[1]) <= TRAIL_STEP_M ? t : [...t.slice(-(TRAIL_MAX - 1)), [r.x, r.z]]
-            })
-          }
+          setTrail((t) => appendTrail(t, latest.rover) as [number, number][])
         }
       } catch {
         // The phone went away (or this build has no /detections): retry below.

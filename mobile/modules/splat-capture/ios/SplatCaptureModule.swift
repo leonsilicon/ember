@@ -9,6 +9,8 @@ struct StartCaptureOptions: Record {
   @Field var liveServerUrl: String? = nil
   /// The splat server's access token.
   @Field var serverToken: String? = nil
+  /// The username the recording is sent to (the hello's `room`; see frontend/src/rooms.ts).
+  @Field var room: String? = nil
 }
 
 public class SplatCaptureModule: Module {
@@ -34,7 +36,7 @@ public class SplatCaptureModule: Module {
       let settings = CaptureSettings(maxFrames: options.maxFrames, imageWidth: options.imageWidth,
                                      forceFeaturePoints: options.forceFeaturePoints,
                                      liveServerURL: options.liveServerUrl.flatMap { URL(string: $0) },
-                                     serverToken: options.serverToken)
+                                     serverToken: options.serverToken, room: options.room)
       CaptureController.shared.start(settings) { promise.settle($0) }
     }
 
@@ -51,8 +53,8 @@ public class SplatCaptureModule: Module {
     }
 
     // The Wi-Fi camera: an MJPEG stream of the preview for the web app's live mode (CameraStreamServer).
-    Function("setLiveServer") { (url: String?, token: String?) in
-      CaptureController.shared.setLiveServer(url: url.flatMap { URL(string: $0) }, token: token)
+    Function("setLiveServer") { (url: String?, token: String?, room: String?) in
+      CaptureController.shared.setLiveServer(url: url.flatMap { URL(string: $0) }, token: token, room: room)
     }
 
     Function("startCameraStream") { (port: Int) -> [String: Any] in
@@ -91,7 +93,7 @@ public class SplatCaptureModule: Module {
     }
 
     // Debug splat preview: uploads the saved zip to the splat server (frontend, see CaptureUploader).
-    AsyncFunction("uploadCapture") { (captureId: String, serverUrl: String, token: String, promise: Promise) in
+    AsyncFunction("uploadCapture") { (captureId: String, serverUrl: String, token: String, room: String?, promise: Promise) in
       guard let zip = CaptureController.zipURL(id: captureId) else {
         return promise.reject("ERR_CAPTURE_NOT_FOUND", "No saved capture \(captureId)")
       }
@@ -100,7 +102,7 @@ public class SplatCaptureModule: Module {
       }
       Task {
         do {
-          let result = try await CaptureUploader.upload(zip, server: server, captureId: captureId, token: token) {
+          let result = try await CaptureUploader.upload(zip, server: server, captureId: captureId, token: token, room: room) {
             [weak self] sent, total in
             self?.sendEvent("onUploadProgress", ["captureId": captureId, "sentBytes": sent, "totalBytes": total])
           }
@@ -120,6 +122,9 @@ public class SplatCaptureModule: Module {
       }
       Prop("camera", CameraPosition.back) { (view: SplatCaptureView, camera: CameraPosition) in
         view.camera = camera
+      }
+      Prop("torch", false) { (view: SplatCaptureView, on: Bool) in
+        view.torch = on
       }
     }
   }

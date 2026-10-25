@@ -5,24 +5,25 @@ import { useActionState } from 'react';
 import { login } from './actions';
 import styles from './landing.module.css';
 
-/** Email or username, and the password, checked by the `login` action; `next` is where to go afterwards. */
+/** A username and the password, checked by the `login` action; `next` is where to go afterwards. */
 export function LoginForm({ next }: { next: string }) {
   const [state, action, pending] = useActionState(login, undefined);
   return (
     <form action={action} className={styles.form}>
       <input type="hidden" name="next" value={next} />
       <label className={styles.field}>
-        <span>Email or username</span>
-        {/* React resets the form after the action; the key puts the typed login back. */}
+        <span>Username</span>
+        {/* React resets the form after the action; the key puts the typed username back. */}
         <input
-          key={state?.login ?? ''}
-          name="login"
+          key={state?.username ?? ''}
+          name="username"
           type="text"
           autoComplete="username"
           autoCapitalize="none"
           spellCheck={false}
-          placeholder="you@example.com"
-          defaultValue={state?.login}
+          placeholder="leonsilicon"
+          defaultValue={state?.username}
+          maxLength={32}
           required
           autoFocus
         />

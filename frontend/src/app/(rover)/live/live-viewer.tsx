@@ -7,11 +7,12 @@ import styles from './live-viewer.module.css';
 
 /**
  * The app's view of the live reconstruction (`?embed`; the app's live-splat-view.tsx): the scene
- * alone, on black, with a line while there's nothing to see yet. The browser's page is live-app.tsx.
+ * alone, on black, with a line while there's nothing to see yet. `room` is the username the app is set
+ * to, so with no session it follows that room's newest. The browser's page is live-app.tsx.
  */
-export function LiveViewer({ session }: { session: string | null }) {
+export function LiveViewer({ session, room = null }: { session: string | null; room?: string | null }) {
   const container = useRef<HTMLDivElement>(null);
-  const live = useLiveReconstruction(container, session, true);
+  const live = useLiveReconstruction(container, session, true, room);
   return (
     <div ref={container} className={styles.root}>
       {!live.hasPoints && (

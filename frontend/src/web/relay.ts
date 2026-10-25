@@ -10,6 +10,8 @@ type Socket = {
   ws: WebSocket;
   role: Role;
   session: string | null;
+  /** A viewer's room (the username it signed in as; see rooms.ts). */
+  room: string | null;
   /** A phone's `hello`, sent again when the agent restarts so it picks the session back up. */
   hello: Uint8Array | null;
   /** A viewer that fell behind skips messages, and asks for everything again once it catches up. */
@@ -47,13 +49,13 @@ class Relay {
   /** Resolves once reading live:out has started, from the position it starts at. */
   private reading: Promise<void> | null = null;
 
-  async accept(ws: WebSocket, role: Role, session: string | null) {
+  async accept(ws: WebSocket, role: Role, session: string | null, room: string | null) {
     const peer = randomUUID();
-    const socket: Socket = { ws, role, session, hello: null, behind: false };
+    const socket: Socket = { ws, role, session, room, hello: null, behind: false };
     this.sockets.set(peer, socket);
     // Listen before announcing the socket, so the agent's first reply can't be missed, and hold
     // the socket's messages until it is announced (a phone sends its hello straight away).
-    const announced = this.listen().then(() => this.publish({ kind: 'open', peer, role, session }));
+    const announced = this.listen().then(() => this.publish({ kind: 'open', peer, role, session, room }));
     ws.on('message', (data, isBinary) => {
       if (role !== 'phone' || !isBinary) return;
       const message = bytes(data);
@@ -115,7 +117,7 @@ class Relay {
     } else {
       // The agent (re)started and knows no one: announce every socket again.
       for (const [peer, socket] of this.sockets) {
-        this.publish({ kind: 'open', peer, role: socket.role, session: socket.session });
+        this.publish({ kind: 'open', peer, role: socket.role, session: socket.session, room: socket.room });
         if (socket.hello) this.publish({ kind: 'data', peer, data: socket.hello });
       }
     }
@@ -139,8 +141,11 @@ class Relay {
 
 let relay: Relay | null = null;
 
-/** Hands a phone's (`/live/ingest`) or viewer's (`/live/socket`) socket to this instance's relay. */
-export function relaySocket(ws: WebSocket, role: Role, session: string | null) {
+/**
+ * Hands a phone's (`/live/ingest`) or viewer's (`/live/socket`) socket to this instance's relay.
+ * `room` is a viewer's (see rooms.ts); a phone's is in its hello.
+ */
+export function relaySocket(ws: WebSocket, role: Role, session: string | null, room: string | null = null) {
   relay ??= new Relay();
-  return relay.accept(ws, role, session);
+  return relay.accept(ws, role, session, room);
 }

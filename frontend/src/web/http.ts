@@ -6,7 +6,7 @@ export const CAPTURE_ID = /^[A-Za-z0-9_-]{1,80}$/;
 export const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Capture-Id',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Capture-Id, X-Room',
 };
 
 export function json(body: unknown, status = 200) {

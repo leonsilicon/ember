@@ -126,9 +126,15 @@ Production and Preview, so it can't be pulled back; `frontend/.env` keeps a copy
 like `live-replay.ts`): the app has it built in from `EXPO_PUBLIC_SPLAT_TOKEN`, with the server's
 address in `EXPO_PUBLIC_SPLAT_SERVER_URL` (both in `mobile/.env.local` for local builds, and
 EAS environment variables for EAS builds).
-A browser signs in once by opening any page with `?token=<SPLAT_TOKEN>` (or with the demo account on the
-landing page, see `frontend/README.md`);
-it keeps it in a cookie. API clients send `Authorization: Bearer <SPLAT_TOKEN>`.
+A browser signs in once by opening any page with `?token=<SPLAT_TOKEN>` (or with a username and the team's
+password on the landing page, see `frontend/README.md`); it keeps it in a cookie. API clients send
+`Authorization: Bearer <SPLAT_TOKEN>`.
+
+The app's **username** (asked for on the first launch; the ⋯ camera options and All Captures change it;
+`src/lib/username.ts`) is the room everything it sends goes to: captures (the upload's `X-Room` header),
+Live 3D recordings (the hello's `room`) and the rover brain's live map (`src/hooks/use-room-publisher.ts`
+→ `/live/map/ingest`). The web pages signed in as that username show that phone and no other
+(`frontend/src/rooms.ts`), so the team can share the site.
 
 In the app, a capture is sent off as soon as its recording stops (`src/lib/splat-upload.ts`): the
 phone asks the server for an upload URL, uploads the zip straight to Blob, natively, so it carries on
@@ -180,7 +186,8 @@ bun scripts/live-replay.ts data/captures/<id>/<id>   # try it without the phone
 ```
 
 In the app it's *Live 3D while recording* in the camera options (the ⋯ menu beside the record
-button), on unless turned off, sent to the server address under All Captures. So that a recording
+button), on unless turned off, sent to the server address under All Captures, into the room of the
+username set in the same menu (the `/live` page signed in as it follows the recording). So that a recording
 shows up at once, the socket to the server is opened while the viewfinder is on screen (standing
 by; a recording announces itself over it) and the floating view's page is loaded then too, following
 the newest session until it's locked onto the recording; until the server has fused a keyframe, the

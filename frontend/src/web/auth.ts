@@ -3,14 +3,18 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
+import { normalizeUsername, USERNAME } from '../rooms';
+
 /**
  * Two ways in, both kept in cookies:
  *
+ * - A username and the team's password (DEMO_PASSWORD; there's no sign-up and no list of users: any
+ *   username the rule in rooms.ts allows works). The landing page's form sets a session cookie
+ *   naming the username (see app/(splat)/actions.ts). The username is the browser's room: the pages
+ *   show the phone that sends to the same name.
  * - The access token (SPLAT_TOKEN, also built into the app). The app sends it as a bearer token,
  *   and a browser keeps it in a cookie, set by opening any page with `?token=` (see proxy.ts),
- *   which is how the app's live view and a sign-in link sign a browser in.
- * - The demo account (DEMO_EMAIL or one of DEMO_USERNAMES, with DEMO_PASSWORD; there's no
- *   sign-up): the landing page's form sets a session cookie (see app/(splat)/actions.ts).
+ *   which is how the app's live view and a sign-in link sign a browser in. It names no room.
  *
  * Pages and API routes take either; the API also takes the bearer token.
  */
@@ -20,7 +24,6 @@ export const SESSION_COOKIE = 'splat_session';
 const digest = (value: string) => createHash('sha256').update(value).digest();
 // Hashing first gives timingSafeEqual equal-length inputs.
 const same = (a: string, b: string) => timingSafeEqual(digest(a), digest(b));
-const normal = (login: string) => login.trim().toLowerCase();
 
 export function validToken(candidate: string | null | undefined) {
   const expected = process.env.SPLAT_TOKEN;
@@ -28,47 +31,39 @@ export function validToken(candidate: string | null | undefined) {
   return Boolean(candidate) && same(candidate!, expected);
 }
 
-/** The demo account's logins, lower-case: DEMO_EMAIL and the comma-separated DEMO_USERNAMES. */
-export function demoLogins() {
-  const { DEMO_EMAIL = '', DEMO_USERNAMES = '' } = process.env;
-  return [DEMO_EMAIL, ...DEMO_USERNAMES.split(/[,\s]+/)].map(normal).filter(Boolean);
-}
-
-/** Whether the demo account exists on this server. */
+/** Whether signing in with a username exists on this server. */
 export function loginConfigured() {
-  return demoLogins().length > 0 && Boolean(process.env.DEMO_PASSWORD);
+  return Boolean(process.env.DEMO_PASSWORD && process.env.SPLAT_TOKEN);
 }
 
-/** The demo login that `login` names (in any case) when `password` is right, else null. */
-export function checkCredentials(login: string, password: string): string | null {
+/** The username `typed` names (in any case) when `password` is the team's, else null. */
+export function checkCredentials(typed: string, password: string): string | null {
   const { DEMO_PASSWORD } = process.env;
   if (!DEMO_PASSWORD) return null;
-  const wanted = normal(login);
-  // Every login and the password are always compared, so a wrong login takes as long as a wrong password.
-  let found: string | null = null;
-  for (const known of demoLogins()) if (same(wanted, known)) found = known;
+  const who = normalizeUsername(typed);
+  // The password is always compared, so a bad username takes as long as a wrong password.
   const passwordOk = same(password, DEMO_PASSWORD);
-  return passwordOk ? found : null;
+  return passwordOk ? who : null;
 }
 
 /**
- * What a browser holds after signing in: the login and an HMAC over it, keyed by the server's
+ * What a browser holds after signing in: the username and an HMAC over it, keyed by the server's
  * secrets. Nothing is stored, and changing the password signs everyone out.
  */
-export function sessionToken(login: string) {
+export function sessionToken(username: string) {
   const { DEMO_PASSWORD, SPLAT_TOKEN } = process.env;
   if (!DEMO_PASSWORD || !SPLAT_TOKEN) throw new Error('DEMO_PASSWORD and SPLAT_TOKEN must be set');
-  const who = normal(login);
+  const who = username.trim().toLowerCase();
   const mac = createHmac('sha256', `${SPLAT_TOKEN}\n${DEMO_PASSWORD}`).update(`session:${who}`).digest('hex');
   return `${who}.${mac}`;
 }
 
-/** The login a session cookie was issued for, or null when it's missing, forged or for a login that's gone. */
+/** The username a session cookie was issued for, or null when it's missing or forged. */
 export function validSession(candidate: string | null | undefined): string | null {
-  if (!candidate || !loginConfigured() || !process.env.SPLAT_TOKEN) return null;
-  // The HMAC is hex, so the last dot ends the login (an email has dots of its own).
+  if (!candidate || !loginConfigured()) return null;
+  // The HMAC is hex, so the last dot ends the username (which may have dots of its own).
   const who = candidate.slice(0, candidate.lastIndexOf('.'));
-  if (!who || !demoLogins().includes(who)) return null;
+  if (!USERNAME.test(who)) return null;
   return same(candidate, sessionToken(who)) ? who : null;
 }
 
@@ -87,14 +82,26 @@ export function authorized(request: Request) {
   return validSession(cookie(request, SESSION_COOKIE)) !== null;
 }
 
+/**
+ * For API routes and sockets: the room the request is for (see rooms.ts). `?room=` when the URL
+ * names one (the app's embedded views, and a token-signed browser looking into a room), else the
+ * username the browser signed in with; null for a token-signed browser asking for none, which gets
+ * every room. Only an authorized request should get this far.
+ */
+export function roomOf(request: Request): string | null {
+  const asked = new URL(request.url).searchParams.get('room');
+  if (asked != null) return normalizeUsername(asked);
+  return validSession(cookie(request, SESSION_COOKIE));
+}
+
 /** For pages: whether this browser has signed in, either way. */
 export async function signedIn() {
   const store = await cookies();
   return validToken(store.get(TOKEN_COOKIE)?.value) || validSession(store.get(SESSION_COOKIE)?.value) !== null;
 }
 
-/** The demo login this browser signed in with; null when it came in with the access token, or isn't signed in. */
-export async function currentLogin() {
+/** The username this browser signed in with; null when it came in with the access token, or isn't signed in. */
+export async function currentUsername() {
   return validSession((await cookies()).get(SESSION_COOKIE)?.value);
 }
 

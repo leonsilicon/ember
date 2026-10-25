@@ -34,14 +34,22 @@ bun run agent        # the Mac agent, or `vpx _dev` for the whole dev stack
 
 ## Signing in
 
-There's one demo account and no sign-up. It answers to `DEMO_EMAIL` or any of the comma-separated `DEMO_USERNAMES`
-(in any case) with `DEMO_PASSWORD`: environment variables on the Vercel project (Secret in production and preview;
-`vercel env pull` brings the development copies into `.env.local`). The landing page's form
-(`src/app/(splat)/actions.ts`) checks them and sets a `splat_session` cookie holding the login and an HMAC over it keyed
-by the server's secrets, so nothing is stored, the top bar can say who's signed in, and changing the password (or
-removing a username) signs that browser out. A page opened without it redirects to
-`/?next=…` (`requireSignIn` in `src/web/auth.ts`), and the API takes the cookie too, so the viewers' fetches and the
-live socket work from a signed-in browser. **Sign out** in the top bar clears it; `/dashboard` redirects to `/control`.
+A username and the team's password, `DEMO_PASSWORD` (an environment variable on the Vercel project, Secret in
+production and preview; `vercel env pull` brings the development copy into `.env.local`). There's no sign-up and no
+list of users: any username the rule in `src/rooms.ts` allows (letters, digits, dots, dashes and underscores) works.
+The landing page's form (`src/app/(splat)/actions.ts`) checks the password and sets a `splat_session` cookie holding
+the username and an HMAC over it keyed by the server's secrets, so nothing is stored, the top bar can say who's signed
+in, and changing the password signs every browser out. A page opened without it redirects to `/?next=…`
+(`requireSignIn` in `src/web/auth.ts`), and the API takes the cookie too, so the viewers' fetches and the sockets work
+from a signed-in browser. **Sign out** in the top bar clears it; `/dashboard` redirects to `/control`.
+
+**The username is the room** (`src/rooms.ts`). The app has the same setting (asked for on its first launch; the ⋯
+camera options and All Captures change it), and everything the phone sends goes to that room: the rover brain's live
+map (the control page's top view, through `/live/map` and `src/web/rooms.ts`, a Redis pub/sub channel per room), its
+Live 3D recordings (the hello's `room`, which `/live/socket` and `/api/live` filter by) and its captures (the
+upload's `X-Room` header, which `/api/captures` filters by). So the pages signed in as `leonsilicon` show the phone set
+to `leonsilicon` and no other, and the whole team can use the site at once. A browser that came in with the access
+token names no room and sees every room, or the one its URL's `?room=` asks for (the app's embedded Live 3D view).
 
 The access token (`SPLAT_TOKEN`) still signs a browser in beside it: opening any page with `?token=` keeps it in a
 `splat_token` cookie (`src/proxy.ts`), which is how the app's embedded live view and a sign-in link get in without the
@@ -73,6 +81,8 @@ the dev stack's agent instead, `pm2 stop soon2026-agent` and `vpx _dev --agent`,
 
 Talks to the ESP32 (`firmware/rover_ws`) over a WebSocket. Browsers refuse a plain `ws://` connection from an
 `https://` page, so drive from the dev server on the laptop (http://localhost:8899/control), not from the Vercel URL.
+The live top view works from either: on the dev server the map comes from the phone over the Wi-Fi, and on the Vercel
+URL through the server, from the phone set to the username the browser signed in with (see "Signing in").
 
 - **Drive**: hold a D-pad button or `WASD` / arrow keys to drive, release to stop. While held, the direction is
   re-sent every 100 ms; the firmware stops on its own after 300 ms without a command. Window blur / tab hidden
@@ -99,6 +109,9 @@ drop, click **Connect** again. No motion command is ever re-sent on reconnect.
   writes `frame_0001.jpg…` into that folder; "Snap one" takes a single frame. From the iPhone, each frame is a
   full-resolution still (1920 px, `/frame.jpg?size=1920`) encoded fresh on the phone, not a stream frame. Feed the
   folder to `pipeline/reconstruct.py`.
+- **Live top view** — in live mode the stage is the rover brain's map from the phone (`src/rover/components/LiveMapView.tsx`):
+  the linked phone's `/detections` lines over the Wi-Fi (`useLiveMap`), or, with no phone linked, the same lines through
+  the server from the phone set to the browser's username (`useRoomMap`, `/live/map`); the autopilot steers by it either way.
 - **iPhone camera** — the capture panel switches to the rover's iPhone as soon as its app is open on the same Wi-Fi:
   the app announces its camera with Bonjour (`_rovercam._tcp`) and the dev server finds it (`src/phone-discovery.ts`,
   `GET /api/phone-camera`; on Vercel there's no local network, so it finds none). Without discovery, enter the

@@ -1,4 +1,5 @@
 import ARKit
+import AVFoundation
 import CoreImage
 
 enum CaptureMode: String {
@@ -41,6 +42,8 @@ struct CaptureSettings {
   var liveServerURL: URL? = nil
   /// The splat server's access token.
   var serverToken: String? = nil
+  /// The username the recording is sent to (the hello's `room`; see frontend/src/rooms.ts), if any.
+  var room: String? = nil
 }
 
 /// Owns the AR session's frame stream while recording and turns it into a
@@ -79,7 +82,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
   /// by, see `armStandby`) so the recording streams from its first frame, then carrying it.
   private var live: LiveStreamer?
   /// Where live streaming goes, as the app last said (`setLiveServer`); nil turns it off.
-  private var liveServer: (url: URL, token: String?)?
+  private var liveServer: (url: URL, token: String?, room: String?)?
   /// `previewVisible`, for the frame queue.
   private var previewShown = false
   private var detectionRequest: DetectionRequest?
@@ -94,13 +97,26 @@ final class CaptureController: NSObject, ARSessionDelegate {
   private var lastStreamAt: TimeInterval = 0
   /// Stills the web app asked for (`/frame.jpg?size=N`, for capturing), answered from the next frame.
   private var stillRequests: [(maxSize: Int, done: (Data?) -> Void)] = []
+  /// Frame queue only. Whether the flash is wanted: the back camera's torch, lit while that camera
+  /// runs, like the Camera app's flash in video mode, so recording and detection work in the dark.
+  private var torchOn = false
+  /// Frame queue only. The torch is applied on the next frame: it was toggled, or the session was
+  /// started, which configures the camera afresh and puts the torch out.
+  private var torchDirty = false
+  private var torchCheckedAt: TimeInterval = 0
 
   static var supportsARKit: Bool { ARWorldTrackingConfiguration.isSupported }
   static var supportsLiDAR: Bool { ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) }
   static var supportsFrontCamera: Bool { ARFaceTrackingConfiguration.isSupported }
+  /// The camera world tracking runs on, whose LED is the flash.
+  private static let torchDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+  static var hasTorch: Bool { torchDevice?.hasTorch ?? false }
+  /// How often a lit torch is checked while it should be on: the system puts it out when the app
+  /// leaves the screen, and ARKit may when it reconfigures the camera.
+  private static let torchCheckInterval: TimeInterval = 2
 
   static func capabilities() -> [String: Any] {
-    ["arkit": supportsARKit, "lidar": supportsLiDAR, "frontCamera": supportsFrontCamera]
+    ["arkit": supportsARKit, "lidar": supportsLiDAR, "frontCamera": supportsFrontCamera, "torch": hasTorch]
   }
 
   /// Where a capture is written while it records; it is zipped into `library` when it stops.
@@ -148,9 +164,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
   /// Any thread. Where recordings stream for live reconstruction, from now on; nil for nowhere. A
   /// connection is made straight away while the viewfinder is on screen, so a recording starts
   /// streaming the moment it starts.
-  func setLiveServer(url: URL?, token: String?) {
+  func setLiveServer(url: URL?, token: String?, room: String?) {
     frameQueue.async {
-      self.liveServer = url.map { ($0, token) }
+      self.liveServer = url.map { ($0, token, room) }
       if url == nil {
         self.disarmStandby()
       } else {
@@ -163,11 +179,12 @@ final class CaptureController: NSObject, ARSessionDelegate {
   /// there, no recording can start (viewfinder hidden, front camera) or one is in progress.
   private func armStandby() {
     guard let liveServer, recording == nil, previewShown, !frontCamera, Self.supportsARKit else { return }
-    if let live, !live.closed, live.sessionId == nil, live.serverURL == liveServer.url, live.token == liveServer.token {
+    if let live, !live.closed, live.sessionId == nil, live.serverURL == liveServer.url, live.token == liveServer.token,
+       live.room == liveServer.room {
       return
     }
     live?.close()
-    live = LiveStreamer(serverURL: liveServer.url, token: liveServer.token, frameQueue: frameQueue, ciContext: ciContext)
+    live = LiveStreamer(serverURL: liveServer.url, token: liveServer.token, room: liveServer.room, frameQueue: frameQueue, ciContext: ciContext)
   }
 
   /// Frame queue only. Drops a standby connection (never a recording's).
@@ -201,6 +218,33 @@ final class CaptureController: NSObject, ARSessionDelegate {
     guard Self.supportsARKit, let session, !isRunning else { return }
     session.run(configuration(), options: reset ? [.resetTracking, .removeExistingAnchors] : [])
     isRunning = true
+    // Starting a session configures the camera afresh, torch off: relit from its first frame.
+    frameQueue.async { self.torchDirty = true }
+  }
+
+  /// Any thread. Lights the back camera's torch (the Camera app's flash in video mode) while that
+  /// camera runs, for recording and detecting in the dark. It goes out with the camera, and never
+  /// lights for the front camera, whose picture it can't reach.
+  func setTorch(_ on: Bool) {
+    frameQueue.async {
+      self.torchOn = on
+      self.torchDirty = true
+    }
+  }
+
+  /// Lights or puts out the torch, where it isn't so already. The torch needs no session of its own,
+  /// so it's put out explicitly when the session pauses.
+  private static func lightTorch(_ on: Bool) {
+    guard let device = torchDevice, device.hasTorch, device.isTorchActive != on else { return }
+    // Unavailable while too hot, say: the next check tries again.
+    if on && !device.isTorchAvailable { return }
+    do {
+      try device.lockForConfiguration()
+      device.torchMode = on ? .on : .off
+      device.unlockForConfiguration()
+    } catch {
+      // Another client holds the camera's configuration: the next check tries again.
+    }
   }
 
   private func configuration() -> ARConfiguration {
@@ -234,6 +278,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
     guard !previewVisible, isRunning else { return }
     session?.pause()
     isRunning = false
+    // Lit only while the camera runs. (After any frame already on the queue: none follow a pause.)
+    frameQueue.async { Self.lightTorch(false) }
   }
 
   // MARK: Recording
@@ -249,11 +295,12 @@ final class CaptureController: NSObject, ARSessionDelegate {
         self.recording = recording
         if let url = settings.liveServerURL {
           // The standby connection, if it's to this server; otherwise a new one, which streams once it connects.
-          if let live = self.live, !live.closed, live.sessionId == nil, live.serverURL == url, live.token == settings.serverToken {
+          if let live = self.live, !live.closed, live.sessionId == nil, live.serverURL == url, live.token == settings.serverToken,
+             live.room == settings.room {
             live.begin(sessionId: recording.id, mode: mode)
           } else {
             self.live?.close()
-            self.live = LiveStreamer(serverURL: url, token: settings.serverToken, frameQueue: self.frameQueue, ciContext: self.ciContext)
+            self.live = LiveStreamer(serverURL: url, token: settings.serverToken, room: settings.room, frameQueue: self.frameQueue, ciContext: self.ciContext)
             self.live?.begin(sessionId: recording.id, mode: mode)
           }
         } else {
@@ -440,6 +487,14 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
   func session(_ session: ARSession, didUpdate frame: ARFrame) {
     tracking = Self.describe(frame.camera.trackingState)
+    // The flash: applied once the camera runs (so a session start can't undo it), and checked now
+    // and then while it should be lit, since the system puts it out when the app leaves the screen.
+    let torchWanted = torchOn && !frontCamera
+    if torchDirty || (torchWanted && frame.timestamp - torchCheckedAt > Self.torchCheckInterval) {
+      torchDirty = false
+      torchCheckedAt = frame.timestamp
+      Self.lightTorch(torchWanted)
+    }
     // The front camera has no world tracking, and its detection frames are mirrored, so what it
     // sees can't be placed in the world.
     latestCamera = frontCamera ? nil : DetectionCamera(frame: frame)

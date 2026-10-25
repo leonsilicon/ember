@@ -7,8 +7,6 @@ const redis = await startRedis();
 process.env.REDIS_URL = redis.url;
 process.env.SPLAT_REDIS_PREFIX = testPrefix();
 process.env.SPLAT_TOKEN = 'test-token';
-process.env.DEMO_EMAIL = 'demo@example.com';
-process.env.DEMO_USERNAMES = 'Alice, bob';
 process.env.DEMO_PASSWORD = 'open sesame';
 
 afterAll(() => redis.stop());

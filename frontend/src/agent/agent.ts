@@ -152,7 +152,7 @@ export async function startAgent({ config, redisUrl, prefix, storage, startEstim
         for (const { id, fields } of await readStream(liveReader, k.liveIn, after, BLOCK_SECONDS * 1000)) {
           after = id;
           const entry = parseIn(fields);
-          if (entry?.kind === 'open') hub.open(entry.peer, entry.role, entry.session);
+          if (entry?.kind === 'open') hub.open(entry.peer, entry.role, entry.session, entry.room);
           else if (entry?.kind === 'data') hub.message(entry.peer, entry.data);
           else if (entry?.kind === 'resync') hub.resync(entry.peer);
           else if (entry?.kind === 'close') hub.close(entry.peer);

@@ -23,6 +23,9 @@ const MODE_LABEL: Record<string, string> = {
   checking: 'Double-checking a spot',
 }
 
+/** Where the map comes from: a phone linked over the Wi-Fi, or the room (this browser's username) through the server. */
+export type MapSource = { kind: 'wifi'; phone: string } | { kind: 'room'; username: string }
+
 /** The browser's autopilot, when it's the one driving. */
 export type PilotView = {
   on: boolean
@@ -49,8 +52,8 @@ type Props = {
   /** Clicking the map puts the pile there (`onPlace`, AR-world floor x/z). */
   placing?: boolean
   onPlace?: (x: number, z: number) => void
-  /** The linked phone, for the readout; null when no phone is linked. */
-  phone: string | null
+  /** For the readout; null when there's no phone to listen to (a token-signed browser with no phone linked). */
+  source: MapSource | null
 }
 
 /**
@@ -58,7 +61,7 @@ type Props = {
  * (rover, camera wedge, clear and blocked paths, tracked leaves, pile and work circle), from the map
  * lines the phone streams every steering tick. Fast where a splat is slow: it's a few hundred numbers.
  */
-export function LiveMapView({ stream, phone, pilot, placing = false, onPlace }: Props) {
+export function LiveMapView({ stream, source, pilot, placing = false, onPlace }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef(stream)
   const [follow, setFollow] = useState(false)
@@ -351,14 +354,16 @@ export function LiveMapView({ stream, phone, pilot, placing = false, onPlace }: 
           ? (MODE_LABEL[map.autopilot.mode ?? ''] ?? 'Autopilot on')
           : 'Autopilot off'
   const tone = !map || stale ? 'warn' : !tracking ? 'danger' : map.autopilot.on ? 'live' : 'ok'
-  const detail = !phone
-    ? "Link the rover's iPhone in the Rover camera panel; its brain's map draws here."
+  const detail = !source
+    ? "Sign in with a username and set the rover app to the same one, or link the rover's iPhone in the Rover camera panel: its brain's map draws here."
     : silent && !map
       ? "The phone is linked but isn't sending its map. Update the rover app (TestFlight) to a build with the live map."
       : !map
-        ? `Listening to ${phone}…`
+        ? source.kind === 'wifi'
+          ? `Listening to ${source.phone}…`
+          : `Waiting for the phone set to the username ${source.username} (the rover app's camera options), with its camera screen open…`
         : stale
-          ? `Last update ${(age! / 1000).toFixed(0)} s ago. Is the rover app's camera screen still open?`
+          ? `Last update ${(age! / 1000).toFixed(0)} s ago. Is the rover app's camera screen still open${source.kind === 'room' ? `, set to ${source.username}` : ''}?`
           : (map.autopilot.message && map.autopilot.message !== headline ? map.autopilot.message : null) || (map.pile ? `${leaves} ${leaves === 1 ? 'leaf' : 'leaves'} seen in the circle` : 'No pile yet: set it on the phone to start a job')
 
   return (
@@ -371,7 +376,7 @@ export function LiveMapView({ stream, phone, pilot, placing = false, onPlace }: 
         className="pointer-events-none absolute top-3 left-3 w-[min(320px,calc(100%-5.5rem))] rounded-[10px] border border-line bg-panel/95 px-3.5 py-3 shadow-float backdrop-blur-sm"
       >
         <div className="flex items-center gap-2">
-          <Led tone={tone} blink={!map && phone != null} />
+          <Led tone={tone} blink={!map && source != null} />
           <span className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ink">{headline}</span>
           <span className="num ml-auto pl-3 text-xs text-ink-3">{map && !stale ? 'live' : '—'}</span>
         </div>

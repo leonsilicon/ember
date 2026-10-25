@@ -10,12 +10,14 @@
  * messages whose first u32 says what they hold: POINTS (voxels to add or update) or KEYFRAME
  * (the camera image of a fused keyframe, for drawing on the phone's frustum).
  */
+import { USERNAME } from '../rooms';
 import type { Intrinsics } from './geometry';
 import type { VoxelCloud } from './voxels';
 
 export type CaptureMode = 'features' | 'lidar';
 
-export type HelloHeader = { type: 'hello'; session: string; mode: CaptureMode; device?: string };
+/** `room`: the username set in the app, whose browsers this recording shows to (see rooms.ts); none from older builds. */
+export type HelloHeader = { type: 'hello'; session: string; mode: CaptureMode; device?: string; room?: string };
 
 /** Camera-to-world pose, column-major. `t` is ARKit's frame timestamp in seconds. */
 export type PoseHeader = { type: 'pose'; t: number; pose: number[] };
@@ -67,6 +69,7 @@ export function parseIngest(data: Uint8Array): { header: IngestHeader; payload: 
     case 'hello':
       if (typeof header.session !== 'string' || !SESSION_ID.test(header.session)) throw new ProtocolError('bad session id');
       if (header.mode !== 'features' && header.mode !== 'lidar') throw new ProtocolError('bad mode');
+      if (header.room !== undefined && !(typeof header.room === 'string' && USERNAME.test(header.room))) throw new ProtocolError('bad room');
       return { header: header as HelloHeader, payload };
     case 'pose':
       if (!isPose(header.pose)) throw new ProtocolError('bad pose');

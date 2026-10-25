@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type RefObject } from 'react';
 
+import { useAccount } from '#rover/ui/account.tsx';
 import { Button, Field, Hint, IconButton, Icons, Kbd, Led, Readout, Segmented, type Tone } from '#rover/ui/kit.tsx';
 import { Module } from '#rover/ui/layout.tsx';
 import { isShortcutEvent, Shell, type Shortcut } from '#rover/ui/Shell.tsx';
@@ -25,6 +26,8 @@ export default function LiveApp({ session: requested }: { session: string | null
   const container = useRef<HTMLDivElement>(null);
   const live = useLiveReconstruction(container, requested, false);
   const { setFollow, cycleConfidence } = live;
+  // The room: phones set to this username are the ones this page follows (null: a token-signed browser, every phone).
+  const who = useAccount();
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -83,7 +86,7 @@ export default function LiveApp({ session: requested }: { session: string | null
           </div>
         )
       }
-      stage={<LiveStage live={live} container={container} />}
+      stage={<LiveStage live={live} container={container} who={who} />}
       modules={
         <>
           <Module id="session" title="Session" meta={session ? (session.mode === 'lidar' ? 'LiDAR' : 'no LiDAR') : undefined}>
@@ -91,6 +94,7 @@ export default function LiveApp({ session: requested }: { session: string | null
               <dl>
                 <Readout label="Recording">{session.id}</Readout>
                 {session.device && <Readout label="Phone">{session.device}</Readout>}
+                {session.room && !who && <Readout label="Username">{session.room}</Readout>}
                 <Readout label="Depth">{depth}</Readout>
                 <Readout label="Streaming">{phoneOn ? 'yes' : 'no'}</Readout>
                 <Readout label="Points">{stats?.voxels.toLocaleString() ?? '–'}</Readout>
@@ -108,7 +112,9 @@ export default function LiveApp({ session: requested }: { session: string | null
               <Hint>
                 {requested
                   ? 'This recording has not reached the server yet, or the agent has let it go.'
-                  : 'No recording yet. This page follows whichever phone starts streaming next.'}
+                  : who
+                    ? `No recording yet. This page follows whichever phone set to the username ${who} starts streaming next.`
+                    : 'No recording yet. This page follows whichever phone starts streaming next.'}
               </Hint>
             )}
             {stats?.lastSkip && <p className="mt-2 text-xs leading-snug text-warn">Last skip: {stats.lastSkip}</p>}
@@ -152,8 +158,8 @@ export default function LiveApp({ session: requested }: { session: string | null
       }
       railFooter={
         <p className="px-1 pt-1 pb-2 text-[11px] leading-snug text-ink-3">
-          In the app, turn on Live 3D in the camera options and start recording: the points appear here as the phone moves, and the capture
-          trains into a splat when it stops.
+          In the app, {who ? <>set the username to <span className="num text-ink-2">{who}</span> (camera options), </> : ''}turn on Live 3D in the camera options and start
+          recording: the points appear here as the phone moves, and the capture trains into a splat when it stops.
         </p>
       }
     />
@@ -161,7 +167,7 @@ export default function LiveApp({ session: requested }: { session: string | null
 }
 
 /** The reconstruction, filling the stage, with its readout top-left and a word while there's nothing to see. */
-function LiveStage({ live, container }: { live: ReturnType<typeof useLiveReconstruction>; container: RefObject<HTMLDivElement | null> }) {
+function LiveStage({ live, container, who }: { live: ReturnType<typeof useLiveReconstruction>; container: RefObject<HTMLDivElement | null>; who: string | null }) {
   const s = live.stats;
   return (
     <div ref={container} className="absolute inset-0 overflow-hidden [&_canvas]:block [&_canvas]:touch-none">
@@ -182,7 +188,9 @@ function LiveStage({ live, container }: { live: ReturnType<typeof useLiveReconst
             <p className="mt-1 text-[13px] leading-snug text-[#8f8a81]">
               {!live.agentOnline
                 ? 'Live 3D starts once it reconnects.'
-                : 'In the app, turn on Live 3D, then start recording. Points appear here as you move the phone around.'}
+                : who
+                  ? `In the app, set the username to ${who} and turn on Live 3D, then start recording. Points appear here as you move the phone around.`
+                  : 'In the app, turn on Live 3D, then start recording. Points appear here as you move the phone around.'}
             </p>
           </div>
         </div>

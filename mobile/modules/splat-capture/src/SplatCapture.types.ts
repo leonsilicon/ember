@@ -18,6 +18,11 @@ export type Capabilities = {
    * finds the other phones', so it works in mount and remote mode, but records and detects nothing.
    */
   cameraStream?: boolean;
+  /**
+   * The back camera has a torch to light the scene with, as the Camera app's flash does in video
+   * mode (see `SplatCaptureViewProps.torch`). Missing from older native builds.
+   */
+  torch?: boolean;
 };
 
 export type CaptureStatus = {
@@ -67,6 +72,8 @@ export type StartCaptureOptions = {
   liveServerUrl?: string;
   /** The splat server's access token, for `liveServerUrl`. */
   serverToken?: string;
+  /** The username the recording is sent to on `liveServerUrl` (its hello's `room`; see src/lib/username.ts). */
+  room?: string;
 };
 
 /**
@@ -191,5 +198,11 @@ export type SplatCaptureViewProps = {
    * detection frames; it can't record. Defaults to `back`.
    */
   camera?: CameraPosition;
+  /**
+   * Light the scene with the back camera's torch, as the Camera app's flash does in video mode, for
+   * dark places: it's lit while that camera runs, so it goes out with it (and never lights for the
+   * front camera). Defaults to false.
+   */
+  torch?: boolean;
   style?: StyleProp<ViewStyle>;
 };

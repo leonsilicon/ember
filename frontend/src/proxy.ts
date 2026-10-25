@@ -24,5 +24,5 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   // Pages only: API clients send the token as a header, and a WebSocket can't follow a redirect.
-  matcher: [{ source: '/((?!_next/|api/|live/socket|live/ingest|health).*)', has: [{ type: 'query', key: 'token' }] }],
+  matcher: [{ source: '/((?!_next/|api/|live/socket|live/ingest|live/map|health).*)', has: [{ type: 'query', key: 'token' }] }],
 };

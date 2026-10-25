@@ -33,9 +33,10 @@ declare global {
  * records: it only takes touches while the app shows it fullscreen (the app says so by setting
  * `liveInteractive` and dispatching `liveinteractive`), otherwise it follows the phone; the app's
  * Follow button dispatches `livefollow`, and the page posts `{ type: 'following', following }` back
- * as that changes.
+ * as that changes. `room` is the username the app is set to, for the embed (a browser's own room is
+ * the username it signed in as; see rooms.ts).
  */
-export function useLiveReconstruction(container: RefObject<HTMLDivElement | null>, initial: string | null, embed: boolean) {
+export function useLiveReconstruction(container: RefObject<HTMLDivElement | null>, initial: string | null, embed: boolean, room: string | null = null) {
   /** The session asked for; null follows the newest. The app's floating view changes it (`__liveLock`). */
   const [requested, setRequested] = useState(initial);
   const scene = useRef<LiveScene | null>(null);
@@ -70,6 +71,7 @@ export function useLiveReconstruction(container: RefObject<HTMLDivElement | null
       const url = new URL('/live/socket', location.href);
       url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       if (requested) url.searchParams.set('session', requested);
+      if (room) url.searchParams.set('room', room);
       const socket = new WebSocket(url);
       ws = socket;
       socket.binaryType = 'arraybuffer';
@@ -127,7 +129,7 @@ export function useLiveReconstruction(container: RefObject<HTMLDivElement | null
       scene.current = null;
       setReady(false);
     };
-  }, [container, requested]);
+  }, [container, requested, room]);
 
   useEffect(() => {
     if (!embed) return;

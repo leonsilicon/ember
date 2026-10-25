@@ -1,6 +1,7 @@
 import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
 
 import { SPLAT_TOKEN, type SplatJob } from './splat-server';
+import { getAccount } from './username';
 
 /** An upload of a capture to the splat server, from the moment it's asked for. */
 export type UploadState =
@@ -48,7 +49,7 @@ export function isUploading(captureId: string) {
  * gallery's Make splat and Train again start it by hand. The zip goes straight from disk, natively
  * (CaptureUploader.swift), so it carries on while the user does other things in the app;
  * `subscribeUpload` follows it. One upload per capture at a time: asked again while one runs, this
- * waits for that one.
+ * waits for that one. The capture goes to the username's room (lib/username.ts), where the web lists it.
  */
 export async function uploadCapture(capture: SavedCapture, serverUrl: string): Promise<UploadState> {
   const { captureId } = capture;
@@ -59,7 +60,7 @@ export async function uploadCapture(capture: SavedCapture, serverUrl: string): P
   set(captureId, { kind: 'uploading', sent: 0, total: capture.bytes });
   let result: UploadState;
   try {
-    const res = await SplatCapture.uploadCapture(captureId, serverUrl, SPLAT_TOKEN);
+    const res = await SplatCapture.uploadCapture(captureId, serverUrl, SPLAT_TOKEN, getAccount().username || null);
     const body = JSON.parse(res.body || '{}');
     if (res.status !== 201) throw new Error(body.error ?? `server replied ${res.status}`);
     result = { kind: 'sent', job: body as SplatJob };

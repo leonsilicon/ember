@@ -43,6 +43,7 @@ import { BottomTray } from '@/components/bottom-tray';
 import { CameraMenu } from '@/components/camera-menu';
 import { CameraStatus, RailIcon, useCaption, type Indicator, type RailElement } from '@/components/camera-status';
 import { DetectionOverlay } from '@/components/detection-overlay';
+import { Gallery } from '@/components/gallery';
 import { Glass } from '@/components/glass';
 import { LiveSplatView } from '@/components/live-splat-view';
 import { MountCameraView } from '@/components/mount-camera-view';
@@ -50,17 +51,20 @@ import { CorridorFan, RoverBrainMenu } from '@/components/rover-brain-menu';
 import { RoverRemote } from '@/components/rover-control';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { askUsername } from '@/components/username-prompt';
 import { Spacing } from '@/constants/theme';
 import { useCameraZoom, useZoomLevel, zoomTo } from '@/hooks/use-camera-zoom';
 import { useDetections, type Detection, type Detections } from '@/hooks/use-detections';
 import { useMountCamera, type MountCamera } from '@/hooks/use-mount-camera';
 import { useCameraStream, usePublishDetections } from '@/hooks/use-camera-stream';
+import { useRoomPublisher, type RoomLink } from '@/hooks/use-room-publisher';
 import { useRoverBrain } from '@/hooks/use-rover-brain';
 import { updateSplatSettings, useSplatSettings } from '@/hooks/use-splat-settings';
 import { compact } from '@/lib/captures';
 import { useRover } from '@/lib/rover';
 import { liveFollowEmbedUrl, SPLAT_TOKEN } from '@/lib/splat-server';
 import { uploadCapture } from '@/lib/splat-upload';
+import { useAccount } from '@/lib/username';
 
 type Phase =
   | { kind: 'ready' }
@@ -72,9 +76,11 @@ type Phase =
  * `mount`: the phone rides on the rover, so its camera is the one that matters: it shows it,
  * detects leaves in it, records it and serves it on the Wi-Fi. `remote`: the phone is in someone's
  * hand, driving the rover, so its own camera is no use: it shows the camera of the phone in mount
- * mode instead (for now there's only ever one), above the remote's controls.
+ * mode instead (for now there's only ever one), above the remote's controls. `gallery`: the
+ * captures on this phone play where the camera was, above their controls in a tray like the
+ * remote's (see Gallery); pulling it down returns to mount mode, as the remote's does.
  */
-type Mode = 'mount' | 'remote';
+type Mode = 'mount' | 'remote' | 'gallery';
 
 const INITIAL_STATUS: CaptureStatus = {
   recording: false,
@@ -169,6 +175,40 @@ function describeCameraStream(stream: CameraStreamStatus): Indicator {
   return { key, icon: 'cast', tone: 'dim', label: 'Laptop view: starting…' };
 }
 
+/**
+ * Whose phone this is for the web (lib/username.ts): the username, and whether anyone signed in as it
+ * is watching the brain's map on the control page (hooks/use-room-publisher.ts).
+ */
+function describeRoom(username: string, link: RoomLink, onChange: () => void): Indicator {
+  const key = 'room';
+  if (!username) {
+    return {
+      key,
+      icon: 'account-off-outline',
+      tone: 'dim',
+      label: "No username: the web pages can't show this phone. Tap to set one",
+      onPress: onChange,
+    };
+  }
+  if (link.state === 'open') {
+    const watching = link.viewers > 0;
+    return {
+      key,
+      icon: watching ? 'account-eye-outline' : 'account-check-outline',
+      tone: watching ? 'good' : undefined,
+      text: watching ? String(link.viewers) : undefined,
+      label: `${username}: ${watching ? `${link.viewers} watching the map on the web` : 'nobody watching the map on the web yet'}`,
+    };
+  }
+  if (link.state === 'off') return { key, icon: 'account-outline', tone: 'dim', label: `${username}: the map goes to the web from the back camera` };
+  return {
+    key,
+    icon: 'account-alert-outline',
+    tone: 'warn',
+    label: `${username}: ${link.state === 'connecting' ? 'connecting to the server…' : `reconnecting to the server${link.error ? ` (${link.error})` : ''}`}`,
+  };
+}
+
 /** In remote mode: the phone in mount mode whose camera this one shows. */
 function describeMount(camera: MountCamera | null): Indicator {
   const key = 'mount';
@@ -246,7 +286,8 @@ function summarize(detections: Detection[]) {
  * The main screen, laid out like the Camera app: the viewfinder, showing the camera's whole frame
  * with live object detection drawn over it and the status rail down its right, the gallery, record
  * button and remote along its foot, and the live 3D reconstruction below it. In remote mode (see
- * `Mode`) the viewfinder shows the camera of the phone on the rover instead, above the remote.
+ * `Mode`) the viewfinder shows the camera of the phone on the rover instead, above the remote; in
+ * gallery mode the captures play there, above their controls.
  */
 export default function CameraScreen() {
   const insets = useSafeAreaInsets();
@@ -258,12 +299,16 @@ export default function CameraScreen() {
   const [capabilities] = useState(() => SplatCapture.getCapabilities());
   const [phase, setPhase] = useState<Phase>({ kind: 'ready' });
   const [mode, setMode] = useState<Mode>('mount');
+  const mount = mode === 'mount';
   const remote = mode === 'remote';
+  const gallery = mode === 'gallery';
   const [camera, setCamera] = useState<CameraPosition>('back');
   const [detection, setDetection] = useState(true);
   const [featurePoints, setFeaturePoints] = useState(true);
   /** Record with LiDAR depth, on phones that have it; toggled like the Camera app's flash. */
   const [lidarOn, setLidarOn] = useState(true);
+  /** Light the scene with the back camera's torch, as the Camera app's flash does in video mode: for the dark. */
+  const [flashOn, setFlashOn] = useState(false);
   /** Shows the detector's timing over the viewfinder. */
   const [debugOverlay, setDebugOverlay] = useState(false);
   /** The newest capture, for the gallery button; `fresh` once this screen has just saved it. */
@@ -271,6 +316,11 @@ export default function CameraScreen() {
   const status = useEvent(SplatCapture, 'onStatus', INITIAL_STATUS);
   const recording = phase.kind === 'recording';
   const splat = useSplatSettings();
+  // Whose phone this is for the web (lib/username.ts). The first launch asks, once.
+  const account = useAccount();
+  useEffect(() => {
+    if (!account.asked) askUsername(account.username, true);
+  }, [account.asked, account.username]);
   /**
    * The live 3D view behind the camera is loaded ahead of recording (following the newest session,
    * hidden), and shown, locked onto the recording, once one streams; so it has nothing left to load then.
@@ -284,27 +334,30 @@ export default function CameraScreen() {
   // screen, on the back camera), so a recording streams from its first frame, not after a handshake.
   useEffect(() => {
     try {
-      SplatCapture.setLiveServer(splat.liveStream ? splat.serverUrl : null, SPLAT_TOKEN);
+      SplatCapture.setLiveServer(splat.liveStream ? splat.serverUrl : null, SPLAT_TOKEN, account.username || null);
     } catch {
       // An older native build without standby: the recording connects when it starts.
     }
-  }, [splat.liveStream, splat.serverUrl]);
-  // In remote mode there's no camera of this phone's to zoom.
-  const { zoom, pinch, style: zoomStyle } = useCameraZoom(!remote);
+  }, [splat.liveStream, splat.serverUrl, account.username]);
+  // Only in mount mode is there a camera of this phone's to zoom.
+  const { zoom, pinch, style: zoomStyle } = useCameraZoom(mount);
+  // The camera's card fades out under the gallery's, which takes its place.
+  const cardFade = useAnimatedStyle(() => ({ opacity: withTiming(gallery ? 0 : 1, { duration: 200 }) }));
   // Crops each frame to the zoom, so zooming in on a leaf shows it to the detector bigger and sharper.
-  const detections = useDetections(detection && capabilities.arkit && !remote, zoom);
+  const detections = useDetections(detection && capabilities.arkit && mount, zoom);
   const rover = useRover();
   // Places leaves in the world, scans LiDAR for obstacles, and runs the drive-to-leaf autopilot.
   // The front camera can't place anything in the world. It runs with the leaf detector off too (with
   // no leaves to place), so the web app's live top view still gets the rover's pose and paths.
-  const brain = useRoverBrain(
-    detection ? detections.result : undefined,
-    capabilities.arkit && focused && camera === 'back' && !remote,
-  );
+  const brainOn = capabilities.arkit && focused && camera === 'back' && mount;
+  // Its map goes to the username's room on the splat server as well, for the control page's top view
+  // when the laptop isn't on this Wi-Fi (lib/username.ts).
+  const room = useRoomPublisher(splat.serverUrl, account.username, brainOn);
+  const brain = useRoverBrain(detection ? detections.result : undefined, brainOn, room.publish);
   // The web app's live mode watches this camera over the Wi-Fi while the screen is open: in mount
   // mode, or while this phone records.
   const cameraStream = useCameraStream(
-    (capabilities.arkit || capabilities.cameraStream === true) && focused && (!remote || recording),
+    (capabilities.arkit || capabilities.cameraStream === true) && focused && (mount || recording),
   );
   // The same boxes and tags for the web app's live view (none while detection is off).
   usePublishDetections(
@@ -324,18 +377,17 @@ export default function CameraScreen() {
     if (remote) stopAutopilot();
   }, [remote, stopAutopilot]);
 
-  // Re-read on every return, since the gallery can delete the newest capture.
-  useFocusEffect(
-    useCallback(() => {
-      let alive = true;
-      SplatCapture.listCaptures()
-        .then(([newest]) => alive && setLatest(newest ? { capture: newest, fresh: false } : null))
-        .catch(() => {});
-      return () => {
-        alive = false;
-      };
-    }, []),
-  );
+  // Re-read whenever the gallery closes, since it can delete the newest capture, and on every return.
+  const refreshLatest = useCallback(() => {
+    let alive = true;
+    SplatCapture.listCaptures()
+      .then(([newest]) => alive && setLatest(newest ? { capture: newest, fresh: false } : null))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  useFocusEffect(refreshLatest);
 
   async function startRecording() {
     try {
@@ -344,6 +396,7 @@ export default function CameraScreen() {
       const { captureId } = await SplatCapture.startCapture({
         liveServerUrl,
         serverToken: SPLAT_TOKEN,
+        room: account.username || undefined,
         forceFeaturePoints: !lidarOn,
       });
       setPhase({ kind: 'recording', captureId, liveServerUrl });
@@ -393,7 +446,7 @@ export default function CameraScreen() {
   const busy = recording || phase.kind === 'saving';
   // The rover's brain places leaves in the world, which the front camera can't. With the remote
   // out, the rover is driven by hand.
-  const roverBrain = capabilities.arkit && !remote && detection && !front;
+  const roverBrain = capabilities.arkit && mount && detection && !front;
   // Zoom and the camera flip head the rail.
   const indicators: (Indicator | RailElement)[] = [
     { key: 'zoom', element: <ZoomButton zoom={zoom} /> },
@@ -432,6 +485,27 @@ export default function CameraScreen() {
     });
   } else {
     indicators.push(
+      {
+        key: 'flash',
+        icon: flashOn ? 'flash' : 'flash-off',
+        tone: flashOn ? 'on' : undefined,
+        label: flashOn
+          ? 'Flash on: the torch lights the scene for the camera'
+          : 'Flash off. Tap to light the scene in the dark',
+        // Lighting that changes mid-recording would show in the splat, so like LiDAR it's fixed then.
+        disabled:
+          capabilities.torch === undefined
+            ? "This build can't control the flash. Rebuild it."
+            : !capabilities.torch
+              ? 'This phone has no flash'
+              : recording
+                ? `Recording with the flash ${flashOn ? 'on' : 'off'}. Stop to switch.`
+                : undefined,
+        onPress: () => {
+          setFlashOn(!flashOn);
+          showCaption(flashOn ? 'Flash off' : 'Flash on');
+        },
+      },
       {
         key: 'lidar',
         icon: lidar ? 'blur' : 'blur-off',
@@ -475,6 +549,7 @@ export default function CameraScreen() {
     });
   }
   if (cameraStream) indicators.push(describeCameraStream(cameraStream));
+  if (capabilities.arkit) indicators.push(describeRoom(account.username, room.link, () => askUsername(account.username)));
   // Guidance beside the rail while it applies: what's wrong with the recording (tracking matters
   // most while recording, so only then does it say what's wrong with it), else what the autopilot
   // is doing, else what's slowing detection (a full phone slows everything, recording included),
@@ -487,7 +562,11 @@ export default function CameraScreen() {
         ? tracking.label
         : roverBrain && brain.autopilot.on && brain.autopilot.message
           ? brain.autopilot.message
-          : ((detection && detections.warning) || cameraStreamProblem(cameraStream));
+          : ((detection && detections.warning) ||
+            cameraStreamProblem(cameraStream) ||
+            (capabilities.arkit && account.asked && !account.username
+              ? 'No username: set one in the ⋯ options so the web pages can show this phone'
+              : undefined));
   const result = detections.result;
   // The viewfinder shows the camera's whole frame, uncropped, so all the rover can see is on screen
   // and under the detection boxes: it takes the frame's shape at the screen's full width, under the
@@ -508,8 +587,8 @@ export default function CameraScreen() {
     width: viewfinderWidth,
     height: viewfinderHeight,
   };
-  // Everything below the camera, reaching up into its rounded corners. In remote mode it's hidden
-  // under the remote's tray.
+  // Everything below the camera, reaching up into its rounded corners. Under the remote's or the
+  // gallery's tray it's hidden.
   const liveFrame = { top: insets.top + viewfinderHeight - CARD_RADIUS, left: 0, right: 0, bottom: 0 };
   const liveIdle = !capabilities.arkit
     ? 'Recording needs an iPhone'
@@ -533,6 +612,8 @@ export default function CameraScreen() {
         debug={debugOverlay}
         onDebugChange={setDebugOverlay}
         detectionInfo={detections.status ?? detections.model}
+        username={account.username}
+        onChangeUsername={() => askUsername(account.username)}
       />
     ),
   });
@@ -547,13 +628,13 @@ export default function CameraScreen() {
         The live 3D reconstruction is the background, and takes pans wherever it shows: one finger
         orbits, two pan, pinch and twist.
       */}
-      <View style={[styles.live, liveFrame, remote && styles.hidden]}>
+      <View style={[styles.live, liveFrame, !mount && styles.hidden]}>
         {liveReady && (
           <View style={[StyleSheet.absoluteFill, !liveShown && styles.hidden]}>
             <LiveSplatView
-              key={splat.serverUrl}
+              key={`${splat.serverUrl}#${account.username}`}
               ref={liveView}
-              url={liveFollowEmbedUrl(splat.serverUrl)}
+              url={liveFollowEmbedUrl(splat.serverUrl, account.username)}
               interactive
               onFollowingChange={setLiveFollowing}
               lockSession={recording ? phase.captureId : null}
@@ -565,16 +646,18 @@ export default function CameraScreen() {
 
       {/* Pinch to zoom the camera. */}
       <GestureDetector gesture={pinch}>
-        <Animated.View layout={SWAP} style={[styles.card, viewfinderFrame]}>
+        <Animated.View layout={SWAP} style={[styles.card, viewfinderFrame, cardFade]}>
           {/* Zoomed by pinching, and clipped by the card. */}
           <Animated.View style={[StyleSheet.absoluteFill, zoomStyle]}>
-            {/* Pauses itself while the gallery covers it, unless a recording is in progress. */}
+            {/* Paused under the remote's and the gallery's trays (`active`), unless a recording is in progress. */}
             <SplatCaptureView
               style={StyleSheet.absoluteFill}
               camera={camera}
               showFeaturePoints={featurePoints && !lidar}
-              // Its camera is no use in remote mode, so it pauses (unless recording).
-              active={!remote}
+              // Lit while the back camera runs, so it goes out in remote mode with the camera.
+              torch={flashOn}
+              // Its camera is no use under the remote or the gallery, so it pauses (unless recording).
+              active={mount}
             />
           </Animated.View>
           {result && (
@@ -593,7 +676,8 @@ export default function CameraScreen() {
         </Animated.View>
       </GestureDetector>
 
-      <View style={[styles.overlay, viewfinderFrame]}>
+      {/* The camera's controls go with its card under the gallery. */}
+      <Fade hidden={gallery} style={[styles.overlay, viewfinderFrame]}>
         <CameraStatus
           indicators={remote ? [describeMount(mountCamera)] : tools}
           hint={hint}
@@ -628,7 +712,7 @@ export default function CameraScreen() {
                   capture={latest?.capture}
                   pop={latest?.fresh}
                   disabled={busy}
-                  onPress={() => router.push('/captures')}
+                  onPress={() => setMode('gallery')}
                 />
               )
             )}
@@ -651,12 +735,22 @@ export default function CameraScreen() {
             <RemoteButton connected={rover.connection.state === 'connected'} onPress={() => setMode('remote')} />
           </View>
         </Fade>
-      </View>
+      </Fade>
 
       {remote && (
         <BottomTray label="Remote" onClose={() => setMode('mount')}>
           <RoverRemote />
         </BottomTray>
+      )}
+      {gallery && (
+        <Gallery
+          onClose={() => {
+            setMode('mount');
+            // The capture it was on, its `capture` param: next time, it opens on the newest again.
+            router.setParams({ capture: undefined });
+            refreshLatest();
+          }}
+        />
       )}
     </View>
   );
@@ -843,7 +937,7 @@ const MIN_LIVE_HEIGHT = 120;
 /** The camera card's corners, like Instagram's. */
 const CARD_RADIUS = 24;
 /** The tools a phone without ARKit (Android) has: the rest are ARKit's. */
-const PLAIN_TOOLS = ['zoom', 'wifi-camera'];
+const PLAIN_TOOLS = ['zoom', 'flash', 'wifi-camera'];
 // Eased, not sprung: springs overshoot and bounce.
 const SWAP = LinearTransition.duration(260).easing(Easing.out(Easing.cubic));
 const POP = ZoomIn.duration(250).easing(Easing.out(Easing.cubic));

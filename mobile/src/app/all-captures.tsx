@@ -8,11 +8,13 @@ import SplatCapture, { type SavedCapture } from '../../modules/splat-capture';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { askUsername } from '@/components/username-prompt';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { updateSplatSettings, useSplatSettings } from '@/hooks/use-splat-settings';
 import { useTheme } from '@/hooks/use-theme';
 import { describeDay, describeTime, formatDuration } from '@/lib/captures';
 import { checkServer, liveViewerUrl } from '@/lib/splat-server';
+import { useAccount } from '@/lib/username';
 
 const COLUMNS = 3;
 const GAP = 2;
@@ -47,8 +49,8 @@ export default function AllCapturesScreen() {
                 key={capture.captureId}
                 accessibilityRole="imagebutton"
                 accessibilityLabel={`Capture, ${describeDay(date)} ${describeTime(date)}`}
-                // Back to the gallery, on this capture.
-                onPress={() => router.dismissTo({ pathname: '/captures', params: { id: capture.captureId } })}
+                // Back to the camera screen, whose gallery opens this capture.
+                onPress={() => router.dismissTo({ pathname: '/', params: { capture: capture.captureId } })}
                 style={({ pressed }) => [
                   styles.cell,
                   { width: cell, height: cell, backgroundColor: theme.backgroundElement },
@@ -92,9 +94,35 @@ export default function AllCapturesScreen() {
             in).
           </ThemedText>
 
+          <AccountCard />
           <ServerCard />
         </View>
       </ScrollView>
+    </ThemedView>
+  );
+}
+
+/** Whose phone this is for the web (lib/username.ts): the username its pages show it under, and the dialog that changes it. */
+function AccountCard() {
+  const theme = useTheme();
+  const account = useAccount();
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedText type="smallBold">Username</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        The web pages signed in with this username show this phone and no other: its live map on Control, its Live 3D
+        recordings and its captures. That way the whole team can use the site at once.
+      </ThemedText>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={account.username ? `Username ${account.username}. Change it` : 'Set a username'}
+        onPress={() => askUsername(account.username)}
+        style={({ pressed }) => [styles.input, styles.row, { borderColor: theme.backgroundSelected }, pressed && styles.pressed]}>
+        <ThemedText themeColor={account.username ? 'text' : 'textSecondary'}>{account.username || 'Not set'}</ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {account.username ? 'Change' : 'Set'}
+        </ThemedText>
+      </Pressable>
     </ThemedView>
   );
 }
@@ -224,5 +252,10 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.6,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
 });

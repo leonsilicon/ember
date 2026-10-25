@@ -5,6 +5,7 @@ import { Button, INPUT, Led } from '../ui/kit'
 import { Module } from '../ui/layout'
 import { CaptureControls } from './CaptureControls'
 import { useDetectionStream } from '../hooks/useDetectionStream'
+import { useAccount } from '../ui/account'
 import { DetectionBoxes } from './DetectionBoxes'
 import { MjpegView } from './MjpegView'
 import { PHONE_CAMERA_PORT, phoneCameraOrigin, pickPhone } from '../phoneCamera'
@@ -91,6 +92,7 @@ export function PhoneCameraPanel({ phones = [], onLink }: { phones?: readonly Di
   const lastAuto = useRef<{ origin: string; at: number } | null>(null)
   const origin = phoneCameraOrigin(address)
   const insecurePage = typeof window !== 'undefined' && window.location.protocol === 'https:'
+  const who = useAccount()
 
   const disconnect = useCallback(() => {
     setStopped(true)
@@ -371,8 +373,11 @@ export function PhoneCameraPanel({ phones = [], onLink }: { phones?: readonly Di
 
         {insecurePage && (
           <p className="mt-2 text-xs text-warn">
-            This page is on https, which browsers won't let load the phone's http stream. Open the web app over http (e.g. the dev server) for
-            live view.
+            This page is on https, which browsers won't let load the phone's http stream: the camera picture needs the web app over http (the
+            dev server on the laptop, on the phone's Wi-Fi).{' '}
+            {who
+              ? `The live map still arrives here through the server, from the phone set to the username ${who}.`
+              : 'Sign in with a username, and set the rover app to the same one, to get its live map through the server.'}
           </p>
         )}
       </div>

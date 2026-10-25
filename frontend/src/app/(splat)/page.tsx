@@ -50,7 +50,10 @@ export default async function LandingPage({
       </section>
       <section className={styles.card} aria-labelledby="sign-in">
         <h2 id="sign-in">Sign in</h2>
-        <p className={styles.hint}>The tools are for the demo team. There's no sign-up.</p>
+        <p className={styles.hint}>
+          Pick a username and use the team's password; there's no sign-up. The pages show the phone whose Ember app is set to the
+          same username, so everyone can use the site at once.
+        </p>
         <LoginForm next={next} />
         <p className={styles.fine}>Opened from the app? Its links sign this browser in on their own.</p>
       </section>

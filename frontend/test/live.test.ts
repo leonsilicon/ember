@@ -217,6 +217,41 @@ describe('live hub', () => {
     expect(has('phone', 'feature points in view')).toBe(true);
   });
 
+  test('a viewer in a room follows that room’s phones, and only those', () => {
+    const { hub, has, messages } = startHub();
+    hub.open('alice', 'viewer', null, 'alice');
+    hub.open('anyone', 'viewer');
+    hub.open('phone-bob', 'phone');
+    hub.message('phone-bob', encodeIngest({ type: 'hello', session: 'capture-bob', mode: 'features', room: 'bob' }));
+    hub.open('phone-none', 'phone');
+    hub.message('phone-none', encodeIngest({ type: 'hello', session: 'capture-none', mode: 'features' }));
+    // Neither is Alice's; the viewer of every room follows both in turn.
+    expect(has('alice', 'capture-bob')).toBe(false);
+    expect(has('alice', 'capture-none')).toBe(false);
+    expect(has('anyone', '"id":"capture-bob"')).toBe(true);
+    expect(has('anyone', '"id":"capture-none"')).toBe(true);
+    hub.open('phone-alice', 'phone');
+    hub.message('phone-alice', encodeIngest({ type: 'hello', session: 'capture-alice', mode: 'features', room: 'alice' }));
+    expect(has('alice', '"id":"capture-alice"')).toBe(true);
+    // A viewer joining later gets its room's newest, not the newest of all.
+    hub.open('phone-bob-2', 'phone');
+    hub.message('phone-bob-2', encodeIngest({ type: 'hello', session: 'capture-bob-2', mode: 'features', room: 'bob' }));
+    hub.open('alice-late', 'viewer', null, 'alice');
+    expect(has('alice-late', '"id":"capture-alice"')).toBe(true);
+    expect(has('alice-late', 'capture-bob')).toBe(false);
+    hub.open('bob-late', 'viewer', null, 'bob');
+    expect(has('bob-late', '"id":"capture-bob-2"')).toBe(true);
+    expect(messages('bob-late').some((m) => typeof m === 'string' && m.includes('"room":"bob"'))).toBe(true);
+    expect(hub.list().map((s) => [s.id, s.room])).toEqual([
+      ['capture-bob-2', 'bob'],
+      ['capture-alice', 'alice'],
+      ['capture-none', null],
+      ['capture-bob', 'bob'],
+    ]);
+    // A bad room is refused like any malformed hello.
+    expect(() => parseIngest(encodeIngest({ type: 'hello', session: 'x', mode: 'features', room: 'Not One' }))).toThrow(ProtocolError);
+  });
+
   test('gives a viewer the session it asked for once the phone starts it, and only that one', () => {
     const { hub, has } = startHub();
     // The app opens its view of a recording as the recording starts, which can beat the phone's hello.
@@ -267,7 +302,7 @@ describe('through Redis', () => {
       const url = new URL(request.url ?? '/', 'http://localhost');
       sockets.handleUpgrade(request, socket, head, (ws) => {
         if (url.pathname === '/live/ingest') relaySocket(ws, 'phone', null);
-        else relaySocket(ws, 'viewer', url.searchParams.get('session'));
+        else relaySocket(ws, 'viewer', url.searchParams.get('session'), url.searchParams.get('room'));
       });
     });
     await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
@@ -310,10 +345,13 @@ describe('through Redis', () => {
   test('relays a phone to the agent and the reconstruction to viewers', async () => {
     const stack = await startStack();
     try {
-      const viewer = await open(`${stack.base}/live/socket`);
+      const viewer = await open(`${stack.base}/live/socket?room=alice`);
+      const other = await open(`${stack.base}/live/socket?room=bob`);
       const phone = await open(`${stack.base}/live/ingest`);
-      phone.ws.send(encodeIngest({ type: 'hello', session: 'capture-test', mode: 'features' }));
+      phone.ws.send(encodeIngest({ type: 'hello', session: 'capture-test', mode: 'features', room: 'alice' }));
       await waitFor(() => has(viewer.messages, '"id":"capture-test"'));
+      expect(has(other.messages, 'capture-test')).toBe(false);
+      other.ws.close();
       phone.ws.send(encodeIngest(keyframe, jpeg));
       await waitFor(() => pointDepths(viewer.messages).size > 0);
       await waitFor(() => has(phone.messages, '"fused":1'));

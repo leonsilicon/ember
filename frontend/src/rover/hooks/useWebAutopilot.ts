@@ -58,7 +58,7 @@ export function useWebAutopilot(rover: Rover, live: LiveMapStream, enabled: bool
   const blocker = !enabled
     ? 'Switch to Live rover to use the autopilot.'
     : !map
-        ? "Link the rover's iPhone: the autopilot steers by its live map."
+        ? "No live map from the phone yet: the autopilot steers by it (see the top view for what's missing)."
         : !map.pile
           ? 'Place the pile first (Job panel or on the phone): the autopilot works the circle round it.'
           : null
