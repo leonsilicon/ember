@@ -122,7 +122,8 @@ Production and Preview, so it can't be pulled back; `frontend/.env` keeps a copy
 like `live-replay.ts`): the app has it built in from `EXPO_PUBLIC_SPLAT_TOKEN`, with the server's
 address in `EXPO_PUBLIC_SPLAT_SERVER_URL` (both in `mobile/.env.local` for local builds, and
 EAS environment variables for EAS builds).
-A browser signs in once by opening any page with `?token=<SPLAT_TOKEN>` (or entering it on the page);
+A browser signs in once by opening any page with `?token=<SPLAT_TOKEN>` (or with the demo account on the
+landing page, see `frontend/README.md`);
 it keeps it in a cookie. API clients send `Authorization: Bearer <SPLAT_TOKEN>`.
 
 In the app, the first time a capture is opened in the gallery it's sent off: the phone asks the

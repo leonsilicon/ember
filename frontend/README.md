@@ -1,10 +1,11 @@
 # frontend — the web app
 
-One Next.js app (`@soon2026/frontend`), on Vercel at https://soon2026.vercel.app. Two sides share it:
+One Next.js app (`@soon2026/frontend`), on Vercel at https://soon2026.vercel.app. `/` is the landing page with the
+sign-in form, and everything else is behind it (see "Signing in"), starting at `/dashboard`. Two sides share the app:
 
-- **The splat server** (`/`, `/view/[id]`, `/live`, `/api/*`; `src/app/(splat)`, `src/web`, `src/live`): trains the
-  phone's captures into Gaussian splats and rebuilds recordings live in 3D through a Bun agent on a Mac
-  (`src/agent`). One access token (`SPLAT_TOKEN`) guards it. The whole story is in
+- **The splat server** (`/dashboard`, `/view/[id]`, `/live`, `/api/*`; `src/app/(splat)`, `src/web`, `src/live`):
+  trains the phone's captures into Gaussian splats and rebuilds recordings live in 3D through a Bun agent on a Mac
+  (`src/agent`). The app reaches its API with one access token (`SPLAT_TOKEN`). The whole story is in
   [`mobile/SPLATS.md`](../mobile/SPLATS.md).
 - **The laptop pages** (`src/app/(rover)`, `src/rover`, `src/wildfire`), which run in the browser only:
   - `/control` — remote control for the rover and arm over a WebSocket to the ESP32 (`firmware/rover_ws`), with a
@@ -26,6 +27,21 @@ bun test             # starts a throwaway Redis for the server's tests (redis-se
 bun run agent        # the Mac agent, or `vpx _dev` for the whole dev stack
 ```
 
+## Signing in
+
+There's one demo account and no sign-up. It answers to `DEMO_EMAIL` or any of the comma-separated `DEMO_USERNAMES`
+(in any case) with `DEMO_PASSWORD`: environment variables on the Vercel project (Secret in production and preview;
+`vercel env pull` brings the development copies into `.env.local`). The landing page's form
+(`src/app/(splat)/actions.ts`) checks them and sets a `splat_session` cookie holding the login and an HMAC over it keyed
+by the server's secrets, so nothing is stored, the dashboard can say who's signed in, and changing the password (or
+removing a username) signs that browser out. A page opened without it redirects to
+`/?next=…` (`requireSignIn` in `src/web/auth.ts`), and the API takes the cookie too, so the viewers' fetches and the
+live socket work from a signed-in browser. **Sign out** on the dashboard clears it.
+
+The access token (`SPLAT_TOKEN`) still signs a browser in beside it: opening any page with `?token=` keeps it in a
+`splat_token` cookie (`src/proxy.ts`), which is how the app's embedded live view and a sign-in link get in without the
+form. The app itself sends the token as a bearer token to `/api/*`.
+
 ## Deploying
 
 `.github/workflows/vercel.yml` deploys every push to `main` of SOON-2026/soon2026 to production, and pull requests
@@ -41,8 +57,10 @@ keeps it current: every push to `main` that touches `frontend/` runs on the self
 commit into that checkout, installs dependencies, Brush and the depth worker when needed (`scripts/install-*.sh`),
 pulls the project's development env (`REDIS_URL`, and the OIDC token the Blob SDK refreshes through the Mac's `vercel
 login`), runs `scripts/install-agent-service.sh` (pm2 delete + start, `pm2 save`, and a launchd agent that runs `pm2
-resurrect` at login) and waits for the new process's heartbeat with `scripts/agent-status.ts`. pm2 restarts the agent
-after a crash and gives up, visibly (`errored`), after ten quick ones. Only one agent may run against the Redis
+resurrect` at login, plus `scripts/agent-watchdog.sh` every two minutes, which restarts the process when no agent has
+a heartbeat) and waits for the new process's heartbeat with `scripts/agent-status.ts`. pm2 restarts the agent after a
+crash and gives up, visibly (`errored`), after ten quick ones; the agent exits by itself when two heartbeats in a row
+can't reach Redis (a connection the Mac's network change left half-open looks open to it otherwise). Only one agent may run against the Redis
 instance (both would take the same work), so `vpx _dev` leaves out its agent pane while the service is online; to run
 the dev stack's agent instead, `pm2 stop soon2026-agent` and `vpx _dev --agent`, then `pm2 start soon2026-agent`.
 

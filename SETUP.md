@@ -26,8 +26,10 @@ bun install
 ## 1. Running the frontend
 
 The frontend is one Next.js app (`frontend/`, package `@soon2026/frontend`). It
-serves the splat server (`/`, `/view/[id]`, `/live`, `/api/*`) and the laptop
-pages (`/control`, `/sim`, `/wildfire`).
+serves the landing page and its sign-in (`/`; the demo account is `DEMO_EMAIL` or one of
+`DEMO_USERNAMES`, with `DEMO_PASSWORD`; see `frontend/README.md`), and behind that the splat server
+(`/dashboard`, `/view/[id]`, `/live`, `/api/*`) and the laptop pages (`/control`,
+`/sim`, `/wildfire`).
 
 ### First-time setup
 

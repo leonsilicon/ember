@@ -1,50 +1,59 @@
-import Link from 'next/link';
+import { redirect } from 'next/navigation';
 
-import { publicJob, type Job } from '#jobs.ts';
-import { signedIn } from '#web/auth.ts';
-import { agentInfo, jobStore } from '#web/redis.ts';
+import { safeNext, signedIn } from '#web/auth.ts';
 
-import styles from './page.module.css';
-import { Refresh } from './refresh';
-import { SignIn } from './sign-in';
+import styles from './landing.module.css';
+import { LoginForm } from './login-form';
 
-export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Splat captures' };
+export const metadata = {
+  title: 'soon2026',
+  description: 'An autonomous rover that clears the dry leaves that feed wildfires, with its yard rebuilt live in 3D.',
+};
 
-function describe(job: Job) {
-  const seed = job.mode === 'lidar' ? 'LiDAR seed' : job.mode === 'features' ? 'feature-point seed (no LiDAR)' : 'seed';
-  const progress =
-    job.state === 'training' ? `training ${job.step.toLocaleString()} / ${job.steps.toLocaleString()} steps` : job.state;
-  if (job.state === 'uploading' || job.state === 'queued') return progress;
-  const gaussians = job.gaussians ? ` · ${job.gaussians.toLocaleString()} gaussians` : '';
-  return `${progress}${gaussians} · ${job.frames} frames · ${seed}, ${job.seedPoints.toLocaleString()} pts`;
-}
-
-export default async function CapturesPage() {
-  if (!(await signedIn())) return <SignIn />;
-  const [jobs, agent] = await Promise.all([jobStore().list(), agentInfo()]);
+/** The landing page: sign in to reach the dashboard. A browser that already has goes straight there. */
+export default async function LandingPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const next = safeNext((await searchParams).next);
+  if (await signedIn()) redirect(next);
   return (
-    <main className={styles.main}>
-      <h1>Splat captures</h1>
-      {!agent && <p className={styles.failed}>The Mac agent is offline, so nothing trains until it reconnects.</p>}
-      {jobs.length ? (
-        <ul className={styles.list}>
-          {jobs.map(publicJob).map((job) => (
-            <li key={job.id}>
-              <Link href={`/view/${job.id}`}>{job.id}</Link>
-              <span className={`${styles.state} ${job.state === 'failed' ? styles.failed : ''}`}>{describe(job)}</span>
-              {job.error && <pre className={styles.error}>{job.error}</pre>}
-            </li>
-          ))}
+    <main className={styles.page}>
+      <section>
+        <p className={styles.eyebrow}>soon2026</p>
+        <h1 className={styles.title}>A rover that clears the leaves that feed wildfires.</h1>
+        <p className={styles.lead}>
+          It finds dry leaves and pine needles on the ground and collects them, breaking up the fuel that lets a small
+          ignition grow. An iPhone on board scans the yard, and this site rebuilds it in 3D as it drives.
+        </p>
+        <ul className={styles.features}>
+          <li>
+            <div>
+              <strong>Rover control</strong>
+              <span>Drive the rover and run the arm from a laptop, with the phone's view and leaf boxes.</span>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Live 3D and splat captures</strong>
+              <span>Follow a recording as it's reconstructed, then train it into a Gaussian splat.</span>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Autopilot sim and wildfire map</strong>
+              <span>The rover's own brain clearing a virtual yard, and the hazard around real buildings.</span>
+            </div>
+          </li>
         </ul>
-      ) : (
-        <p>No captures yet. Record one in the app and it appears here.</p>
-      )}
-      <p className={styles.state}>
-        <Link href="/live">Live reconstruction</Link> · API: <code>GET /api/captures</code>, <code>GET /api/captures/:id</code>,{' '}
-        <code>GET /api/captures/:id/splat.ply</code> (with <code>Authorization: Bearer</code>)
-      </p>
-      <Refresh every={3000} />
+      </section>
+      <section className={styles.card} aria-labelledby="sign-in">
+        <h2 id="sign-in">Sign in</h2>
+        <p className={styles.hint}>The dashboard is for the demo team. There's no sign-up.</p>
+        <LoginForm next={next} />
+        <p className={styles.fine}>Opened from the app? Its links sign this browser in on their own.</p>
+      </section>
     </main>
   );
 }

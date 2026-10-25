@@ -3,8 +3,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { TOKEN_COOKIE } from './web/auth';
 
 /**
- * Signs a browser in: a page opened with `?token=` (a sign-in link, or the app's live view) keeps
- * the token in a cookie and loads again without it in the URL. The pages and routes check it.
+ * Signs a browser in with the access token: a page opened with `?token=` (a sign-in link, or the
+ * app's live view) keeps the token in a cookie and loads again without it in the URL. The pages and
+ * routes check it (web/auth.ts); the email-and-password sign-in is the landing page's form instead.
  */
 export function proxy(request: NextRequest) {
   const url = request.nextUrl.clone();
