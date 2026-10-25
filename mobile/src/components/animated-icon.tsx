@@ -1,18 +1,23 @@
 import { Image } from 'expo-image';
 import * as SplashScreen from 'expo-splash-screen';
 import { useState } from 'react';
-import { Dimensions, StyleSheet, View } from 'react-native';
+import { Dimensions, StyleSheet, useColorScheme, View } from 'react-native';
 import Animated, { Easing, Keyframe } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 const INITIAL_SCALE_FACTOR = Dimensions.get('screen').height / 90;
 const DURATION = 600;
+/** The splash screen's ground (app.json's expo-splash-screen), which the overlay continues: the web's panel tones. */
+const SPLASH_BACKGROUND = { light: '#F8F7F4', dark: '#1A1917' };
 
 export function AnimatedSplashOverlay() {
   const [animate, setAnimate] = useState(false);
   const [visible, setVisible] = useState(true);
+  const colorScheme = useColorScheme();
 
   if (!visible) return null;
+
+  const overlayStyle = [styles.splashOverlay, { backgroundColor: SPLASH_BACKGROUND[colorScheme === 'dark' ? 'dark' : 'light'] }];
 
   const splashKeyframe = new Keyframe({
     0: {
@@ -33,7 +38,8 @@ export function AnimatedSplashOverlay() {
     },
   });
 
-  const image = <Image style={styles.image} source={require('@/assets/images/expo-logo.png')} />;
+  // The splash screen's image, so that the hand-off from the native splash is invisible.
+  const image = <Image style={styles.splashImage} source={require('@/assets/images/splash-icon.png')} />;
 
   return animate ? (
     <Animated.View
@@ -43,7 +49,7 @@ export function AnimatedSplashOverlay() {
           scheduleOnRN(setVisible, false);
         }
       })}
-      style={styles.splashOverlay}>
+      style={overlayStyle}>
       {image}
     </Animated.View>
   ) : (
@@ -53,7 +59,7 @@ export function AnimatedSplashOverlay() {
           setAnimate(true);
         });
       }}
-      style={styles.splashOverlay}>
+      style={overlayStyle}>
       {image}
     </View>
   );
@@ -131,6 +137,11 @@ const styles = StyleSheet.create({
     width: 76,
     height: 71,
   },
+  // The splash's `imageWidth` square.
+  splashImage: {
+    width: 120,
+    height: 120,
+  },
   background: {
     borderRadius: 40,
     experimental_backgroundImage: `linear-gradient(180deg, #3C9FFE, #0274DF)`,
@@ -140,7 +151,7 @@ const styles = StyleSheet.create({
   },
   splashOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: '#208AEF',
+    backgroundColor: SPLASH_BACKGROUND.light,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 1000,

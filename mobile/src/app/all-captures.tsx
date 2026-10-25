@@ -88,7 +88,7 @@ export default function AllCapturesScreen() {
 
           <ThemedText type="small" themeColor="textSecondary">
             Each capture is a zip of camera frames, poses and a seed point cloud, ready to turn into a splat. Share it
-            from the gallery, or find it in Files › On My iPhone › soon2026 (and in Finder when the phone is plugged
+            from the gallery, or find it in Files › On My iPhone › Ember (and in Finder when the phone is plugged
             in).
           </ThemedText>
 

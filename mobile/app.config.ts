@@ -9,13 +9,13 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
  */
 export const APP_VARIANTS = {
   development: {
-    name: 'soon2026 (Dev)',
+    name: 'Ember (Dev)',
     slug: 'soon2026-dev',
     scheme: 'soon2026-dev',
     bundleIdentifier: 'com.leonsilicon.soon2026.development',
   },
   production: {
-    name: 'soon2026',
+    name: 'Ember',
     slug: 'soon2026',
     scheme: 'soon2026',
     // The App Store Connect app (6826604814) that the TestFlight workflow submits to.
