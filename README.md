@@ -4,9 +4,26 @@
 
 A wildfire-prevention rover with a phone for its brain.
 
+<p align="center">
+  <a href="https://devpost.com/software/soon-2026"><img src="https://img.shields.io/badge/Devpost-View_project-FF6B35?style=for-the-badge&amp;logo=devpost&amp;logoColor=white" alt="View Ember on Devpost"></a>
+  <a href="https://soon2026.vercel.app"><img src="https://img.shields.io/badge/Web_app-Try_Ember-18181B?style=for-the-badge&amp;logo=vercel&amp;logoColor=white" alt="Try the Ember web app"></a>
+  <a href="https://github.com/SOON-2026/Ember/actions/workflows/vercel.yml"><img src="https://img.shields.io/github/actions/workflow/status/SOON-2026/Ember/vercel.yml?branch=main&amp;style=for-the-badge&amp;logo=githubactions&amp;logoColor=white&amp;label=Web%20build" alt="Web build status"></a>
+  <a href="https://github.com/SOON-2026/Ember/stargazers"><img src="https://img.shields.io/github/stars/SOON-2026/Ember?style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;color=FBBF24" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
+  <a href="https://expo.dev"><img src="https://img.shields.io/badge/Expo-000020?style=for-the-badge&amp;logo=expo&amp;logoColor=white" alt="Built with Expo"></a>
+  <a href="https://reactnative.dev"><img src="https://img.shields.io/badge/React_Native-20232A?style=for-the-badge&amp;logo=react&amp;logoColor=61DAFB" alt="Built with React Native"></a>
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&amp;logo=typescript&amp;logoColor=white" alt="Built with TypeScript"></a>
+  <a href="https://nextjs.org"><img src="https://img.shields.io/badge/Next.js-000000?style=for-the-badge&amp;logo=nextdotjs&amp;logoColor=white" alt="Built with Next.js"></a>
+  <a href="https://www.espressif.com/en/products/socs/esp32"><img src="https://img.shields.io/badge/ESP32-E7352C?style=for-the-badge&amp;logo=espressif&amp;logoColor=white" alt="Powered by ESP32"></a>
+</p>
+
 ## Inspiration
 
-We wanted to work on what happens before a wildfire: the dry leaves, pine needles, and other fine fuel that accumulate on the ground around homes. Keeping that ground clear takes repeated work, especially when the leaves keep falling. We saw an opportunity for a small rover that could find fallen leaves and gather them into a designated pile.
+Seeing the devastation caused by fires in recent years, we wanted to work on something that helps fight them.
+
+Specifically, we wanted to prevent them from happening in the first place: by removing the dry leaves, pine needles, and other fine fuel that accumulate on the ground around homes. Keeping that ground clear takes repeated work, especially when the leaves keep falling. We saw an opportunity for a small rover that could find fallen leaves and gather them into a designated pile.
 
 A phone already has much of what that rover needs: a camera, motion tracking, powerful on-device inference, and, on some models, LiDAR. We wanted to put those sensors to work together rather than build a separate perception system from scratch.
 

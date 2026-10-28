@@ -24,6 +24,29 @@ __pycache__/
 # Secrets
 .env
 .env.*
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+credentials.json
+credentials.*.json
+service-account*.json
+.netrc
+.pypirc
+.claude/settings.local.json
+
+# Local databases, network captures, and build caches
+*.db
+*.sqlite
+*.sqlite3
+*.har
+*.pcap
+*.pcapng
+target/
 
 # Large media and model files, wherever they end up
 *.mp4

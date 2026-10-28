@@ -43,7 +43,7 @@ class SplatCaptureView(context: Context, appContext: AppContext) : ExpoView(cont
     set(value) {
       if (field == value) return
       field = value
-      camera?.cameraControl.enableTorch(value)
+      camera?.cameraControl?.enableTorch(value)
     }
 
   // A TextureView, so the preview zooms (a transform) and clips to the card's rounded corners.
